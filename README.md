@@ -11,3 +11,10 @@ a. Tracking the boundary conditions at the appropriate geometry location:
 
 b. Preventing the GUI crash during the movement of time slider: 
 
+
+# Attention mechanism for interpolating the solutions variables from PINN
+
+a. Gaussian attention weights
+
+b. Physics aware interpolation function
+
