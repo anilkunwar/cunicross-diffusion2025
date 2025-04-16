@@ -252,7 +252,9 @@ def train_and_save_solutions(D11, D12, D21, D22, Lx, t_max, epochs, output_dir="
 
 
 # Use of Gaussian Attention Weights for Interpolation
-def attention_weighted_interpolation(solutions, lys, ly_target, sigma=5.0):
+#def attention_weighted_interpolation(solutions, lys, ly_target, sigma=5.0):
+# Since the key (Ly) have spacing of 5 micrometers, it is recommended to use sigma = 2.5 (half of the spacing)
+def attention_weighted_interpolation(solutions, lys, ly_target, sigma=2.50):
     """Attention-based interpolation using multiple Ly solutions.
     
     Args:
