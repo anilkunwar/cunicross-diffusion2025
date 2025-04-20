@@ -177,6 +177,22 @@ def train_PINN(D11, D12, D21, D22, Lx, Ly, T_max, epochs=2000, lr=0.001):
     
     return model
 
+def evaluate_model(model, times, Lx, Ly):
+    x = torch.linspace(0, Lx, 50)
+    y = torch.linspace(0, Ly, 50)
+    X, Y = torch.meshgrid(x, y, indexing='ij')
+    
+    c1_preds, c2_preds = [], []
+    for t_val in times:
+        t = torch.full((X.numel(), 1), t_val)
+        c_pred = model(X.reshape(-1,1), Y.reshape(-1,1), t)
+        c1 = c_pred[:,0].detach().numpy().reshape(50,50).T
+        c2 = c_pred[:,1].detach().numpy().reshape(50,50).T
+        c1_preds.append(c1)
+        c2_preds.append(c2)
+    
+    return X.numpy(), Y.numpy(), c1_preds, c2_preds
+
 def generate_parameter_sets(D11, D12, D21, D22, Lx, t_max, epochs):
     Ly_range = np.arange(50, 101, 5)  # 50, 55, ..., 100
     params = []
@@ -194,9 +210,10 @@ def generate_parameter_sets(D11, D12, D21, D22, Lx, t_max, epochs):
         params.append(param_set)
     return params
 
-def train_and_save_models(D11, D12, D21, D22, Lx, t_max, epochs, output_dir="pinn_models"):
+def train_and_save_solutions(D11, D12, D21, D22, Lx, t_max, epochs, output_dir="pinn_solutions"):
     os.makedirs(output_dir, exist_ok=True)
     params = generate_parameter_sets(D11, D12, D21, D22, Lx, t_max, epochs)
+    times = np.linspace(0, t_max, 50)
     
     for idx, param_set in enumerate(params):
         print(f"Training model {idx + 1}/{len(params)} for Ly={param_set['Ly']:.1f} μm...")
@@ -208,15 +225,24 @@ def train_and_save_models(D11, D12, D21, D22, Lx, t_max, epochs, output_dir="pin
             epochs=param_set['epochs']
         )
         
-        # Save the model and parameters
-        model_filename = os.path.join(output_dir, 
-            f"model_ly_{param_set['Ly']:.1f}_d11_{D11:.6f}_d12_{D12:.6f}_d21_{D21:.6f}_d22_{D22:.6f}_lx_{Lx:.1f}_tmax_{t_max:.1f}.pt")
-        torch.save({
-            'model_state_dict': model.state_dict(),
-            'params': param_set
-        }, model_filename)
+        # Evaluate model and generate solutions
+        X, Y, c1_preds, c2_preds = evaluate_model(model, times, param_set['Lx'], param_set['Ly'])
         
-        print(f"Saved model {idx + 1} to {model_filename}")
+        # Save the solution
+        solution = {
+            'params': param_set,
+            'X': X,
+            'Y': Y,
+            'c1_preds': c1_preds,
+            'c2_preds': c2_preds,
+            'times': times
+        }
+        solution_filename = os.path.join(output_dir, 
+            f"solution_ly_{param_set['Ly']:.1f}_d11_{D11:.6f}_d12_{D12:.6f}_d21_{D21:.6f}_d22_{D22:.6f}_lx_{Lx:.1f}_tmax_{t_max:.1f}.pkl")
+        with open(solution_filename, 'wb') as f:
+            pickle.dump(solution, f)
+        
+        print(f"Saved solution {idx + 1} to {solution_filename}")
     
     return len(params)
 
@@ -230,5 +256,5 @@ if __name__ == "__main__":
     t_max = 200.0
     epochs = 2000
     
-    num_saved = train_and_save_models(D11, D12, D21, D22, Lx, t_max, epochs)
-    print(f"Saved {num_saved} models to pinn_models/")
+    num_saved = train_and_save_solutions(D11, D12, D21, D22, Lx, t_max, epochs)
+    print(f"Saved {num_saved} solutions to pinn_solutions/")
