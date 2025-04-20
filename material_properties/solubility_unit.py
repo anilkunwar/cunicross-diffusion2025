@@ -42,8 +42,8 @@ st.write("Enter the temperature in Kelvin and the solubility of Copper (Cu) and 
 
 # Input fields
 temperature_k = st.number_input("Temperature (K)", min_value=505.0, value=513.0, step=1.0, format="%.1f")
-wt_percent_cu = st.number_input("Solubility of Cu (wt. %)", min_value=0.0, value=0.0, step=0.01, format="%.4f")
-wt_percent_ni = st.number_input("Solubility of Ni (wt. %)", min_value=0.0, value=0.0, step=0.01, format="%.4f")
+wt_percent_cu = st.number_input("Solubility of Cu (wt. %)", min_value=0.0, value=2.6, step=0.01, format="%.4f")
+wt_percent_ni = st.number_input("Solubility of Ni (wt. %)", min_value=0.0, value=0.11, step=0.01, format="%.4f")
 
 # Calculate density
 density_sn = calculate_density(temperature_k)
