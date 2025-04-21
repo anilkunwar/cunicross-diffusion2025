@@ -259,13 +259,13 @@ def main():
         st.header("Parameters (Only Height is variable)")
         with st.form("params_form"):
             # Display fixed parameters
-            st.metric(label="D11 (Cu self-diffusion)", value=f"{0.006:.6f}")
+            st.metric(label="D11 (Cu self-diffusion in mm$^2$/s) ", value=f"{0.006:.6f}")
             D11 = 0.006
-            st.metric(label="D12 (Cu cross-diffusion)", value=f"{0.00427:.6f}")
+            st.metric(label="D12 (Cu cross-diffusion in mm$^2$/s)", value=f"{0.00427:.6f}")
             D12 = 0.00427
-            st.metric(label="D21 (Ni cross-diffusion)", value=f"{0.003697:.6f}")
+            st.metric(label="D21 (Ni cross-diffusion in mm$^2$/s)", value=f"{0.003697:.6f}")
             D21 = 0.003697
-            st.metric(label="D22 (Ni self-diffusion)", value=f"{0.0054:.6f}")
+            st.metric(label="D22 (Ni self-diffusion in mm$^2$/s)", value=f"{0.0054:.6f}")
             D22 = 0.0054
             st.metric(label="Width (μm)", value=f"{60.0:.1f}")
             Lx = 60.0
