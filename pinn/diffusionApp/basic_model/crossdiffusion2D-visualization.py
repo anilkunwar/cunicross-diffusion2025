@@ -179,7 +179,7 @@ def get_solution(target_params, ly_target):
     st.session_state.current_solution = solution
     return solution
     
-def plot_solution(solution, downsample):
+def plot_solution(solution, downsample, cmap_copper, cmap_nickel):
     time_index = st.session_state.get('time_index', 0)
     
     # Extract original coordinates
@@ -211,7 +211,7 @@ def plot_solution(solution, downsample):
         z=c1,  # No transposition
         x=x_ds,
         y=y_ds,
-        colorscale='Viridis',
+        colorscale=cmap_copper, #'Viridis',
         colorbar=dict(title='Cu (mol/cm³)', x=0.45)
     ), row=1, col=1)
     
@@ -219,7 +219,7 @@ def plot_solution(solution, downsample):
         z=c2,  # No transposition
         x=x_ds,
         y=y_ds,
-        colorscale='Cividis',
+        colorscale=cmap_nickel, #'Cividis',
         colorbar=dict(title='Ni (mol/cm³)', x=1.02)
     ), row=1, col=2)
     
@@ -239,6 +239,19 @@ def plot_solution(solution, downsample):
 def main():
     st.set_page_config(layout="wide", page_title="PINN Diffusion Visualizer")
     st.title("Attention Mechanism assisted PINN model for study of size effect on Ni and Cu Cross-Diffusion in Solder ")
+    # Colormap options
+    cmaps = [
+        'aggrnyl', 'agsunset', 'algae', 'amp', 'armyrose', 'balance', 'blackbody', 'bluered', 
+        'blues', 'blugrn', 'bluyl', 'brbg', 'brwnyl', 'bugn', 'bupu', 'burg', 'burgyl', 
+        'cividis', 'curl', 'darkmint', 'deep', 'delta', 'dense', 'earth', 'edge', 'electric', 
+        'emrld', 'fall', 'geyser', 'gnbu', 'gray', 'greens', 'greys', 'haline', 'hot', 'hsv', 
+        'ice', 'icefire', 'inferno', 'jet', 'magenta', 'magma', 'matter', 'mint', 'mrybm', 
+        'mygbm', 'oranges', 'orrd', 'oryel', 'oxy', 'peach', 'phase', 'picnic', 'pinkyl', 
+        'piyg', 'plasma', 'plotly3', 'portland', 'prgn', 'puor', 'purp', 'purples', 'purpor', 
+        'rainbow', 'rdgy', 'rdpu', 'rdylbu', 'rdylgn', 'reds', 'solar', 'spectral', 'speed', 
+        'sunset', 'sunsetdark', 'teal', 'tealgrn', 'tealrose', 'tempo', 'temps', 'thermal', 
+        'tropic', 'turbid', 'turbo', 'twilight', 'viridis', 'ylgn', 'ylgnbu', 'ylorbr', 'ylorrd'
+    ]
     
     # Sidebar controls
     with st.sidebar:
@@ -270,7 +283,16 @@ def main():
             st.form_submit_button("Update")
         
         # Performance controls
-        with st.expander("Performance Settings"):
+        #with st.expander("Performance Settings"):
+            #downsample = st.slider("Detail Level", 1, 4, DOWNSAMPLE_FACTOR)
+            #if st.button("Clear Cache"):
+                #st.session_state.solution_cache.clear()
+                #st.session_state.current_solution = None
+                #st.rerun()
+        # Colormap selection and performance settings for visualization
+        with st.expander("Visualization  Settings"):
+            cmap_copper = st.selectbox("Copper Colormap", cmaps, index=cmaps.index('viridis'))
+            cmap_nickel = st.selectbox("Nickel Colormap", cmaps, index=cmaps.index('cividis'))
             downsample = st.slider("Detail Level", 1, 4, DOWNSAMPLE_FACTOR)
             if st.button("Clear Cache"):
                 st.session_state.solution_cache.clear()
@@ -303,7 +325,7 @@ def main():
         col2.metric("Simulation Time", f"{solution['params']['t_max']} s")
         
         # Plot solution
-        plot_solution(solution, downsample)
+        plot_solution(solution, downsample, cmap_copper, cmap_nickel)
 
 if __name__ == "__main__":
     main()
