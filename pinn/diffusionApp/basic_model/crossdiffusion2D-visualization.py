@@ -269,7 +269,7 @@ def main():
             D22 = 0.0054
             st.metric(label="Width (μm)", value=f"{60.0:.1f}")
             Lx = 60.0
-            st.metric(label="Time (s)", value=f"{200.0:.1f}")
+            st.metric(label="Max. Time (s)", value=f"{200.0:.1f}")
             t_max = 200.0
             #st.write(f"**D11 (Cu self-diffusion)**: {0.006:.6f}")
             #D11 = 0.006
