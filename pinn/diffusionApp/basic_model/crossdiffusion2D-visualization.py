@@ -245,16 +245,27 @@ def main():
         #st.header("Parameters")
         st.header("Parameters (Only Height is variable)")
         with st.form("params_form"):
-            #D11 = st.number_input("D11 (Cu self-diffusion)", 0.001, 1.0, 0.006, 0.0001, "%.6f")
-            #st.metric(label="D11 (Cu self-diffusion)", value=f"{0.006:.6f}")
-            #D11 = 0.006
-            st.write(f"**D11 (Cu self-diffusion)**: {0.006:.6f}")
+            # Display fixed parameters
+            st.metric(label="D11 (Cu self-diffusion)", value=f"{0.006:.6f}")
             D11 = 0.006
-            D12 = st.number_input("D12 (Cu cross-diffusion)", 0.0, 1.0, 0.00427, 0.0001, "%.6f")
-            D21 = st.number_input("D21 (Ni cross-diffusion)", 0.0, 1.0, 0.003697, 0.0001, "%.6f")
-            D22 = st.number_input("D22 (Ni self-diffusion)", 0.001, 1.0, 0.0054, 0.0001, "%.6f")
-            Lx = st.number_input("Width (μm)", 1.0, 100.0, 60.0, 1.0)
-            t_max = st.number_input("Time (s)", 1.0, 3600.0, 200.0, 10.0)
+            st.metric(label="D12 (Cu cross-diffusion)", value=f"{0.00427:.6f}")
+            D12 = 0.00427
+            st.metric(label="D21 (Ni cross-diffusion)", value=f"{0.003697:.6f}")
+            D21 = 0.003697
+            st.metric(label="D22 (Ni self-diffusion)", value=f"{0.0054:.6f}")
+            D22 = 0.0054
+            st.metric(label="Width (μm)", value=f"{60.0:.1f}")
+            Lx = 60.0
+            st.metric(label="Time (s)", value=f"{200.0:.1f}")
+            t_max = 200.0
+            #st.write(f"**D11 (Cu self-diffusion)**: {0.006:.6f}")
+            #D11 = 0.006
+            #D11 = st.number_input("D11 (Cu self-diffusion)", 0.001, 1.0, 0.006, 0.0001, "%.6f")
+            #D12 = st.number_input("D12 (Cu cross-diffusion)", 0.0, 1.0, 0.00427, 0.0001, "%.6f")
+            #D21 = st.number_input("D21 (Ni cross-diffusion)", 0.0, 1.0, 0.003697, 0.0001, "%.6f")
+            #D22 = st.number_input("D22 (Ni self-diffusion)", 0.001, 1.0, 0.0054, 0.0001, "%.6f")
+            #Lx = st.number_input("Width (μm)", 1.0, 100.0, 60.0, 1.0)
+            #t_max = st.number_input("Time (s)", 1.0, 3600.0, 200.0, 10.0)
             ly_target = st.number_input("Height (μm)", 50.0, 100.0, 60.0, 0.1)
             st.form_submit_button("Update")
         
