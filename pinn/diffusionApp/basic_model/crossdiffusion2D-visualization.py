@@ -322,7 +322,8 @@ def main():
         st.subheader("Solution Details")
         col1, col2 = st.columns(2)
         col1.metric("Domain Size", f"{solution['params']['Lx']}  μm × {solution['params']['Ly']} μm")
-        col2.metric("Simulation Time", f"{solution['params']['t_max']} s")
+        #col2.metric("Simulation Time", f"{solution['params']['t_max']} s")
+        col2.metric("Current Time", f"{solution['times'][time_index]:.1f} s")
         
         # Plot solution
         plot_solution(solution, downsample, cmap_copper, cmap_nickel)
