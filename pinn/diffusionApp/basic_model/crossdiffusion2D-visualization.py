@@ -321,7 +321,7 @@ def main():
         # Display solution info
         st.subheader("Solution Details")
         col1, col2 = st.columns(2)
-        col1.metric("Domain Size", f"{solution['params']['Lx']} × {solution['params']['Ly']} μm")
+        col1.metric("Domain Size", f"{solution['params']['Lx']}  μm × {solution['params']['Ly']} μm")
         col2.metric("Simulation Time", f"{solution['params']['t_max']} s")
         
         # Plot solution
