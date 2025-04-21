@@ -278,7 +278,7 @@ def main():
             #D21 = st.number_input("D21 (Ni cross-diffusion)", 0.0, 1.0, 0.003697, 0.0001, "%.6f")
             #D22 = st.number_input("D22 (Ni self-diffusion)", 0.001, 1.0, 0.0054, 0.0001, "%.6f")
             #Lx = st.number_input("Width (μm)", 1.0, 100.0, 60.0, 1.0)
-            #t_max = st.number_input("Time (s)", 1.0, 3600.0, 200.0, 10.0)
+            #t_max = st.number_input("Max. Time (s)", 1.0, 3600.0, 200.0, 10.0)
             ly_target = st.number_input("Height (μm)", 50.0, 100.0, 60.0, 0.1)
             st.form_submit_button("Update")
         
