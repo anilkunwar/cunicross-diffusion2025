@@ -238,6 +238,7 @@ def plot_solution(solution, downsample):
 
 def main():
     st.set_page_config(layout="wide", page_title="PINN Diffusion Visualizer")
+    st.title("Attention Mechanism assisted PINN model for study of size effect on Ni and Cu Cross-Diffusion in Solder ")
     
     # Sidebar controls
     with st.sidebar:
