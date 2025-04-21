@@ -242,7 +242,8 @@ def main():
     
     # Sidebar controls
     with st.sidebar:
-        st.header("Parameters")
+        #st.header("Parameters")
+        st.header("Parameters (Only Ly is variable)")
         with st.form("params_form"):
             D11 = st.number_input("D11 (Cu self-diffusion)", 0.001, 1.0, 0.006, 0.0001, "%.6f")
             D12 = st.number_input("D12 (Cu cross-diffusion)", 0.0, 1.0, 0.00427, 0.0001, "%.6f")
