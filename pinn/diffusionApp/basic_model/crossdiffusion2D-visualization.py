@@ -9,7 +9,8 @@ from scipy.interpolate import RegularGridInterpolator
 from scipy.spatial.distance import cdist
 
 # Configuration
-SOLUTION_DIR = "pinn_solutions"
+#SOLUTION_DIR = "pinn_solutions"
+SOLUTION_DIR = os.path.join(os.path.dirname(__file__), "pinn_solutions")
 MAX_CACHE_SIZE = 10  # Adjust based on available memory
 DOWNSAMPLE_FACTOR = 2  # Reduce rendering resolution
 
