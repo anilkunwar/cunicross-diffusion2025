@@ -12,6 +12,9 @@ Ly of the domain is changed whereas Lx remains constant
 Height-variation (Ly) Model with Visualization of Concentration and Flux:
 [![Visualization via Streamlit](https://static.streamlit.io/badges/streamlit_badge_black_white.svg)](https://sizeeffectdiffusion2d.streamlit.app/)
 
+Visualization of the Concentration and Flux fields for variable solubilities of solutes (Ni and Cu) and height Ly: 
+[![Visualization via Streamlit](https://static.streamlit.io/badges/streamlit_badge_black_white.svg)](https://multivariatecrossdiffusion2d.streamlit.app/ )
+
 # How to perform the proper rendering of interactive visualization?
 
 a. Tracking the boundary conditions at the appropriate geometry location:
