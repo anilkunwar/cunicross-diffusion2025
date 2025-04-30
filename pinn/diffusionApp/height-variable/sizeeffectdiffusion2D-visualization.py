@@ -6,6 +6,7 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import pandas as pd
 import io
+import os
 import zipfile
 from scipy.interpolate import RegularGridInterpolator
 from scipy.spatial.distance import cdist
