@@ -12,7 +12,9 @@ from scipy.spatial.distance import cdist
 import matplotlib.pyplot as plt
 import seaborn as sns
 
-SOLUTION_DIR = "./pinn_solutions"
+#SOLUTION_DIR = "pinn_solutions"
+SOLUTION_DIR = os.path.join(os.path.dirname(__file__), "pinn_solutions")
+
 
 @st.cache_data
 def load_solutions(solution_dir):
