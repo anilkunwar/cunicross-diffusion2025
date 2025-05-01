@@ -15,6 +15,9 @@ Height-variation (Ly) Model with Visualization of Concentration and Flux:
 Visualization of the Concentration and Flux fields for variable solubilities of solutes (Ni and Cu) and height Ly: 
 [![Visualization via Streamlit](https://static.streamlit.io/badges/streamlit_badge_black_white.svg)](https://multivariatecrossdiffusion2d.streamlit.app/ )
 
+Visualization of the training history 
+[![Visualization via Streamlit](https://static.streamlit.io/badges/streamlit_badge_black_white.svg)](https://diffusionpinntraining-history.streamlit.app/)
+
 # How to perform the proper rendering of interactive visualization?
 
 a. Tracking the boundary conditions at the appropriate geometry location:
