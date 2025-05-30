@@ -507,25 +507,7 @@ def main():
         file_name=f"{filename_2d}.pdf",
         mime="application/pdf"
     )
-    st.subheader("Visualization Settings")
-    cmap_cu = st.selectbox("Cu Heatmap Colormap", options=COLORMAPS, index=COLORMAPS.index('viridis'))
-    cmap_ni = st.selectbox("Ni Heatmap Colormap", options=COLORMAPS, index=COLORMAPS.index('magma'))
-    curve_colormap = st.selectbox("Curve Colormap", options=['viridis', 'plasma', 'inferno', 'magma', 'tab10', 'Set1', 'Set2'], index=0)
-    sidebar_metric = st.selectbox("Sidebar Metric for Curves", options=['mean_cu', 'mean_ni', 'loss'], index=0)
-    label_size = st.slider("Axis Label Size", min_value=8, max_value=20, value=12, step=1)
-    title_size = st.slider("Title Size", min_value=10, max_value=24, value=14, step=1)
-    tick_label_size = st.slider("Tick Label Size", min_value=6, max_value=16, value=10, step=1)
-    legend_loc = st.selectbox("Legend Location", options=['upper right', 'upper left', 'lower right', 'lower left', 'center', 'best'], index=0)
-    axis_linewidth = st.slider("Axis Line Width", min_value=0.5, max_value=3.0, value=1.5, step=0.1)
-    tick_major_width = st.slider("Tick Major Width", min_value=0.5, max_value=3.0, value=1.5, step=0.1)
-    tick_major_length = st.slider("Tick Major Length", min_value=2.0, max_value=10.0, value=4.0, step=0.5)
-    fig_width = st.slider("Figure Width (inches)", min_value=4.0, max_value=12.0, value=8.0, step=0.5)
-    fig_height = st.slider("Figure Height (inches)", min_value=3.0, max_value=8.0, value=6.0, step=0.5)
-    curve_linewidth = st.slider("Curve Line Width", min_value=0.5, max_value=3.0, value=1.0, step=0.1)
-    grid_alpha = st.slider("Grid Opacity", min_value=0.0, max_value=1.0, value=0.3, step=0.1)
-    grid_linestyle = st.selectbox("Grid Line Style", options=['--', '-', ':', '-.'], index=0)
-    legend_frameon = st.checkbox("Show Legend Frame", value=True)
-    legend_framealpha = st.slider("Legend Frame Opacity", min_value=0.0, max_value=1.0, value=0.8, step=0.1)
+    
     st.subheader("Centerline Concentration Curves")
     time_indices = st.multiselect(
         "Select Time Indices for Curves",
