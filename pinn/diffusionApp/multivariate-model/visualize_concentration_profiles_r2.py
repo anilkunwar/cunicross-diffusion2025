@@ -444,8 +444,8 @@ def main():
     c_cus = sorted(set(c_cus))
     c_nis = sorted(set(c_nis))
     
-    # Parameter selection
-    st.subheader("Select Parameters")
+    # Parameter selection for single solution
+    st.subheader("Select Parameters for Single Solution")
     ly_choice = st.selectbox("Domain Height (Ly, μm)", options=lys, format_func=lambda x: f"{x:.1f}")
     c_cu_choice = st.selectbox("Cu Boundary Concentration (mol/cc)", options=c_cus, format_func=lambda x: f"{x:.1e}")
     c_ni_choice = st.selectbox("Ni Boundary Concentration (mol/cc)", options=c_nis, format_func=lambda x: f"{x:.1e}")
@@ -493,7 +493,8 @@ def main():
         tick_label_size = st.slider("Tick Label Size", min_value=6, max_value=16, value=10, step=1)
         legend_loc = st.selectbox(
             "Legend Location",
-            options=['upper right', 'upper left', 'lower right', 'lower left', 'center', 'best'],
+            options=['upper right', 'upper left', 'lower right', 'lower left', 'center', 'best',
+                     'right', 'left', 'above', 'below'],
             index=0
         )
         curve_colormap = st.selectbox(
@@ -512,7 +513,7 @@ def main():
         legend_frameon = st.checkbox("Show Legend Frame", value=True)
         legend_framealpha = st.slider("Legend Frame Opacity", min_value=0.0, max_value=1.0, value=0.8, step=0.1)
     
-    # Load or interpolate solution
+    # Load or interpolate single solution
     try:
         solution = load_and_interpolate_solution(solutions, params_list, ly_target, c_cu_target, c_ni_target)
     except Exception as e:
@@ -581,21 +582,75 @@ def main():
     
     # Parameter Sweep Curves
     st.subheader("Parameter Sweep Curves")
+    
+    # Allow custom parameter combinations for interpolation
+    with st.expander("Add Custom Parameter Combinations for Sweep"):
+        num_custom_params = st.number_input("Number of Custom Parameter Sets", min_value=0, max_value=5, value=0, step=1)
+        custom_params = []
+        for i in range(num_custom_params):
+            st.write(f"Custom Parameter Set {i+1}")
+            ly_custom = st.number_input(
+                f"Custom Ly (μm) {i+1}",
+                min_value=30.0,
+                max_value=120.0,
+                value=ly_choice,
+                step=0.1,
+                format="%.1f",
+                key=f"ly_custom_{i}"
+            )
+            c_cu_custom = st.number_input(
+                f"Custom C_Cu (mol/cc) {i+1}",
+                min_value=1.5e-3,
+                max_value=2.9e-3,
+                value=c_cu_choice,
+                step=0.1e-3,
+                format="%.1e",
+                key=f"c_cu_custom_{i}"
+            )
+            c_ni_custom = st.number_input(
+                f"Custom C_Ni (mol/cc) {i+1}",
+                min_value=4.0e-4,
+                max_value=1.8e-3,
+                value=c_ni_choice,
+                step=0.1e-4,
+                format="%.1e",
+                key=f"c_ni_custom_{i}"
+            )
+            custom_params.append((ly_custom, c_cu_custom, c_ni_custom))
+    
+    # Combine exact and custom parameters
     param_options = [(ly, c_cu, c_ni) for ly, c_cu, c_ni in params_list]
     param_labels = [f"$L_y$={ly:.1f}, $C_{{Cu}}$={c_cu:.1e}, $C_{{Ni}}$={c_ni:.1e}" for ly, c_cu, c_ni in param_options]
     default_params = param_options[:min(4, len(param_options))]
     selected_labels = st.multiselect(
-        "Select Parameter Combinations",
+        "Select Exact Parameter Combinations",
         options=param_labels,
         default=[param_labels[param_options.index(p)] for p in default_params],
         format_func=lambda x: x
     )
     selected_params = [param_options[param_labels.index(label)] for label in selected_labels]
+    
+    # Add custom parameters to the selected parameters
+    selected_params.extend(custom_params)
+    
+    # Generate solutions for selected parameters (exact or interpolated)
+    sweep_solutions = []
+    sweep_params_list = []
+    for params in selected_params:
+        ly, c_cu, c_ni = params
+        try:
+            sol = load_and_interpolate_solution(solutions, params_list, ly, c_cu, c_ni)
+            sweep_solutions.append(sol)
+            sweep_params_list.append(params)
+        except Exception as e:
+            st.warning(f"Failed to load or interpolate solution for Ly={ly:.1f}, C_Cu={c_cu:.1e}, C_Ni={c_ni:.1e}: {str(e)}")
+    
+    # Plot parameter sweep
     sweep_time_index = st.slider("Select Time Index for Sweep", 0, len(solution['times'])-1, len(solution['times'])-1)
     
-    if selected_params:
+    if sweep_solutions and sweep_params_list:
         fig_sweep, filename_sweep = plot_parameter_sweep(
-            solutions, params_list, selected_params, sweep_time_index, sidebar_metric=sidebar_metric,
+            sweep_solutions, sweep_params_list, sweep_params_list, sweep_time_index, sidebar_metric=sidebar_metric,
             label_size=label_size, title_size=title_size, tick_label_size=tick_label_size,
             legend_loc=legend_loc, curve_colormap=curve_colormap,
             axis_linewidth=axis_linewidth, tick_major_width=tick_major_width,
