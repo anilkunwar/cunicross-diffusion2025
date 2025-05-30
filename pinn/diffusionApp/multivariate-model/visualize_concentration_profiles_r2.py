@@ -262,7 +262,13 @@ def plot_2d_concentration(solution, time_index, output_dir="figures", cmap_cu='v
     
     return fig, base_filename
 
-def plot_centerline_curves(solution, time_indices, sidebar_metric='mean_cu', output_dir="figures"):
+def plot_centerline_curves(
+    solution, time_indices, sidebar_metric='mean_cu', output_dir="figures",
+    label_size=12, title_size=14, tick_label_size=10, legend_loc='upper right',
+    curve_colormap='viridis', axis_linewidth=1.5, tick_major_width=1.5,
+    tick_major_length=4.0, fig_width=8.0, fig_height=6.0, curve_linewidth=1.0,
+    grid_alpha=0.3, grid_linestyle='--', legend_frameon=True, legend_framealpha=0.8
+):
     x_coords = solution['X'][:, 0]
     y_coords = solution['Y'][0, :]
     Lx = solution['params']['Lx']
@@ -281,47 +287,57 @@ def plot_centerline_curves(solution, time_indices, sidebar_metric='mean_cu', out
         sidebar_data = [np.mean(c2) for c2 in solution['c2_preds']]
         sidebar_label = 'Mean Ni Conc. (mol/cc)'
     
-    fig = plt.figure(figsize=(8, 6), constrained_layout=True)
+    fig = plt.figure(figsize=(fig_width, fig_height), constrained_layout=True)
     gs = fig.add_gridspec(1, 4, width_ratios=[1, 1, 0.05, 0.5])
     ax1 = fig.add_subplot(gs[0])
     ax2 = fig.add_subplot(gs[1])
     ax3 = fig.add_subplot(gs[3])
     
     # Centerline curves
-    colors = cm.viridis(np.linspace(0, 1, len(time_indices)))
+    colors = cm.get_cmap(curve_colormap)(np.linspace(0, 1, len(time_indices)))
     for idx, t_idx in enumerate(time_indices):
         t_val = times[t_idx]
         c1 = solution['c1_preds'][t_idx][:, center_idx]
         c2 = solution['c2_preds'][t_idx][:, center_idx]
-        ax1.plot(y_coords, c1, label=f't = {t_val:.1f} s', color=colors[idx])
-        ax2.plot(y_coords, c2, label=f't = {t_val:.1f} s', color=colors[idx])
+        ax1.plot(y_coords, c1, label=f't = {t_val:.1f} s', color=colors[idx], linewidth=curve_linewidth)
+        ax2.plot(y_coords, c2, label=f't = {t_val:.1f} s', color=colors[idx], linewidth=curve_linewidth)
     
-    ax1.set_xlabel('y (μm)')
-    ax1.set_ylabel('Cu Conc. (mol/cc)')
-    ax1.set_title(f'Cu at x = {Lx/2:.1f} μm')
-    ax1.legend(fontsize=8, loc='upper right')
-    ax1.grid(True)
+    # Axis styling
+    for ax in [ax1, ax2, ax3]:
+        for spine in ax.spines.values():
+            spine.set_linewidth(axis_linewidth)
+        ax.tick_params(
+            axis='both',
+            which='major',
+            width=tick_major_width,
+            length=tick_major_length,
+            labelsize=tick_label_size
+        )
+        ax.grid(True, linestyle=grid_linestyle, alpha=grid_alpha)
+    
+    ax1.set_xlabel('y (μm)', fontsize=label_size)
+    ax1.set_ylabel('Cu Conc. (mol/cc)', fontsize=label_size)
+    ax1.set_title(f'Cu at x = {Lx/2:.1f} μm', fontsize=title_size)
+    ax1.legend(fontsize=8, loc=legend_loc, frameon=legend_frameon, framealpha=legend_framealpha)
     ax1.ticklabel_format(style='sci', axis='y', scilimits=(0,0))
     
-    ax2.set_xlabel('y (μm)')
-    ax2.set_ylabel('Ni Conc. (mol/cc)')
-    ax2.set_title(f'Ni at x = {Lx/2:.1f} μm')
-    ax2.legend(fontsize=8, loc='upper right')
-    ax2.grid(True)
+    ax2.set_xlabel('y (μm)', fontsize=label_size)
+    ax2.set_ylabel('Ni Conc. (mol/cc)', fontsize=label_size)
+    ax2.set_title(f'Ni at x = {Lx/2:.1f} μm', fontsize=title_size)
+    ax2.legend(fontsize=8, loc=legend_loc, frameon=legend_frameon, framealpha=legend_framealpha)
     ax2.ticklabel_format(style='sci', axis='y', scilimits=(0,0))
     
     # Sidebar plot
-    ax3.plot(sidebar_data, times, 'k-')
-    ax3.set_xlabel(sidebar_label, fontsize=10)
-    ax3.set_ylabel('Time (s)')
-    ax3.set_title('Metric vs. Time', fontsize=12)
-    ax3.grid(True)
+    ax3.plot(sidebar_data, times, 'k-', linewidth=curve_linewidth)
+    ax3.set_xlabel(sidebar_label, fontsize=label_size)
+    ax3.set_ylabel('Time (s)', fontsize=label_size)
+    ax3.set_title('Metric vs. Time', fontsize=title_size)
     ax3.ticklabel_format(style='sci', axis='x', scilimits=(0,0))
     
     param_text = f"$L_y$ = {Ly:.1f} μm, $C_{{Cu}}$ = {solution['params']['C_Cu']:.1e}, $C_{{Ni}}$ = {solution['params']['C_Ni']:.1e}"
     if solution.get('interpolated', False):
         param_text += " (Interpolated)"
-    fig.suptitle(f'Centerline Concentration Profiles\n{param_text}', fontsize=14)
+    fig.suptitle(f'Centerline Concentration Profiles\n{param_text}', fontsize=title_size)
     
     os.makedirs(output_dir, exist_ok=True)
     base_filename = f"conc_centerline_ly_{Ly:.1f}_ccu_{solution['params']['C_Cu']:.1e}_cni_{solution['params']['C_Ni']:.1e}"
