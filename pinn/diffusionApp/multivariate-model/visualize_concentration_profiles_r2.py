@@ -26,39 +26,28 @@ mpl.rcParams['grid.alpha'] = 0.3
 SOLUTION_DIR = os.path.join(os.path.dirname(__file__), "pinn_solutions")
 
 # Available colormaps for selection
-#COLORMAPS = [
-#    'viridis', 'magma', 'plasma', 'inferno', 'hot',
-#    'coolwarm', 'RdBu', 'seismic', 'Blues', 'Reds'
-#]
 COLORMAPS = [
     # Perceptually Uniform Sequential
     "viridis", "plasma", "inferno", "magma", "cividis",
-
     # Sequential
     "Greys", "Purples", "Blues", "Greens", "Oranges", "Reds",
     "YlOrBr", "YlOrRd", "OrRd", "PuRd", "RdPu", "BuPu", "GnBu",
     "PuBu", "YlGnBu", "PuBuGn", "BuGn", "YlGn",
-
     # Sequential (2)
     "cubehelix", "binary", "gist_yarg", "gist_gray", "gray", "bone",
     "pink", "spring", "summer", "autumn", "winter",
-
     # Diverging
     "PiYG", "PRGn", "BrBG", "PuOr", "RdGy", "RdBu", "RdYlBu", "RdYlGn",
     "Spectral", "coolwarm", "bwr", "seismic",
-
     # Cyclic
     "twilight", "twilight_shifted", "hsv",
-
     # Qualitative
     "Pastel1", "Pastel2", "Paired", "Accent", "Dark2", "Set1", "Set2", "Set3",
     "tab10", "tab20", "tab20b", "tab20c",
-
     # Miscellaneous
     "flag", "prism", "ocean", "gist_earth", "terrain", "gist_stern", "gnuplot",
     "gnuplot2", "CMRmap", "cubehelix", "brg", "gist_rainbow", "rainbow",
     "jet", "nipy_spectral", "gist_ncar",
-
     # Reversed versions
     "viridis_r", "plasma_r", "inferno_r", "magma_r", "cividis_r", "Greys_r",
     "Purples_r", "Blues_r", "Greens_r", "Oranges_r", "Reds_r", "YlOrBr_r",
@@ -66,13 +55,6 @@ COLORMAPS = [
     "YlGnBu_r", "PuBuGn_r", "BuGn_r", "YlGn_r", "twilight_r", "twilight_shifted_r",
     "hsv_r", "Spectral_r", "coolwarm_r", "bwr_r", "seismic_r", "RdBu_r",
     "PiYG_r", "PRGn_r", "BrBG_r", "PuOr_r", "RdGy_r", "RdYlBu_r", "RdYlGn_r",
-
-    # Optional: If using `colorcet` or `cmocean`
-    # (uncomment if these libraries are installed)
-    # "cet_fire", "cet_ice", "cet_rainbow", "cet_colorwheel",
-    # "cmo.haline", "cmo.thermal", "cmo.solar", "cmo.ice", "cmo.gray",
-    # "cmo.matter", "cmo.turbid", "cmo.speed", "cmo.deep", "cmo.delta",
-    # "cmo.amp", "cmo.phase", "cmo.balance", "cmo.diff", "cmo.curl", "cmo.tarn"
 ]
 
 @st.cache_data
@@ -347,7 +329,13 @@ def plot_centerline_curves(
     
     return fig, base_filename
 
-def plot_parameter_sweep(solutions, params_list, selected_params, time_index, sidebar_metric='mean_cu', output_dir="figures"):
+def plot_parameter_sweep(
+    solutions, params_list, selected_params, time_index, sidebar_metric='mean_cu', output_dir="figures",
+    label_size=12, title_size=14, tick_label_size=10, legend_loc='upper right',
+    curve_colormap='tab10', axis_linewidth=1.5, tick_major_width=1.5,
+    tick_major_length=4.0, fig_width=8.0, fig_height=6.0, curve_linewidth=1.0,
+    grid_alpha=0.3, grid_linestyle='--', legend_frameon=True, legend_framealpha=0.8
+):
     Lx = solutions[0]['params']['Lx']
     center_idx = 25  # x = Lx/2
     t_val = solutions[0]['times'][time_index]
@@ -366,14 +354,15 @@ def plot_parameter_sweep(solutions, params_list, selected_params, time_index, si
             ly, c_cu, c_ni = params
             sidebar_labels.append(f'$L_y$={ly:.1f}, $C_{{Cu}}$={c_cu:.1e}, $C_{{Ni}}$={c_ni:.1e}')
     
-    fig = plt.figure(figsize=(8, 6), constrained_layout=True)
+    # Create figure with custom size
+    fig = plt.figure(figsize=(fig_width, fig_height), constrained_layout=True)
     gs = fig.add_gridspec(1, 4, width_ratios=[1, 1, 0.05, 0.5])
     ax1 = fig.add_subplot(gs[0])
     ax2 = fig.add_subplot(gs[1])
     ax3 = fig.add_subplot(gs[3])
     
     # Parameter sweep curves
-    colors = cm.tab10(np.linspace(0, 1, 10))
+    colors = cm.get_cmap(curve_colormap)(np.linspace(0, 1, len(selected_params)))
     for idx, (sol, params) in enumerate(zip(solutions, params_list)):
         ly, c_cu, c_ni = params
         if params in selected_params:
@@ -381,33 +370,47 @@ def plot_parameter_sweep(solutions, params_list, selected_params, time_index, si
             c1 = sol['c1_preds'][time_index][:, center_idx]
             c2 = sol['c2_preds'][time_index][:, center_idx]
             label = f'$L_y$={ly:.1f}, $C_{{Cu}}$={c_cu:.1e}, $C_{{Ni}}$={c_ni:.1e}'
-            ax1.plot(y_coords, c1, label=label, color=colors[idx % len(colors)])
-            ax2.plot(y_coords, c2, label=label, color=colors[idx % len(colors)])
+            ax1.plot(y_coords, c1, label=label, color=colors[idx], linewidth=curve_linewidth)
+            ax2.plot(y_coords, c2, label=label, color=colors[idx], linewidth=curve_linewidth)
     
-    ax1.set_xlabel('y (μm)')
-    ax1.set_ylabel('Cu Conc. (mol/cc)')
-    ax1.set_title(f'Cu at x = {Lx/2:.1f} μm, t = {t_val:.1f} s')
-    ax1.legend(fontsize=8, loc='upper right')
-    ax1.grid(True)
+    # Axis styling
+    for ax in [ax1, ax2, ax3]:
+        for spine in ax.spines.values():
+            spine.set_linewidth(axis_linewidth)
+        ax.tick_params(
+            axis='both',
+            which='major',
+            width=tick_major_width,
+            length=tick_major_length,
+            labelsize=tick_label_size
+        )
+        ax.grid(True, linestyle=grid_linestyle, alpha=grid_alpha)
+    
+    ax1.set_xlabel('y (μm)', fontsize=label_size)
+    ax1.set_ylabel('Cu Conc. (mol/cc)', fontsize=label_size)
+    ax1.set_title(f'Cu at x = {Lx/2:.1f} μm, t = {t_val:.1f} s', fontsize=title_size)
+    ax1.legend(fontsize=8, loc=legend_loc, frameon=legend_frameon, framealpha=legend_framealpha)
     ax1.ticklabel_format(style='sci', axis='y', scilimits=(0,0))
     
-    ax2.set_xlabel('y (μm)')
-    ax2.set_ylabel('Ni Conc. (mol/cc)')
-    ax2.set_title(f'Ni at x = {Lx/2:.1f} μm, t = {t_val:.1f} s')
-    ax2.legend(fontsize=8, loc='upper right')
-    ax2.grid(True)
+    ax2.set_xlabel('y (μm)', fontsize=label_size)
+    ax2.set_ylabel('Ni Conc. (mol/cc)', fontsize=label_size)
+    ax2.set_title(f'Ni at x = {Lx/2:.1f} μm, t = {t_val:.1f} s', fontsize=title_size)
+    ax2.legend(fontsize=8, loc=legend_loc, frameon=legend_frameon, framealpha=legend_framealpha)
     ax2.ticklabel_format(style='sci', axis='y', scilimits=(0,0))
     
     # Sidebar bar plot
     ax3.barh(range(len(sidebar_data)), sidebar_data, color='gray', edgecolor='black')
     ax3.set_yticks(range(len(sidebar_data)))
-    ax3.set_yticklabels(sidebar_labels, fontsize=8)
-    ax3.set_xlabel('Mean Cu Conc. (mol/cc)' if sidebar_metric == 'mean_cu' else 'Mean Ni Conc. (mol/cc)' if sidebar_metric == 'mean_ni' else 'Loss')
-    ax3.set_title('Metric per Parameter', fontsize=12)
-    ax3.grid(True, axis='x')
+    ax3.set_yticklabels(sidebar_labels, fontsize=tick_label_size)
+    ax3.set_xlabel(
+        'Mean Cu Conc. (mol/cc)' if sidebar_metric == 'mean_cu' else 'Mean Ni Conc. (mol/cc)' if sidebar_metric == 'mean_ni' else 'Loss',
+        fontsize=label_size
+    )
+    ax3.set_title('Metric per Parameter', fontsize=title_size)
+    ax3.grid(True, axis='x', linestyle=grid_linestyle, alpha=grid_alpha)
     ax3.ticklabel_format(style='sci', axis='x', scilimits=(0,0))
     
-    fig.suptitle('Concentration Profiles for Parameter Sweep', fontsize=14)
+    fig.suptitle('Concentration Profiles for Parameter Sweep', fontsize=title_size)
     
     os.makedirs(output_dir, exist_ok=True)
     base_filename = f"conc_sweep_t_{t_val:.1f}"
@@ -420,28 +423,34 @@ def plot_parameter_sweep(solutions, params_list, selected_params, time_index, si
 def main():
     st.title("Publication-Quality Concentration Profiles")
     
+    # Load solutions
     solutions, params_list, lys, c_cus, c_nis, load_logs = load_solutions(SOLUTION_DIR)
     
+    # Display load logs
     if load_logs:
         with st.expander("Load Log"):
             for log in load_logs:
                 st.write(log)
     
+    # Check if solutions were loaded
     if not solutions:
         st.error("No valid solution files found in pinn_solutions directory. Please check the directory and file contents.")
         return
     
     st.write(f"Loaded {len(solutions)} solutions. Unique Ly: {len(set(lys))}, C_Cu: {len(set(c_cus))}, C_Ni: {len(set(c_nis))}")
     
+    # Sort unique parameters
     lys = sorted(set(lys))
     c_cus = sorted(set(c_cus))
     c_nis = sorted(set(c_nis))
     
+    # Parameter selection
     st.subheader("Select Parameters")
     ly_choice = st.selectbox("Domain Height (Ly, μm)", options=lys, format_func=lambda x: f"{x:.1f}")
     c_cu_choice = st.selectbox("Cu Boundary Concentration (mol/cc)", options=c_cus, format_func=lambda x: f"{x:.1e}")
     c_ni_choice = st.selectbox("Ni Boundary Concentration (mol/cc)", options=c_nis, format_func=lambda x: f"{x:.1e}")
     
+    # Custom parameters for interpolation
     use_custom_params = st.checkbox("Use Custom Parameters for Interpolation", value=False)
     if use_custom_params:
         ly_target = st.number_input(
@@ -471,17 +480,46 @@ def main():
     else:
         ly_target, c_cu_target, c_ni_target = ly_choice, c_cu_choice, c_ni_choice
     
+    # Visualization settings
     st.subheader("Visualization Settings")
     cmap_cu = st.selectbox("Cu Heatmap Colormap", options=COLORMAPS, index=COLORMAPS.index('viridis'))
     cmap_ni = st.selectbox("Ni Heatmap Colormap", options=COLORMAPS, index=COLORMAPS.index('magma'))
     sidebar_metric = st.selectbox("Sidebar Metric for Curves", options=['mean_cu', 'mean_ni', 'loss'], index=0)
     
+    # Figure customization controls
+    with st.expander("Figure Customization"):
+        label_size = st.slider("Axis Label Size", min_value=8, max_value=20, value=12, step=1)
+        title_size = st.slider("Title Size", min_value=10, max_value=24, value=14, step=1)
+        tick_label_size = st.slider("Tick Label Size", min_value=6, max_value=16, value=10, step=1)
+        legend_loc = st.selectbox(
+            "Legend Location",
+            options=['upper right', 'upper left', 'lower right', 'lower left', 'center', 'best'],
+            index=0
+        )
+        curve_colormap = st.selectbox(
+            "Curve Colormap",
+            options=['viridis', 'plasma', 'inferno', 'magma', 'tab10', 'Set1', 'Set2'],
+            index=4  # Default to 'tab10' for parameter sweep
+        )
+        axis_linewidth = st.slider("Axis Line Width", min_value=0.5, max_value=3.0, value=1.5, step=0.1)
+        tick_major_width = st.slider("Tick Major Width", min_value=0.5, max_value=3.0, value=1.5, step=0.1)
+        tick_major_length = st.slider("Tick Major Length", min_value=2.0, max_value=10.0, value=4.0, step=0.5)
+        fig_width = st.slider("Figure Width (inches)", min_value=4.0, max_value=12.0, value=8.0, step=0.5)
+        fig_height = st.slider("Figure Height (inches)", min_value=3.0, max_value=8.0, value=6.0, step=0.5)
+        curve_linewidth = st.slider("Curve Line Width", min_value=0.5, max_value=3.0, value=1.0, step=0.1)
+        grid_alpha = st.slider("Grid Opacity", min_value=0.0, max_value=1.0, value=0.3, step=0.1)
+        grid_linestyle = st.selectbox("Grid Line Style", options=['--', '-', ':', '-.'], index=0)
+        legend_frameon = st.checkbox("Show Legend Frame", value=True)
+        legend_framealpha = st.slider("Legend Frame Opacity", min_value=0.0, max_value=1.0, value=0.8, step=0.1)
+    
+    # Load or interpolate solution
     try:
         solution = load_and_interpolate_solution(solutions, params_list, ly_target, c_cu_target, c_ni_target)
     except Exception as e:
         st.error(f"Failed to load or interpolate solution: {str(e)}")
         return
     
+    # Display solution details
     st.subheader("Solution Details")
     st.write(f"$L_y$ = {solution['params']['Ly']:.1f} μm")
     st.write(f"$C_{{Cu}}$ = {solution['params']['C_Cu']:.1e} mol/cc")
@@ -491,6 +529,7 @@ def main():
     else:
         st.write("**Status**: Exact solution")
     
+    # 2D Concentration Heatmaps
     st.subheader("2D Concentration Heatmaps")
     time_index = st.slider("Select Time Index for Heatmaps", 0, len(solution['times'])-1, len(solution['times'])-1)
     fig_2d, filename_2d = plot_2d_concentration(solution, time_index, cmap_cu=cmap_cu, cmap_ni=cmap_ni)
@@ -508,6 +547,7 @@ def main():
         mime="application/pdf"
     )
     
+    # Centerline Concentration Curves
     st.subheader("Centerline Concentration Curves")
     time_indices = st.multiselect(
         "Select Time Indices for Curves",
@@ -516,7 +556,15 @@ def main():
         format_func=lambda x: f"t = {solution['times'][x]:.1f} s"
     )
     if time_indices:
-        fig_curves, filename_curves = plot_centerline_curves(solution, time_indices, sidebar_metric=sidebar_metric)
+        fig_curves, filename_curves = plot_centerline_curves(
+            solution, time_indices, sidebar_metric=sidebar_metric,
+            label_size=label_size, title_size=title_size, tick_label_size=tick_label_size,
+            legend_loc=legend_loc, curve_colormap=curve_colormap,
+            axis_linewidth=axis_linewidth, tick_major_width=tick_major_width,
+            tick_major_length=tick_major_length, fig_width=fig_width, fig_height=fig_height,
+            curve_linewidth=curve_linewidth, grid_alpha=grid_alpha, grid_linestyle=grid_linestyle,
+            legend_frameon=legend_frameon, legend_framealpha=legend_framealpha
+        )
         st.pyplot(fig_curves)
         st.download_button(
             label="Download Centerline Plot as PNG",
@@ -531,6 +579,7 @@ def main():
             mime="application/pdf"
         )
     
+    # Parameter Sweep Curves
     st.subheader("Parameter Sweep Curves")
     param_options = [(ly, c_cu, c_ni) for ly, c_cu, c_ni in params_list]
     param_labels = [f"$L_y$={ly:.1f}, $C_{{Cu}}$={c_cu:.1e}, $C_{{Ni}}$={c_ni:.1e}" for ly, c_cu, c_ni in param_options]
@@ -545,7 +594,15 @@ def main():
     sweep_time_index = st.slider("Select Time Index for Sweep", 0, len(solution['times'])-1, len(solution['times'])-1)
     
     if selected_params:
-        fig_sweep, filename_sweep = plot_parameter_sweep(solutions, params_list, selected_params, sweep_time_index, sidebar_metric=sidebar_metric)
+        fig_sweep, filename_sweep = plot_parameter_sweep(
+            solutions, params_list, selected_params, sweep_time_index, sidebar_metric=sidebar_metric,
+            label_size=label_size, title_size=title_size, tick_label_size=tick_label_size,
+            legend_loc=legend_loc, curve_colormap=curve_colormap,
+            axis_linewidth=axis_linewidth, tick_major_width=tick_major_width,
+            tick_major_length=tick_major_length, fig_width=fig_width, fig_height=fig_height,
+            curve_linewidth=curve_linewidth, grid_alpha=grid_alpha, grid_linestyle=grid_linestyle,
+            legend_frameon=legend_frameon, legend_framealpha=legend_framealpha
+        )
         st.pyplot(fig_sweep)
         st.download_button(
             label="Download Sweep Plot as PNG",
