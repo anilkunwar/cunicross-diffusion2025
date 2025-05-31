@@ -352,7 +352,10 @@ def plot_parameter_sweep(
             else:  # mean_ni
                 sidebar_data.append(np.mean(sol['c2_preds'][time_index]))
             ly, c_cu, c_ni = params
-            sidebar_labels.append(f'$L_y$={ly:.1f}, $C_{{Cu}}$={c_cu:.1e}, $C_{{Ni}}$={c_ni:.1e}')
+            label = f'$L_y$={ly:.1f}, $C_{{Cu}}$={c_cu:.1e}, $C_{{Ni}}$={c_ni:.1e}'
+            if sol.get('interpolated', False):
+                label += " (Interpolated)"
+            sidebar_labels.append(label)
     
     # Create figure with custom size
     fig = plt.figure(figsize=(fig_width, fig_height), constrained_layout=True)
@@ -370,6 +373,8 @@ def plot_parameter_sweep(
             c1 = sol['c1_preds'][time_index][:, center_idx]
             c2 = sol['c2_preds'][time_index][:, center_idx]
             label = f'$L_y$={ly:.1f}, $C_{{Cu}}$={c_cu:.1e}, $C_{{Ni}}$={c_ni:.1e}'
+            if sol.get('interpolated', False):
+                label += " (Interpolated)"
             ax1.plot(y_coords, c1, label=label, color=colors[idx], linewidth=curve_linewidth)
             ax2.plot(y_coords, c2, label=label, color=colors[idx], linewidth=curve_linewidth)
     
@@ -386,16 +391,33 @@ def plot_parameter_sweep(
         )
         ax.grid(True, linestyle=grid_linestyle, alpha=grid_alpha)
     
+    # Legend placement
+    legend_positions = {
+        'upper right': {'loc': 'upper right', 'bbox': None},
+        'upper left': {'loc': 'upper left', 'bbox': None},
+        'lower right': {'loc': 'lower right', 'bbox': None},
+        'lower left': {'loc': 'lower left', 'bbox': None},
+        'center': {'loc': 'center', 'bbox': None},
+        'best': {'loc': 'best', 'bbox': None},
+        'right': {'loc': 'center left', 'bbox': (1.05, 0.5)},
+        'left': {'loc': 'center right', 'bbox': (-0.05, 0.5)},
+        'above': {'loc': 'lower center', 'bbox': (0.5, 1.05)},
+        'below': {'loc': 'upper center', 'bbox': (0.5, -0.05)}
+    }
+    legend_params = legend_positions.get(legend_loc, {'loc': 'upper right', 'bbox': None})
+    
     ax1.set_xlabel('y (μm)', fontsize=label_size)
     ax1.set_ylabel('Cu Conc. (mol/cc)', fontsize=label_size)
     ax1.set_title(f'Cu at x = {Lx/2:.1f} μm, t = {t_val:.1f} s', fontsize=title_size)
-    ax1.legend(fontsize=8, loc=legend_loc, frameon=legend_frameon, framealpha=legend_framealpha)
+    ax1.legend(fontsize=8, loc=legend_params['loc'], bbox_to_anchor=legend_params['bbox'],
+               frameon=legend_frameon, framealpha=legend_framealpha)
     ax1.ticklabel_format(style='sci', axis='y', scilimits=(0,0))
     
     ax2.set_xlabel('y (μm)', fontsize=label_size)
     ax2.set_ylabel('Ni Conc. (mol/cc)', fontsize=label_size)
     ax2.set_title(f'Ni at x = {Lx/2:.1f} μm, t = {t_val:.1f} s', fontsize=title_size)
-    ax2.legend(fontsize=8, loc=legend_loc, frameon=legend_frameon, framealpha=legend_framealpha)
+    ax2.legend(fontsize=8, loc=legend_params['loc'], bbox_to_anchor=legend_params['bbox'],
+               frameon=legend_frameon, framealpha=legend_framealpha)
     ax2.ticklabel_format(style='sci', axis='y', scilimits=(0,0))
     
     # Sidebar bar plot
