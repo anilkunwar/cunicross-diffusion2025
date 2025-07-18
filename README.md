@@ -27,7 +27,7 @@ Visualization of the training history
 
 Training History: 
 
-[![meaningtowords](https://img.shields.io/badge/metricsNiCu-streamlit-red)](https://visualizeconcentrationprofiles.streamlit.app/)
+[![meaningtowords](https://img.shields.io/badge/metricsNiCu-streamlit-red)](https://visualizeconcentrationprofiles-cuni.streamlit.app/)
 
 Concentration Fields:
 [![meaningtowords](https://img.shields.io/badge/optimizedConc-streamlit-red)](https://visualizeconcentrationprofiles.streamlit.app/)
