@@ -9,6 +9,8 @@ Basic Model with the Concentration Field Visualization (Includes the variation i
 
 Ly of the domain is changed whereas Lx remains constant
 
+Ni UBM Top and Cu Pillar Bottom (Cross Diffusion - Case II) 
+
 Height-variation (Ly) Model with Visualization of Concentration and Flux:
 [![Visualization via Streamlit](https://static.streamlit.io/badges/streamlit_badge_black_white.svg)](https://sizeeffectdiffusion2d.streamlit.app/)
 
@@ -20,6 +22,47 @@ Optimized visualization of concentration fields
 
 Visualization of the training history 
 [![Visualization via Streamlit](https://static.streamlit.io/badges/streamlit_badge_black_white.svg)](https://diffusionpinntraining-history.streamlit.app/)
+
+Ni UBM Bottom and Cu Pillar Top ( Cross Diffusion -Case I)
+
+Training History: 
+
+[![meaningtowords](https://img.shields.io/badge/metricsNiCu-streamlit-red)](https://visualizeconcentrationprofiles.streamlit.app/)
+
+Concentration Fields:
+[![meaningtowords](https://img.shields.io/badge/optimizedConc-streamlit-red)](https://visualizeconcentrationprofiles.streamlit.app/)
+
+Concentration Fields, Flux and Others:
+[![meaningtowords](https://img.shields.io/badge/solutions-streamlit-red)](https://visualizeconcentrationprofiles.streamlit.app/)
+
+
+Cu Pillar Bottom and Cu Pillar Top ( SelfDiffusion - Symmetry)
+
+Training History: 
+
+[![meaningtowords](https://img.shields.io/badge/metricsNiCu-streamlit-red)](https://visualizeconcentrationprofiles.streamlit.app/)
+
+Concentration Fields:
+[![meaningtowords](https://img.shields.io/badge/optimizedConc-streamlit-red)](https://visualizeconcentrationprofiles.streamlit.app/)
+
+Concentration Fields, Flux and Others:
+[![meaningtowords](https://img.shields.io/badge/solutions-streamlit-red)](https://visualizeconcentrationprofiles.streamlit.app/)
+
+
+Ni UBM Bottom and Ni UBM Top (  SelfDiffusion - Symmetry)
+
+Training History: 
+
+[![meaningtowords](https://img.shields.io/badge/metricsNiCu-streamlit-red)](https://visualizeconcentrationprofiles.streamlit.app/)
+
+Concentration Fields:
+[![meaningtowords](https://img.shields.io/badge/optimizedConc-streamlit-red)](https://visualizeconcentrationprofiles.streamlit.app/)
+
+Concentration Fields, Flux and Others:
+[![meaningtowords](https://img.shields.io/badge/solutions-streamlit-red)](https://visualizeconcentrationprofiles.streamlit.app/)
+
+
+
 
 # How to perform the proper rendering of interactive visualization?
 
