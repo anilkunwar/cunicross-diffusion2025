@@ -25,12 +25,11 @@ Visualization of the training history
 
 *Ni UBM Bottom and Cu Pillar Top ( Cross Diffusion -Case I)*
 
-Training History: 
-
-[![meaningtowords](https://img.shields.io/badge/metricsNiCu-streamlit-red)](https://visualizeconcentrationprofiles-cuni.streamlit.app/)
+Training History:  
+[![meaningtowords](https://img.shields.io/badge/metricsNiCu-streamlit-red)](https://cunidiffusionpinn-traininghistory.streamlit.app/)
 
 Concentration Fields:
-[![meaningtowords](https://img.shields.io/badge/optimizedConc-streamlit-red)](https://visualizeconcentrationprofiles.streamlit.app/)
+[![meaningtowords](https://img.shields.io/badge/optimizedConc-streamlit-red)](https://visualizeconcentrationprofiles-cuni.streamlit.app/)
 
 Concentration Fields, Flux and Others:
 [![meaningtowords](https://img.shields.io/badge/solutions-streamlit-red)](https://multivariatecrossdiffusion2d-cuni.streamlit.app/)
@@ -40,10 +39,10 @@ Concentration Fields, Flux and Others:
 
 Training History: 
 
-[![meaningtowords](https://img.shields.io/badge/metricsNiCu-streamlit-red)](https://visualizeconcentrationprofiles-cu.streamlit.app/)
+[![meaningtowords](https://img.shields.io/badge/metricsNiCu-streamlit-red)](https://cudiffusionpinn-traininghistory.streamlit.app/)
 
 Concentration Fields:
-[![meaningtowords](https://img.shields.io/badge/optimizedConc-streamlit-red)](https://visualizeconcentrationprofiles.streamlit.app/)
+[![meaningtowords](https://img.shields.io/badge/optimizedConc-streamlit-red)](https://visualizeconcentrationprofiles-cu.streamlit.app/)
 
 Concentration Fields, Flux and Others:
 [![meaningtowords](https://img.shields.io/badge/solutions-streamlit-red)](https://multivariatecrossdiffusion2d-cu.streamlit.app/)
@@ -53,10 +52,10 @@ Concentration Fields, Flux and Others:
 
 Training History: 
 
-[![meaningtowords](https://img.shields.io/badge/metricsNiCu-streamlit-red)](https://visualizeconcentrationprofiles-ni.streamlit.app/)
+[![meaningtowords](https://img.shields.io/badge/metricsNiCu-streamlit-red)](https://nidiffusionpinn-traininghistory.streamlit.app/)
 
 Concentration Fields:
-[![meaningtowords](https://img.shields.io/badge/optimizedConc-streamlit-red)](https://visualizeconcentrationprofiles.streamlit.app/)
+[![meaningtowords](https://img.shields.io/badge/optimizedConc-streamlit-red)](https://visualizeconcentrationprofiles-ni.streamlit.app/)
 
 Concentration Fields, Flux and Others:
 [![meaningtowords](https://img.shields.io/badge/solutions-streamlit-red)](https://multivariatecrossdiffusion2d-ni.streamlit.app/)
