@@ -46,7 +46,7 @@ Concentration Fields:
 [![meaningtowords](https://img.shields.io/badge/optimizedConc-streamlit-red)](https://visualizeconcentrationprofiles.streamlit.app/)
 
 Concentration Fields, Flux and Others:
-[![meaningtowords](https://img.shields.io/badge/solutions-streamlit-red)](https://visualizeconcentrationprofiles.streamlit.app/)
+[![meaningtowords](https://img.shields.io/badge/solutions-streamlit-red)](https://multivariatecrossdiffusion2d-cu.streamlit.app/)
 
 
 *Ni UBM Bottom and Ni UBM Top (  SelfDiffusion - Symmetry)*
