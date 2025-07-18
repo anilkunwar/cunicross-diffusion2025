@@ -53,7 +53,7 @@ Concentration Fields, Flux and Others:
 
 Training History: 
 
-[![meaningtowords](https://img.shields.io/badge/metricsNiCu-streamlit-red)](https://visualizeconcentrationprofiles.streamlit.app/)
+[![meaningtowords](https://img.shields.io/badge/metricsNiCu-streamlit-red)](https://visualizeconcentrationprofiles-ni.streamlit.app/)
 
 Concentration Fields:
 [![meaningtowords](https://img.shields.io/badge/optimizedConc-streamlit-red)](https://visualizeconcentrationprofiles.streamlit.app/)
