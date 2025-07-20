@@ -6,14 +6,13 @@ import pandas as pd
 import io
 import matplotlib
 from matplotlib import font_manager
-import re
 
-#SOLUTION_DIR = "pinn_solutions"
+# SOLUTION_DIR = "pinn_solutions"
 SOLUTION_DIR = os.path.join(os.path.dirname(__file__), "pinn_solutions")
 
 @st.cache_data
 def load_solution_metadata(solution_dir):
-    """Load metadata (Ly, C_Cu, C_Ni, filename) from all .pkl files."""
+    """Load metadata (Ly, C_Cu, C_Ni, and optional parameters) from all .pkl files."""
     metadata = []
     load_logs = []
     for fname in os.listdir(solution_dir):
@@ -22,27 +21,23 @@ def load_solution_metadata(solution_dir):
                 with open(os.path.join(solution_dir, fname), "rb") as f:
                     sol = pickle.load(f)
                 if all(key in sol for key in ['params', 'loss_history']):
-                    metadata.append({
+                    params = {
                         'Ly': sol['params']['Ly'],
                         'C_Cu': sol['params']['C_Cu'],
                         'C_Ni': sol['params']['C_Ni'],
                         'filename': fname
-                    })
+                    }
+                    # Add optional parameters if present
+                    for key in ['D11', 'D12', 'D21', 'D22', 'Lx', 't_max']:
+                        if key in sol['params']:
+                            params[key] = sol['params'][key]
+                    metadata.append(params)
                     load_logs.append(f"{fname}: Loaded successfully.")
                 else:
                     load_logs.append(f"{fname}: Failed to load - missing required keys.")
             except Exception as e:
                 load_logs.append(f"{fname}: Failed to load - {str(e)}.")
     return metadata, load_logs
-
-def validate_filename_params(filename):
-    """Extract Ly, C_Cu, C_Ni from filename."""
-    pattern = r"solution_ly_([\d.]+)_ccu_([\d.e-]+)_cni_([\d.e-]+)_.*\.pkl"
-    match = re.match(pattern, filename)
-    if not match:
-        return None, "Filename format invalid"
-    ly_file, ccu_file, cni_file = map(float, match.groups())
-    return {'Ly': ly_file, 'C_Cu': ccu_file, 'C_Ni': cni_file}, None
 
 def plot_loss_history(loss_history, Ly, C_Cu, C_Ni, plot_params):
     """Generate a publication-quality loss plot with customizable parameters."""
@@ -112,10 +107,10 @@ def plot_loss_history(loss_history, Ly, C_Cu, C_Ni, plot_params):
     ax.set_ylabel('Loss', fontsize=plot_params['label_font_size'], fontweight='bold')
 
     if plot_params['use_latex']:
-        title = (f'Training Loss for $L_y$ = {Ly:.1f} \\mu m, '
+        title = (f'Training Loss for Ni Symmetrical Diffusion, $L_y$ = {Ly:.1f} \\mu m, '
                  f'$C_{{Cu}}$ = {C_Cu:.1e}, $C_{{Ni}}$ = {C_Ni:.1e}')
     else:
-        title = f'Training Loss for Ly = {Ly:.1f} μm, C_Cu = {C_Cu:.1e}, C_Ni = {C_Ni:.1e}'
+        title = f'Training Loss for Ni Symmetrical Diffusion, Ly = {Ly:.1f} μm, C_Cu = {C_Cu:.1e}, C_Ni = {C_Ni:.1e}'
     ax.set_title(title, fontsize=plot_params['title_font_size'], pad=15)
 
     if plot_params['show_grid']:
@@ -157,7 +152,7 @@ def export_loss_data(loss_history, Ly, C_Cu, C_Ni, legend_labels):
     return csv_bytes, filename
 
 def main():
-    st.title("Customizable Loss History Visualization for Cross-Diffusion Model")
+    st.title("Customizable Loss History Visualization for Ni Symmetrical Diffusion")
 
     # Clear cache button
     if st.sidebar.button("Clear Metadata Cache"):
@@ -238,7 +233,7 @@ def main():
 
     if load_logs:
         st.subheader("Solution Load Log")
-        selected_log = st.selectbox("View load status for solutions (Non-functional List: Refer to the Select Parameters section)", load_logs, index=0)
+        selected_log = st.selectbox("View load status for solutions", load_logs, index=0)
         st.write(selected_log)
     else:
         st.warning("No solution files found in pinn_solutions directory.")
@@ -274,32 +269,32 @@ def main():
         with open(solution_filename, 'rb') as f:
             solution = pickle.load(f)
         loss_history = solution['loss_history']
-
-        # Validate loaded parameters
         loaded_params = solution['params']
-        filename_params, filename_error = validate_filename_params(solution_metadata['filename'])
-        if filename_error:
-            st.error(f"Invalid filename format: {solution_metadata['filename']}")
-            return
+
+        # Use loaded parameters directly
+        ly_choice = loaded_params['Ly']
+        c_cu_choice = loaded_params['C_Cu']
+        c_ni_choice = loaded_params['C_Ni']
 
         st.write(f"Loaded file: {solution_metadata['filename']}")
         st.write("Parameter Validation:")
-        st.write({
+        param_display = {
             'Selected Parameters': f"Ly={ly_choice:.1f}, C_Cu={c_cu_choice:.1e}, C_Ni={c_ni_choice:.1e}",
-            'File Parameters (from filename)': f"Ly={filename_params['Ly']:.1f}, C_Cu={filename_params['C_Cu']:.1e}, C_Ni={filename_params['C_Ni']:.1e}",
-            'Loaded Parameters (from file)': f"Ly={loaded_params['Ly']:.1f}, C_Cu={loaded_params['C_Cu']:.1e}, C_Ni={loaded_params['C_Ni']:.1e}"
-        })
+            'Loaded Parameters (from file)': (
+                f"Ly={loaded_params['Ly']:.1f}, C_Cu={loaded_params['C_Cu']:.1e}, C_Ni={loaded_params['C_Ni']:.1e}"
+                + (f", D11={loaded_params['D11']:.6f}, D12={loaded_params['D12']:.6f}, "
+                   f"D21={loaded_params['D21']:.6f}, D22={loaded_params['D22']:.6f}, "
+                   f"Lx={loaded_params['Lx']:.1f}, t_max={loaded_params['t_max']:.1f}"
+                   if all(key in loaded_params for key in ['D11', 'D12', 'D21', 'D22', 'Lx', 't_max']) else "")
+            )
+        }
+        st.write(param_display)
 
         # Check for parameter mismatches
         if (abs(ly_choice - loaded_params['Ly']) > 1e-6 or
             abs(c_cu_choice - loaded_params['C_Cu']) > 1e-6 or
             abs(c_ni_choice - loaded_params['C_Ni']) > 1e-6):
             st.warning("Mismatch between selected parameters and loaded file parameters. The plot may not reflect the selected parameters.")
-
-        if (abs(filename_params['Ly'] - loaded_params['Ly']) > 1e-6 or
-            abs(filename_params['C_Cu'] - loaded_params['C_Cu']) > 1e-6 or
-            abs(filename_params['C_Ni'] - loaded_params['C_Ni']) > 1e-6):
-            st.warning("Mismatch between filename parameters and loaded file parameters.")
 
         st.write("Loss History Summary:")
         st.write({
