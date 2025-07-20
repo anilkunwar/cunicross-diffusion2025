@@ -8,8 +8,8 @@ import matplotlib
 from matplotlib import font_manager
 import re
 
-#SOLUTION_DIR = os.path.join(os.path.dirname(__file__), "pinn_solutions")
-SOLUTION_DIR="pinn_solutions"
+SOLUTION_DIR = os.path.join(os.path.dirname(__file__), "pinn_solutions")
+#SOLUTION_DIR="pinn_solutions"
 
 @st.cache_data
 def load_solution_metadata(solution_dir):
