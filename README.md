@@ -51,8 +51,11 @@ Concentration Fields, Flux and Others:
 *Ni UBM Bottom and Ni UBM Top (  SelfDiffusion - Symmetry)*
 
 Training History: 
-
+basic
 [![meaningtowords](https://img.shields.io/badge/metricsNiCu-streamlit-red)](https://nidiffusionpinn-traininghistory.streamlit.app/)
+enahnced features
+[![meaningtowords](https://img.shields.io/badge/metricsNiCu-streamlit-red)](https://visualization-traininghistory-cuni.streamlit.app/)
+
 
 Concentration Fields:
 [![meaningtowords](https://img.shields.io/badge/optimizedConc-streamlit-red)](https://visualizeconcentrationprofiles-ni.streamlit.app/)
