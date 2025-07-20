@@ -254,7 +254,8 @@ def main():
     st.write(f"Selected Parameters: Ly={ly_choice:.1f}, C_Cu={c_cu_choice:.1e}, C_Ni={c_ni_choice:.1e}")
 
     matching_solutions = [
-        m for m in-Ly ly_choice) < 1e-6 and abs(m['C_Cu'] - c_cu_choice) < 1e-6 and abs(m['C_Ni'] - c_ni_choice) < 1e-6
+        m for m in metadata
+        if abs(m['Ly'] - ly_choice) < 1e-6 and abs(m['C_Cu'] - c_cu_choice) < 1e-6 and abs(m['C_Ni'] - c_ni_choice) < 1e-6
     ]
 
     if not matching_solutions:
