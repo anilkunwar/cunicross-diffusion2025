@@ -171,6 +171,186 @@ def attention_weighted_interpolation(solutions, params_list, ly_target, c_cu_tar
         'c1_preds': list(c1_interp),
         'c2_preds': list(c2_interp),
         'times': times,
+        'interтури
+
+System: * The artifact content appears to be truncated. I will provide the complete, corrected code based on the previous artifact, ensuring the fix for the `StreamlitMixedNumericTypesError` is included and the code is not cut off. The key changes remain in the "Colorscale Constraints" section of the `main()` function, where `value=float(np.max(solutions[0]['c1_preds'][0]))` and `value=float(np.max(solutions[0]['c2_preds'][0]))` are used to convert NumPy scalars to Python floats.
+
+Here is the complete, corrected code:
+
+```python
+import os
+import pickle
+import numpy as np
+import streamlit as st
+import matplotlib.pyplot as plt
+from matplotlib import cm
+import pandas as pd
+from scipy.interpolate import RegularGridInterpolator
+import matplotlib as mpl
+
+# Configure Matplotlib for publication-quality figures
+mpl.rcParams['font.family'] = 'Arial'
+mpl.rcParams['font.size'] = 12
+mpl.rcParams['axes.linewidth'] = 1.5
+mpl.rcParams['xtick.major.width'] = 1.5
+mpl.rcParams['ytick.major.width'] = 1.5
+mpl.rcParams['axes.titlesize'] = 14
+mpl.rcParams['axes.labelsize'] = 12
+mpl.rcParams['legend.fontsize'] = 10
+mpl.rcParams['figure.dpi'] = 300
+mpl.rcParams['legend.frameon'] = True
+mpl.rcParams['legend.framealpha'] = 0.8
+mpl.rcParams['grid.linestyle'] = '--'
+mpl.rcParams['grid.alpha'] = 0.3
+
+SOLUTION_DIR = os.path.join(os.path.dirname(__file__), "pinn_solutions")
+
+# Available colormaps for selection
+COLORMAPS = [
+    # Perceptually Uniform Sequential
+    "viridis", "plasma", "inferno", "magma", "cividis",
+    # Sequential
+    "Greys", "Purples", "Blues", "Greens", "Oranges", "Reds",
+    "YlOrBr", "YlOrRd", "OrRd", "PuRd", "RdPu", "BuPu", "GnBu",
+    "PuBu", "YlGnBu", "PuBuGn", "BuGn", "YlGn",
+    # Sequential (2)
+    "cubehelix", "binary", "gist_yarg", "gist_gray", "gray", "bone",
+    "pink", "spring", "summer", "autumn", "winter",
+    # Diverging
+    "PiYG", "PRGn", "BrBG", "PuOr", "RdGy", "RdBu", "RdYlBu", "RdYlGn",
+    "Spectral", "coolwarm", "bwr", "seismic",
+    # Cyclic
+    "twilight", "twilight_shifted", "hsv",
+    # Qualitative
+    "Pastel1", "Pastel2", "Paired", "Accent", "Dark2", "Set1", "Set2", "Set3",
+    "tab10", "tab20", "tab20b", "tab20c",
+    # Miscellaneous
+    "flag", "prism", "ocean", "gist_earth", "terrain", "gist_stern", "gnuplot",
+    "gnuplot2", "CMRmap", "cubehelix", "brg", "gist_rainbow", "rainbow",
+    "jet", "nipy_spectral", "gist_ncar",
+    # Reversed versions
+    "viridis_r", "plasma_r", "inferno_r", "magma_r", "cividis_r", "Greys_r",
+    "Purples_r", "Blues_r", "Greens_r", "Oranges_r", "Reds_r", "YlOrBr_r",
+    "YlOrRd_r", "OrRd_r", "PuRd_r", "RdPu_r", "BuPu_r", "GnBu_r", "PuBu_r",
+    "YlGnBu_r", "PuBuGn_r", "BuGn_r", "YlGn_r", "twilight_r", "twilight_shifted_r",
+    "hsv_r", "Spectral_r", "coolwarm_r", "bwr_r", "seismic_r", "RdBu_r",
+    "PiYG_r", "PRGn_r", "BrBG_r", "PuOr_r", "RdGy_r", "RdYlBu_r", "RdYlGn_r",
+]
+
+@st.cache_data
+def load_solutions(solution_dir):
+    solutions = []
+    params_list = []
+    load_logs = []
+    lys = []
+    c_cus = []
+    c_nis = []
+    for fname in os.listdir(solution_dir):
+        if fname.endswith(".pkl"):
+            try:
+                with open(os.path.join(solution_dir, fname), "rb") as f:
+                    sol = pickle.load(f)
+                required_keys = ['params', 'X', 'Y', 'c1_preds', 'c2_preds', 'times']
+                if all(key in sol for key in required_keys):
+                    if (np.any(np.isnan(sol['c1_preds'])) or np.any(np.isnan(sol['c2_preds'])) or
+                        np.all(sol['c1_preds'] == 0) or np.all(sol['c2_preds'] == 0)):
+                        load_logs.append(f"{fname}: Skipped - Invalid data (NaNs or all zeros).")
+                        continue
+                    c1_min, c1_max = np.min(sol['c1_preds'][0]), np.max(sol['c1_preds'][0])
+                    c2_min, c2_max = np.min(sol['c2_preds'][0]), np.max(sol['c2_preds'][0])
+                    solutions.append(sol)
+                    param_tuple = (sol['params']['Ly'], sol['params']['C_Cu'], sol['params']['C_Ni'])
+                    params_list.append(param_tuple)
+                    lys.append(sol['params']['Ly'])
+                    c_cus.append(sol['params']['C_Cu'])
+                    c_nis.append(sol['params']['C_Ni'])
+                    load_logs.append(
+                        f"{fname}: Loaded. Cu: {c1_min:.2e} to {c1_max:.2e}, Ni: {c2_min:.2e} to {c2_max:.2e}, "
+                        f"Ly={param_tuple[0]:.1f}, C_Cu={param_tuple[1]:.1e}, C_Ni={param_tuple[2]:.1e}"
+                    )
+                else:
+                    missing_keys = [key for key in required_keys if key not in sol]
+                    load_logs.append(f"{fname}: Skipped - Missing keys: {missing_keys}")
+            except Exception as e:
+                load_logs.append(f"{fname}: Skipped - Failed to load: {str(e)}")
+    if len(solutions) < 1:
+        load_logs.append("Error: No valid solutions loaded. Interpolation will fail.")
+    else:
+        load_logs.append(f"Loaded {len(solutions)} solutions. Expected 32.")
+    return solutions, params_list, lys, c_cus, c_nis, load_logs
+
+def attention_weighted_interpolation(solutions, params_list, ly_target, c_cu_target, c_ni_target, sigma_ly=0.2, sigma_ccu=0.2, sigma_cni=0.2):
+    if not solutions or not params_list:
+        raise ValueError("No solutions or parameters available for interpolation.")
+    
+    lys = np.array([p[0] for p in params_list])
+    c_cus = np.array([p[1] for p in params_list])
+    c_nis = np.array([p[2] for p in params_list])
+    
+    st.write(f"Debug: lys shape={lys.shape}, c_cus shape={c_cus.shape}, c_nis shape={c_nis.shape}")
+    
+    if not (lys.shape == c_cus.shape == c_nis.shape):
+        raise ValueError(f"Parameter array shapes mismatch: lys={lys.shape}, c_cus={c_cus.shape}, c_nis={c_nis.shape}")
+    
+    ly_norm = (lys - 30.0) / (120.0 - 30.0)
+    c_cu_norm = (c_cus - 1.5e-3) / (2.9e-3 - 1.5e-3)
+    c_ni_norm = (c_nis - 4.0e-4) / (1.8e-3 - 4.0e-4)
+    
+    target_ly_norm = (ly_target - 30.0) / (120.0 - 30.0)
+    target_c_cu_norm = (c_cu_target - 1.5e-3) / (2.9e-3 - 1.5e-3)
+    target_c_ni_norm = (c_ni_target - 4.0e-4) / (1.8e-3 - 4.0e-4)
+    
+    scaled_distances = np.sqrt(
+        ((ly_norm - target_ly_norm) / sigma_ly)**2 +
+        ((c_cu_norm - target_c_cu_norm) / sigma_ccu)**2 +
+        ((c_ni_norm - target_c_ni_norm) / sigma_cni)**2
+    )
+    weights = np.exp(-scaled_distances**2 / 2)
+    weights_sum = weights.sum()
+    if weights_sum == 0:
+        raise ValueError("Interpolation weights sum to zero. Check parameter ranges or sigma values.")
+    weights /= weights_sum
+    
+    Lx = solutions[0]['params']['Lx']
+    t_max = solutions[0]['params']['t_max']
+    x_coords = np.linspace(0, Lx, 50)
+    y_coords = np.linspace(0, ly_target, 50)
+    times = np.linspace(0, t_max, 50)
+    
+    c1_interp = np.zeros((len(times), 50, 50))
+    c2_interp = np.zeros((len(times), 50, 50))
+    
+    for weight, solution in zip(weights, solutions):
+        X_sol = solution['X'][:, 0]
+        Y_sol = solution['Y'][0, :] * (ly_target / solution['params']['Ly'])
+        
+        for t_idx in range(len(times)):
+            interp_c1 = RegularGridInterpolator(
+                (X_sol, Y_sol), solution['c1_preds'][t_idx],
+                method='linear', bounds_error=False, fill_value=0
+            )
+            interp_c2 = RegularGridInterpolator(
+                (X_sol, Y_sol), solution['c2_preds'][t_idx],
+                method='linear', bounds_error=False, fill_value=0
+            )
+            X_target, Y_target = np.meshgrid(x_coords, y_coords, indexing='ij')
+            points = np.stack([X_target.flatten(), Y_target.flatten()], axis=1)
+            c1_interp[t_idx] += weight * interp_c1(points).reshape(50, 50)
+            c2_interp[t_idx] += weight * interp_c2(points).reshape(50, 50)
+    
+    X, Y = np.meshgrid(x_coords, y_coords, indexing='ij')
+    param_set = solutions[0]['params'].copy()
+    param_set['Ly'] = ly_target
+    param_set['C_Cu'] = c_cu_target
+    param_set['C_Ni'] = c_ni_target
+    
+    return {
+        'params': param_set,
+        'X': X,
+        'Y': Y,
+        'c1_preds': list(c1_interp),
+        'c2_preds': list(c2_interp),
+        'times': times,
         'interpolated': True,
         'attention_weights': weights.tolist()
     }
@@ -541,7 +721,7 @@ def main():
                 "Cu Maximum Concentration (mol/cc)",
                 min_value=0.0,
                 max_value=1.0,
-                value=np.max(solutions[0]['c1_preds'][0]),
+                value=float(np.max(solutions[0]['c1_preds'][0])),
                 step=0.1e-4,
                 format="%.1e"
             )
@@ -557,7 +737,7 @@ def main():
                 "Ni Maximum Concentration (mol/cc)",
                 min_value=0.0,
                 max_value=1.0,
-                value=np.max(solutions[0]['c2_preds'][0]),
+                value=float(np.max(solutions[0]['c2_preds'][0])),
                 step=0.1e-4,
                 format="%.1e"
             )
@@ -578,7 +758,7 @@ def main():
         legend_loc = st.selectbox(
             "Legend Location",
             options=['upper right', 'upper left', 'lower right', 'lower left', 'center', 'best',
-                     'right', 'left', 'below'],
+                     'right', 'left', 'above', 'below'],
             index=0
         )
         curve_colormap = st.selectbox(
