@@ -719,7 +719,7 @@ def main():
     )
     c_ni_target = st.number_input(
         "Ni Boundary Concentration (mol/cc)",
-        min_value=4.0e-4,
+        min_value=1.0e-4, # 4.0e-4,
         max_value=1.8e-3,
         value=1.0e-3,
         step=0.1e-4,
