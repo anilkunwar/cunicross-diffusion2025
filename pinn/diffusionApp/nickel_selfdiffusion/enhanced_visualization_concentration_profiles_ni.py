@@ -27,28 +27,20 @@ SOLUTION_DIR = os.path.join(os.path.dirname(__file__), "pinn_solutions")
 
 # Available colormaps for selection
 COLORMAPS = [
-    # Perceptually Uniform Sequential
     "viridis", "plasma", "inferno", "magma", "cividis",
-    # Sequential
     "Greys", "Purples", "Blues", "Greens", "Oranges", "Reds",
     "YlOrBr", "YlOrRd", "OrRd", "PuRd", "RdPu", "BuPu", "GnBu",
     "PuBu", "YlGnBu", "PuBuGn", "BuGn", "YlGn",
-    # Sequential (2)
     "cubehelix", "binary", "gist_yarg", "gist_gray", "gray", "bone",
     "pink", "spring", "summer", "autumn", "winter",
-    # Diverging
     "PiYG", "PRGn", "BrBG", "PuOr", "RdGy", "RdBu", "RdYlBu", "RdYlGn",
     "Spectral", "coolwarm", "bwr", "seismic",
-    # Cyclic
     "twilight", "twilight_shifted", "hsv",
-    # Qualitative
     "Pastel1", "Pastel2", "Paired", "Accent", "Dark2", "Set1", "Set2", "Set3",
     "tab10", "tab20", "tab20b", "tab20c",
-    # Miscellaneous
     "flag", "prism", "ocean", "gist_earth", "terrain", "gist_stern", "gnuplot",
     "gnuplot2", "CMRmap", "cubehelix", "brg", "gist_rainbow", "rainbow",
     "jet", "nipy_spectral", "gist_ncar",
-    # Reversed versions
     "viridis_r", "plasma_r", "inferno_r", "magma_r", "cividis_r", "Greys_r",
     "Purples_r", "Blues_r", "Greens_r", "Oranges_r", "Reds_r", "YlOrBr_r",
     "YlOrRd_r", "OrRd_r", "PuRd_r", "RdPu_r", "BuPu_r", "GnBu_r", "PuBu_r",
@@ -73,8 +65,9 @@ def load_solutions(solution_dir):
                 required_keys = ['params', 'X', 'Y', 'c1_preds', 'c2_preds', 'times']
                 if all(key in sol for key in required_keys):
                     if (np.any(np.isnan(sol['c1_preds'])) or np.any(np.isnan(sol['c2_preds'])) or
-                        np.all(sol['c1_preds'] == 0) or np.all(sol['c2_preds'] == 0)):
-                        load_logs.append(f"{fname}: Skipped - Invalid data (NaNs or all zeros).")
+                        np.all(sol['c1_preds'] == 0) or np.all(sol['c2_preds'] == 0) or
+                        np.any(sol['c1_preds'] < 0) or np.any(sol['c2_preds'] < 0)):
+                        load_logs.append(f"{fname}: Skipped - Invalid data (NaNs, all zeros, or negative values).")
                         continue
                     c1_min, c1_max = np.min(sol['c1_preds'][0]), np.max(sol['c1_preds'][0])
                     c2_min, c2_max = np.min(sol['c2_preds'][0]), np.max(sol['c2_preds'][0])
@@ -529,35 +522,54 @@ def main():
     with st.expander("Colorscale Constraints"):
         use_custom_colorscale = st.checkbox("Constrain Colorscale for Heatmaps", value=False)
         if use_custom_colorscale:
+            # Debugging output to inspect the data
+            if not solutions or not solutions[0]['c1_preds'] or not solutions[0]['c2_preds']:
+                st.error("Invalid or empty solution data. Please check the loaded solutions.")
+                return
+            c1_data = solutions[0]['c1_preds'][0]
+            c2_data = solutions[0]['c2_preds'][0]
+            if np.any(np.isnan(c1_data)) or np.any(np.isnan(c2_data)):
+                st.error("Solution data contains NaN values. Please verify the PINN output.")
+                return
+            default_vmax_cu = float(np.max(c1_data))
+            default_vmax_ni = float(np.max(c2_data))
+            st.write(f"Debug: Cu max value = {default_vmax_cu:.1e}, Ni max value = {default_vmax_ni:.1e}")
+
+            # Clamp default values to ensure they are within min_value and max_value
+            min_value = 0.0
+            max_value = 1.0
+            default_vmax_cu = max(min_value, min(max_value, default_vmax_cu))
+            default_vmax_ni = max(min_value, min(max_value, default_vmax_ni))
+
             vmin_cu = st.number_input(
                 "Cu Minimum Concentration (mol/cc)",
-                min_value=0.0,
-                max_value=1.0,
+                min_value=min_value,
+                max_value=max_value,
                 value=0.0,
                 step=0.1e-4,
                 format="%.1e"
             )
             vmax_cu = st.number_input(
                 "Cu Maximum Concentration (mol/cc)",
-                min_value=0.0,
-                max_value=1.0,
-                value=float(np.max(solutions[0]['c1_preds'][0])),
+                min_value=min_value,
+                max_value=max_value,
+                value=default_vmax_cu,
                 step=0.1e-4,
                 format="%.1e"
             )
             vmin_ni = st.number_input(
                 "Ni Minimum Concentration (mol/cc)",
-                min_value=0.0,
-                max_value=1.0,
+                min_value=min_value,
+                max_value=max_value,
                 value=0.0,
                 step=0.1e-4,
                 format="%.1e"
             )
             vmax_ni = st.number_input(
                 "Ni Maximum Concentration (mol/cc)",
-                min_value=0.0,
-                max_value=1.0,
-                value=float(np.max(solutions[0]['c2_preds'][0])),
+                min_value=min_value,
+                max_value=max_value,
+                value=default_vmax_ni,
                 step=0.1e-4,
                 format="%.1e"
             )
