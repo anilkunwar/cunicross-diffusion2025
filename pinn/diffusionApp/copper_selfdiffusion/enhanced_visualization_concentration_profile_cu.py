@@ -502,7 +502,7 @@ def main():
             "Custom C_Cu (mol/cc)",
             min_value=1.5e-3,
             max_value=2.9e-3,
-            value=c_cu_choice,
+            value=max(c_cu_choice, 1.5e-3),
             step=0.1e-3,
             format="%.1e"
         )
@@ -510,7 +510,7 @@ def main():
             "Custom C_Ni (mol/cc)",
             min_value=4.0e-4,
             max_value=1.8e-3,
-            value=c_ni_choice,
+            value=max(c_ni_choice, 4.0e-4),
             step=0.1e-4,
             format="%.1e"
         )
@@ -667,7 +667,7 @@ def main():
                 f"Custom C_Cu (mol/cc) {i+1}",
                 min_value=1.5e-3,
                 max_value=2.9e-3,
-                value=c_cu_choice,
+                value=max(c_cu_choice, 1.5e-3),
                 step=0.1e-3,
                 format="%.1e",
                 key=f"c_cu_custom_{i}"
@@ -676,7 +676,7 @@ def main():
                 f"Custom C_Ni (mol/cc) {i+1}",
                 min_value=4.0e-4,
                 max_value=1.8e-3,
-                value=c_ni_choice,
+                value=max(c_ni_choice, 4.0e-4),
                 step=0.1e-4,
                 format="%.1e",
                 key=f"c_ni_custom_{i}"
