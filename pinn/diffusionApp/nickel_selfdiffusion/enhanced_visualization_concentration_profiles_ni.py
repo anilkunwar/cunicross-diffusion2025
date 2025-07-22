@@ -27,28 +27,20 @@ SOLUTION_DIR = os.path.join(os.path.dirname(__file__), "pinn_solutions")
 
 # Available colormaps for selection
 COLORMAPS = [
-    # Perceptually Uniform Sequential
     "viridis", "plasma", "inferno", "magma", "cividis",
-    # Sequential
     "Greys", "Purples", "Blues", "Greens", "Oranges", "Reds",
     "YlOrBr", "YlOrRd", "OrRd", "PuRd", "RdPu", "BuPu", "GnBu",
     "PuBu", "YlGnBu", "PuBuGn", "BuGn", "YlGn",
-    # Sequential (2)
     "cubehelix", "binary", "gist_yarg", "gist_gray", "gray", "bone",
     "pink", "spring", "summer", "autumn", "winter",
-    # Diverging
     "PiYG", "PRGn", "BrBG", "PuOr", "RdGy", "RdBu", "RdYlBu", "RdYlGn",
     "Spectral", "coolwarm", "bwr", "seismic",
-    # Cyclic
     "twilight", "twilight_shifted", "hsv",
-    # Qualitative
     "Pastel1", "Pastel2", "Paired", "Accent", "Dark2", "Set1", "Set2", "Set3",
     "tab10", "tab20", "tab20b", "tab20c",
-    # Miscellaneous
     "flag", "prism", "ocean", "gist_earth", "terrain", "gist_stern", "gnuplot",
     "gnuplot2", "CMRmap", "cubehelix", "brg", "gist_rainbow", "rainbow",
     "jet", "nipy_spectral", "gist_ncar",
-    # Reversed versions
     "viridis_r", "plasma_r", "inferno_r", "magma_r", "cividis_r", "Greys_r",
     "Purples_r", "Blues_r", "Greens_r", "Oranges_r", "Reds_r", "YlOrBr_r",
     "YlOrRd_r", "OrRd_r", "PuRd_r", "RdPu_r", "BuPu_r", "GnBu_r", "PuBu_r",
@@ -188,7 +180,7 @@ def load_and_interpolate_solution(solutions, params_list, ly_target, c_cu_target
         raise ValueError("No solutions available for interpolation.")
     return attention_weighted_interpolation(solutions, params_list, ly_target, c_cu_target, c_ni_target)
 
-def plot_2d_concentration(solution, time_index, output_dir="figures", cmap_cu='viridis', cmap_ni='magma'):
+def plot_2d_concentration(solution, time_index, output_dir="figures", cmap_cu='viridis', cmap_ni='magma', vmin_cu=None, vmax_cu=None, vmin_ni=None, vmax_ni=None):
     x_coords = solution['X'][:, 0]
     y_coords = solution['Y'][0, :]
     t_val = solution['times'][time_index]
@@ -196,6 +188,12 @@ def plot_2d_concentration(solution, time_index, output_dir="figures", cmap_cu='v
     Ly = solution['params']['Ly']
     c1 = solution['c1_preds'][time_index]
     c2 = solution['c2_preds'][time_index]
+    
+    # Apply custom limits or auto-scale
+    cu_min = vmin_cu if vmin_cu is not None else 0
+    cu_max = vmax_cu if vmax_cu is not None else np.max(c1)
+    ni_min = vmin_ni if vmin_ni is not None else 0
+    ni_max = vmax_ni if vmax_ni is not None else np.max(c2)
     
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(10, 4), constrained_layout=True)
     
@@ -205,8 +203,8 @@ def plot_2d_concentration(solution, time_index, output_dir="figures", cmap_cu='v
         origin='lower',
         extent=[0, Lx, 0, Ly],
         cmap=cmap_cu,
-        vmin=0,
-        vmax=np.max(c1)
+        vmin=cu_min,
+        vmax=cu_max
     )
     ax1.set_xlabel('x (μm)')
     ax1.set_ylabel('y (μm)')
@@ -221,8 +219,8 @@ def plot_2d_concentration(solution, time_index, output_dir="figures", cmap_cu='v
         origin='lower',
         extent=[0, Lx, 0, Ly],
         cmap=cmap_ni,
-        vmin=0,
-        vmax=np.max(c2)
+        vmin=ni_min,
+        vmax=ni_max
     )
     ax2.set_xlabel('x (μm)')
     ax2.set_ylabel('y (μm)')
@@ -525,6 +523,28 @@ def main():
     cmap_ni = st.selectbox("Ni Heatmap Colormap", options=COLORMAPS, index=COLORMAPS.index('magma'))
     sidebar_metric = st.selectbox("Sidebar Metric for Curves", options=['mean_cu', 'mean_ni', 'loss'], index=0)
     
+    # Color scale limits
+    st.subheader("Color Scale Limits")
+    use_custom_scale = st.checkbox("Use custom color scale limits", value=False)
+    custom_cu_min, custom_cu_max, custom_ni_min, custom_ni_max = None, None, None, None
+    if use_custom_scale:
+        col1, col2 = st.columns(2)
+        with col1:
+            st.write("**Cu Concentration Limits**")
+            custom_cu_min = st.number_input("Cu Min", value=0.0, format="%.2e", key="cu_min")
+            custom_cu_max = st.number_input("Cu Max", value=float(np.max([sol['c1_preds'] for sol in solutions])), format="%.2e", key="cu_max")
+        with col2:
+            st.write("**Ni Concentration Limits**")
+            custom_ni_min = st.number_input("Ni Min", value=0.0, format="%.2e", key="ni_min")
+            custom_ni_max = st.number_input("Ni Max", value=float(np.max([sol['c2_preds'] for sol in solutions])), format="%.2e", key="ni_max")
+        # Validate color scale limits
+        if custom_cu_min >= custom_cu_max:
+            st.error("Cu minimum concentration must be less than maximum concentration.")
+            return
+        if custom_ni_min >= custom_ni_max:
+            st.error("Ni minimum concentration must be less than maximum concentration.")
+            return
+    
     # Figure customization controls
     with st.expander("Figure Customization"):
         label_size = st.slider("Axis Label Size", min_value=8, max_value=20, value=12, step=1)
@@ -539,7 +559,7 @@ def main():
         curve_colormap = st.selectbox(
             "Curve Colormap",
             options=['viridis', 'plasma', 'inferno', 'magma', 'tab10', 'Set1', 'Set2'],
-            index=4  # Default to 'tab10' for parameter sweep
+            index=4
         )
         axis_linewidth = st.slider("Axis Line Width", min_value=0.5, max_value=3.0, value=1.5, step=0.1)
         tick_major_width = st.slider("Tick Major Width", min_value=0.5, max_value=3.0, value=1.5, step=0.1)
@@ -572,7 +592,13 @@ def main():
     # 2D Concentration Heatmaps
     st.subheader("2D Concentration Heatmaps")
     time_index = st.slider("Select Time Index for Heatmaps", 0, len(solution['times'])-1, len(solution['times'])-1)
-    fig_2d, filename_2d = plot_2d_concentration(solution, time_index, cmap_cu=cmap_cu, cmap_ni=cmap_ni)
+    fig_2d, filename_2d = plot_2d_concentration(
+        solution, time_index, cmap_cu=cmap_cu, cmap_ni=cmap_ni,
+        vmin_cu=custom_cu_min if use_custom_scale else None,
+        vmax_cu=custom_cu_max if use_custom_scale else None,
+        vmin_ni=custom_ni_min if use_custom_scale else None,
+        vmax_ni=custom_ni_max if use_custom_scale else None
+    )
     st.pyplot(fig_2d)
     st.download_button(
         label="Download 2D Plot as PNG",
