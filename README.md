@@ -30,6 +30,8 @@ Training History:
 
 Concentration Fields:
 [![meaningtowords](https://img.shields.io/badge/optimizedConc-streamlit-red)](https://visualizeconcentrationprofiles-cuni.streamlit.app/)
+with limits for colorscale: [![meaningtowords](https://img.shields.io/badge/optimizedConc-streamlit-red)](https://enhancedvisualizationconcentrationprofile-cuni.streamlit.app/)
+
 
 Concentration Fields, Flux and Others:
 [![meaningtowords](https://img.shields.io/badge/solutions-streamlit-red)](https://multivariatecrossdiffusion2d-cuni.streamlit.app/)
@@ -44,6 +46,8 @@ Training History:
 Concentration Fields:
 [![meaningtowords](https://img.shields.io/badge/optimizedConc-streamlit-red)](https://visualizeconcentrationprofiles-cu.streamlit.app/)
 
+with limits for colorscale: [![meaningtowords](https://img.shields.io/badge/optimizedConc-streamlit-red)](https://enhancedvisualizationconcentrationprofile-cu.streamlit.app/)
+
 Concentration Fields, Flux and Others:
 [![meaningtowords](https://img.shields.io/badge/solutions-streamlit-red)](https://multivariatecrossdiffusion2d-cu.streamlit.app/)
 
@@ -53,12 +57,14 @@ Concentration Fields, Flux and Others:
 Training History: 
 basic
 [![meaningtowords](https://img.shields.io/badge/metricsNiCu-streamlit-red)](https://nidiffusionpinn-traininghistory.streamlit.app/)
-enahnced features
+enhanced features
 [![meaningtowords](https://img.shields.io/badge/metricsNiCu-streamlit-red)](https://visualization-traininghistory-cuni.streamlit.app/)
 
 
 Concentration Fields:
 [![meaningtowords](https://img.shields.io/badge/optimizedConc-streamlit-red)](https://visualizeconcentrationprofiles-ni.streamlit.app/)
+
+with limits for colorscale: [![meaningtowords](https://img.shields.io/badge/optimizedConc-streamlit-red)](https://enhancedvisualizationconcentrationprofiles-ni.streamlit.app/)
 
 Concentration Fields, Flux and Others:
 [![meaningtowords](https://img.shields.io/badge/solutions-streamlit-red)](https://multivariatecrossdiffusion2d-ni.streamlit.app/)
