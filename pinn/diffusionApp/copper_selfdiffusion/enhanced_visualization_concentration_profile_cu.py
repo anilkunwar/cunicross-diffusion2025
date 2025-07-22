@@ -536,7 +536,8 @@ def main():
         with col2:
             st.write("**Ni Concentration Limits**")
             custom_ni_min = st.number_input("Ni Min", value=0.0, format="%.2e", key="ni_min")
-            custom_ni_max = st.number_input("Ni Max", value=float(np.max([sol['c2_preds'] for sol in solutions])), format="%.2e", key="ni_max")
+            custom_ni_max = st.number_input("Ni Max", value=1.0e-3, format="%.2e", key="ni_max")
+            #custom_ni_max = st.number_input("Ni Max", value=float(np.max([sol['c2_preds'] for sol in solutions])), format="%.2e", key="ni_max")
         # Validate color scale limits
         if custom_cu_min >= custom_cu_max:
             st.error("Cu minimum concentration must be less than maximum concentration.")
