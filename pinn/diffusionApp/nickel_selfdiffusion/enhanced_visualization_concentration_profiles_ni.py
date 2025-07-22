@@ -63,29 +63,51 @@ def load_solutions(solution_dir):
                 with open(os.path.join(solution_dir, fname), "rb") as f:
                     sol = pickle.load(f)
                 required_keys = ['params', 'X', 'Y', 'c1_preds', 'c2_preds', 'times']
-                if all(key in sol for key in required_keys):
-                    if (np.any(np.isnan(sol['c1_preds'])) or np.any(np.isnan(sol['c2_preds'])) or
-                        np.all(sol['c1_preds'] == 0) or np.all(sol['c2_preds'] == 0) or
-                        np.any(sol['c1_preds'] < 0) or np.any(sol['c2_preds'] < 0)):
-                        load_logs.append(f"{fname}: Skipped - Invalid data (NaNs, all zeros, or negative values).")
-                        continue
-                    c1_min, c1_max = np.min(sol['c1_preds'][0]), np.max(sol['c1_preds'][0])
-                    c2_min, c2_max = np.min(sol['c2_preds'][0]), np.max(sol['c2_preds'][0])
-                    solutions.append(sol)
-                    param_tuple = (sol['params']['Ly'], sol['params']['C_Cu'], sol['params']['C_Ni'])
-                    params_list.append(param_tuple)
-                    lys.append(sol['params']['Ly'])
-                    c_cus.append(sol['params']['C_Cu'])
-                    c_nis.append(sol['params']['C_Ni'])
-                    load_logs.append(
-                        f"{fname}: Loaded. Cu: {c1_min:.2e} to {c1_max:.2e}, Ni: {c2_min:.2e} to {c2_max:.2e}, "
-                        f"Ly={param_tuple[0]:.1f}, C_Cu={param_tuple[1]:.1e}, C_Ni={param_tuple[2]:.1e}"
-                    )
-                else:
+                if not all(key in sol for key in required_keys):
                     missing_keys = [key for key in required_keys if key not in sol]
                     load_logs.append(f"{fname}: Skipped - Missing keys: {missing_keys}")
+                    continue
+                
+                # Check if c1_preds and c2_preds are lists
+                if not (isinstance(sol['c1_preds'], list) and isinstance(sol['c2_preds'], list)):
+                    load_logs.append(f"{fname}: Skipped - c1_preds or c2_preds is not a list. Types: c1_preds={type(sol['c1_preds'])}, c2_preds={type(sol['c2_preds'])}")
+                    continue
+                
+                # Convert lists to NumPy arrays if necessary and validate
+                try:
+                    c1_preds = [np.array(pred, dtype=float) if not isinstance(pred, np.ndarray) else pred for pred in sol['c1_preds']]
+                    c2_preds = [np.array(pred, dtype=float) if not isinstance(pred, np.ndarray) else pred for pred in sol['c2_preds']]
+                    sol['c1_preds'] = c1_preds
+                    sol['c2_preds'] = c2_preds
+                    
+                    # Validate data
+                    if (any(np.any(np.isnan(pred)) for pred in c1_preds) or 
+                        any(np.any(np.isnan(pred)) for pred in c2_preds) or
+                        any(np.all(pred == 0) for pred in c1_preds) or 
+                        any(np.all(pred == 0) for pred in c2_preds) or
+                        any(np.any(pred < 0) for pred in c1_preds) or 
+                        any(np.any(pred < 0) for pred in c2_preds)):
+                        load_logs.append(f"{fname}: Skipped - Invalid data (NaNs, all zeros, or negative values).")
+                        continue
+                except Exception as e:
+                    load_logs.append(f"{fname}: Skipped - Failed to process c1_preds/c2_preds: {str(e)}")
+                    continue
+                
+                c1_min, c1_max = np.min(c1_preds[0]), np.max(c1_preds[0])
+                c2_min, c2_max = np.min(c2_preds[0]), np.max(c2_preds[0])
+                solutions.append(sol)
+                param_tuple = (sol['params']['Ly'], sol['params']['C_Cu'], sol['params']['C_Ni'])
+                params_list.append(param_tuple)
+                lys.append(sol['params']['Ly'])
+                c_cus.append(sol['params']['C_Cu'])
+                c_nis.append(sol['params']['C_Ni'])
+                load_logs.append(
+                    f"{fname}: Loaded. Cu: {c1_min:.2e} to {c1_max:.2e}, Ni: {c2_min:.2e} to {c2_max:.2e}, "
+                    f"Ly={param_tuple[0]:.1f}, C_Cu={param_tuple[1]:.1e}, C_Ni={param_tuple[2]:.1e}"
+                )
             except Exception as e:
                 load_logs.append(f"{fname}: Skipped - Failed to load: {str(e)}")
+                continue
     if len(solutions) < 1:
         load_logs.append("Error: No valid solutions loaded. Interpolation will fail.")
     else:
@@ -391,385 +413,4 @@ def plot_parameter_sweep(
     # Axis styling
     for ax in [ax1, ax2, ax3]:
         for spine in ax.spines.values():
-            spine.set_linewidth(axis_linewidth)
-        ax.tick_params(
-            axis='both',
-            which='major',
-            width=tick_major_width,
-            length=tick_major_length,
-            labelsize=tick_label_size
-        )
-        ax.grid(True, linestyle=grid_linestyle, alpha=grid_alpha)
-    
-    # Legend placement
-    legend_positions = {
-        'upper right': {'loc': 'upper right', 'bbox': None},
-        'upper left': {'loc': 'upper left', 'bbox': None},
-        'lower right': {'loc': 'lower right', 'bbox': None},
-        'lower left': {'loc': 'lower left', 'bbox': None},
-        'center': {'loc': 'center', 'bbox': None},
-        'best': {'loc': 'best', 'bbox': None},
-        'right': {'loc': 'center left', 'bbox': (1.05, 0.5)},
-        'left': {'loc': 'center right', 'bbox': (-0.05, 0.5)},
-        'above': {'loc': 'lower center', 'bbox': (0.5, 1.05)},
-        'below': {'loc': 'upper center', 'bbox': (0.5, -0.05)}
-    }
-    legend_params = legend_positions.get(legend_loc, {'loc': 'upper right', 'bbox': None})
-    
-    ax1.set_xlabel('y (μm)', fontsize=label_size)
-    ax1.set_ylabel('Cu Conc. (mol/cc)', fontsize=label_size)
-    ax1.set_title(f'Cu at x = {Lx/2:.1f} μm, t = {t_val:.1f} s', fontsize=title_size)
-    ax1.legend(fontsize=8, loc=legend_params['loc'], bbox_to_anchor=legend_params['bbox'],
-               frameon=legend_frameon, framealpha=legend_framealpha)
-    ax1.ticklabel_format(style='sci', axis='y', scilimits=(0,0))
-    
-    ax2.set_xlabel('y (μm)', fontsize=label_size)
-    ax2.set_ylabel('Ni Conc. (mol/cc)', fontsize=label_size)
-    ax2.set_title(f'Ni at x = {Lx/2:.1f} μm, t = {t_val:.1f} s', fontsize=title_size)
-    ax2.legend(fontsize=8, loc=legend_params['loc'], bbox_to_anchor=legend_params['bbox'],
-               frameon=legend_frameon, framealpha=legend_framealpha)
-    ax2.ticklabel_format(style='sci', axis='y', scilimits=(0,0))
-    
-    # Sidebar bar plot
-    ax3.barh(range(len(sidebar_data)), sidebar_data, color='gray', edgecolor='black')
-    ax3.set_yticks(range(len(sidebar_data)))
-    ax3.set_yticklabels(sidebar_labels, fontsize=tick_label_size)
-    ax3.set_xlabel(
-        'Mean Cu Conc. (mol/cc)' if sidebar_metric == 'mean_cu' else 'Mean Ni Conc. (mol/cc)' if sidebar_metric == 'mean_ni' else 'Loss',
-        fontsize=label_size
-    )
-    ax3.set_title('Metric per Parameter', fontsize=title_size)
-    ax3.grid(True, axis='x', linestyle=grid_linestyle, alpha=grid_alpha)
-    ax3.ticklabel_format(style='sci', axis='x', scilimits=(0,0))
-    
-    fig.suptitle('Concentration Profiles for Parameter Sweep', fontsize=title_size)
-    
-    os.makedirs(output_dir, exist_ok=True)
-    base_filename = f"conc_sweep_t_{t_val:.1f}"
-    plt.savefig(os.path.join(output_dir, f"{base_filename}.png"), dpi=300, bbox_inches='tight')
-    plt.savefig(os.path.join(output_dir, f"{base_filename}.pdf"), bbox_inches='tight')
-    plt.close()
-    
-    return fig, base_filename
-
-def main():
-    st.title("Publication-Quality Concentration Profiles")
-    
-    # Load solutions
-    solutions, params_list, lys, c_cus, c_nis, load_logs = load_solutions(SOLUTION_DIR)
-    
-    # Display load logs
-    if load_logs:
-        with st.expander("Load Log"):
-            for log in load_logs:
-                st.write(log)
-    
-    # Check if solutions were loaded
-    if not solutions:
-        st.error("No valid solution files found in pinn_solutions directory. Please check the directory and file contents.")
-        return
-    
-    st.write(f"Loaded {len(solutions)} solutions. Unique Ly: {len(set(lys))}, C_Cu: {len(set(c_cus))}, C_Ni: {len(set(c_nis))}")
-    
-    # Sort unique parameters
-    lys = sorted(set(lys))
-    c_cus = sorted(set(c_cus))
-    c_nis = sorted(set(c_nis))
-    
-    # Parameter selection for single solution
-    st.subheader("Select Parameters for Single Solution")
-    ly_choice = st.selectbox("Domain Height (Ly, μm)", options=lys, format_func=lambda x: f"{x:.1f}")
-    c_cu_choice = st.selectbox("Cu Boundary Concentration (mol/cc)", options=c_cus, format_func=lambda x: f"{x:.1e}")
-    c_ni_choice = st.selectbox("Ni Boundary Concentration (mol/cc)", options=c_nis, format_func=lambda x: f"{x:.1e}")
-    
-    # Custom parameters for interpolation
-    use_custom_params = st.checkbox("Use Custom Parameters for Interpolation", value=False)
-    if use_custom_params:
-        ly_target = st.number_input(
-            "Custom Ly (μm)",
-            min_value=30.0,
-            max_value=120.0,
-            value=ly_choice,
-            step=0.1,
-            format="%.1f"
-        )
-        c_cu_target = st.number_input(
-            "Custom C_Cu (mol/cc)",
-            min_value=1.5e-3,
-            max_value=2.9e-3,
-            value=c_cu_choice,
-            step=0.1e-3,
-            format="%.1e"
-        )
-        c_ni_target = st.number_input(
-            "Custom C_Ni (mol/cc)",
-            min_value=4.0e-4,
-            max_value=1.8e-3,
-            value=c_ni_choice,
-            step=0.1e-4,
-            format="%.1e"
-        )
-    else:
-        ly_target, c_cu_target, c_ni_target = ly_choice, c_cu_choice, c_ni_choice
-    
-    # Visualization settings
-    st.subheader("Visualization Settings")
-    cmap_cu = st.selectbox("Cu Heatmap Colormap", options=COLORMAPS, index=COLORMAPS.index('viridis'))
-    cmap_ni = st.selectbox("Ni Heatmap Colormap", options=COLORMAPS, index=COLORMAPS.index('magma'))
-    sidebar_metric = st.selectbox("Sidebar Metric for Curves", options=['mean_cu', 'mean_ni', 'loss'], index=0)
-    
-    # Colorscale constraints
-    with st.expander("Colorscale Constraints"):
-        use_custom_colorscale = st.checkbox("Constrain Colorscale for Heatmaps", value=False)
-        if use_custom_colorscale:
-            # Debugging output to inspect the data
-            if not solutions or not solutions[0]['c1_preds'] or not solutions[0]['c2_preds']:
-                st.error("Invalid or empty solution data. Please check the loaded solutions.")
-                return
-            c1_data = solutions[0]['c1_preds'][0]
-            c2_data = solutions[0]['c2_preds'][0]
-            if np.any(np.isnan(c1_data)) or np.any(np.isnan(c2_data)):
-                st.error("Solution data contains NaN values. Please verify the PINN output.")
-                return
-            default_vmax_cu = float(np.max(c1_data))
-            default_vmax_ni = float(np.max(c2_data))
-            st.write(f"Debug: Cu max value = {default_vmax_cu:.1e}, Ni max value = {default_vmax_ni:.1e}")
-
-            # Clamp default values to ensure they are within min_value and max_value
-            min_value = 0.0
-            max_value = 1.0
-            default_vmax_cu = max(min_value, min(max_value, default_vmax_cu))
-            default_vmax_ni = max(min_value, min(max_value, default_vmax_ni))
-
-            vmin_cu = st.number_input(
-                "Cu Minimum Concentration (mol/cc)",
-                min_value=min_value,
-                max_value=max_value,
-                value=0.0,
-                step=0.1e-4,
-                format="%.1e"
-            )
-            vmax_cu = st.number_input(
-                "Cu Maximum Concentration (mol/cc)",
-                min_value=min_value,
-                max_value=max_value,
-                value=default_vmax_cu,
-                step=0.1e-4,
-                format="%.1e"
-            )
-            vmin_ni = st.number_input(
-                "Ni Minimum Concentration (mol/cc)",
-                min_value=min_value,
-                max_value=max_value,
-                value=0.0,
-                step=0.1e-4,
-                format="%.1e"
-            )
-            vmax_ni = st.number_input(
-                "Ni Maximum Concentration (mol/cc)",
-                min_value=min_value,
-                max_value=max_value,
-                value=default_vmax_ni,
-                step=0.1e-4,
-                format="%.1e"
-            )
-            if vmin_cu >= vmax_cu:
-                st.error("Cu minimum concentration must be less than maximum concentration.")
-                return
-            if vmin_ni >= vmax_ni:
-                st.error("Ni minimum concentration must be less than maximum concentration.")
-                return
-        else:
-            vmin_cu, vmax_cu, vmin_ni, vmax_ni = None, None, None, None
-    
-    # Figure customization controls
-    with st.expander("Figure Customization"):
-        label_size = st.slider("Axis Label Size", min_value=8, max_value=20, value=12, step=1)
-        title_size = st.slider("Title Size", min_value=10, max_value=24, value=14, step=1)
-        tick_label_size = st.slider("Tick Label Size", min_value=6, max_value=16, value=10, step=1)
-        legend_loc = st.selectbox(
-            "Legend Location",
-            options=['upper right', 'upper left', 'lower right', 'lower left', 'center', 'best',
-                     'right', 'left', 'above', 'below'],
-            index=0
-        )
-        curve_colormap = st.selectbox(
-            "Curve Colormap",
-            options=['viridis', 'plasma', 'inferno', 'magma', 'tab10', 'Set1', 'Set2'],
-            index=4  # Default to 'tab10' for parameter sweep
-        )
-        axis_linewidth = st.slider("Axis Line Width", min_value=0.5, max_value=3.0, value=1.5, step=0.1)
-        tick_major_width = st.slider("Tick Major Width", min_value=0.5, max_value=3.0, value=1.5, step=0.1)
-        tick_major_length = st.slider("Tick Major Length", min_value=2.0, max_value=10.0, value=4.0, step=0.5)
-        fig_width = st.slider("Figure Width (inches)", min_value=4.0, max_value=12.0, value=8.0, step=0.5)
-        fig_height = st.slider("Figure Height (inches)", min_value=3.0, max_value=8.0, value=6.0, step=0.5)
-        curve_linewidth = st.slider("Curve Line Width", min_value=0.5, max_value=3.0, value=1.0, step=0.1)
-        grid_alpha = st.slider("Grid Opacity", min_value=0.0, max_value=1.0, value=0.3, step=0.1)
-        grid_linestyle = st.selectbox("Grid Line Style", options=['--', '-', ':', '-.'], index=0)
-        legend_frameon = st.checkbox("Show Legend Frame", value=True)
-        legend_framealpha = st.slider("Legend Frame Opacity", min_value=0.0, max_value=1.0, value=0.8, step=0.1)
-    
-    # Load or interpolate single solution
-    try:
-        solution = load_and_interpolate_solution(solutions, params_list, ly_target, c_cu_target, c_ni_target)
-    except Exception as e:
-        st.error(f"Failed to load or interpolate solution: {str(e)}")
-        return
-    
-    # Display solution details
-    st.subheader("Solution Details")
-    st.write(f"$L_y$ = {solution['params']['Ly']:.1f} μm")
-    st.write(f"$C_{{Cu}}$ = {solution['params']['C_Cu']:.1e} mol/cc")
-    st.write(f"$C_{{Ni}}$ = {solution['params']['C_Ni']:.1e} mol/cc")
-    if solution.get('interpolated', False):
-        st.write("**Status**: Interpolated solution")
-    else:
-        st.write("**Status**: Exact solution")
-    
-    # 2D Concentration Heatmaps
-    st.subheader("2D Concentration Heatmaps")
-    time_index = st.slider("Select Time Index for Heatmaps", 0, len(solution['times'])-1, len(solution['times'])-1)
-    fig_2d, filename_2d = plot_2d_concentration(
-        solution, time_index, cmap_cu=cmap_cu, cmap_ni=cmap_ni,
-        vmin_cu=vmin_cu, vmax_cu=vmax_cu, vmin_ni=vmin_ni, vmax_ni=vmax_ni
-    )
-    st.pyplot(fig_2d)
-    st.download_button(
-        label="Download 2D Plot as PNG",
-        data=open(os.path.join("figures", f"{filename_2d}.png"), "rb").read(),
-        file_name=f"{filename_2d}.png",
-        mime="image/png"
-    )
-    st.download_button(
-        label="Download 2D Plot as PDF",
-        data=open(os.path.join("figures", f"{filename_2d}.pdf"), "rb").read(),
-        file_name=f"{filename_2d}.pdf",
-        mime="application/pdf"
-    )
-    
-    # Centerline Concentration Curves
-    st.subheader("Centerline Concentration Curves")
-    time_indices = st.multiselect(
-        "Select Time Indices for Curves",
-        options=list(range(len(solution['times']))),
-        default=[0, len(solution['times'])//4, len(solution['times'])//2, 3*len(solution['times'])//4, len(solution['times'])-1],
-        format_func=lambda x: f"t = {solution['times'][x]:.1f} s"
-    )
-    if time_indices:
-        fig_curves, filename_curves = plot_centerline_curves(
-            solution, time_indices, sidebar_metric=sidebar_metric,
-            label_size=label_size, title_size=title_size, tick_label_size=tick_label_size,
-            legend_loc=legend_loc, curve_colormap=curve_colormap,
-            axis_linewidth=axis_linewidth, tick_major_width=tick_major_width,
-            tick_major_length=tick_major_length, fig_width=fig_width, fig_height=fig_height,
-            curve_linewidth=curve_linewidth, grid_alpha=grid_alpha, grid_linestyle=grid_linestyle,
-            legend_frameon=legend_frameon, legend_framealpha=legend_framealpha
-        )
-        st.pyplot(fig_curves)
-        st.download_button(
-            label="Download Centerline Plot as PNG",
-            data=open(os.path.join("figures", f"{filename_curves}.png"), "rb").read(),
-            file_name=f"{filename_curves}.png",
-            mime="image/png"
-        )
-        st.download_button(
-            label="Download Centerline Plot as PDF",
-            data=open(os.path.join("figures", f"{filename_curves}.pdf"), "rb").read(),
-            file_name=f"{filename_curves}.pdf",
-            mime="application/pdf"
-        )
-    
-    # Parameter Sweep Curves
-    st.subheader("Parameter Sweep Curves")
-    
-    # Allow custom parameter combinations for interpolation
-    with st.expander("Add Custom Parameter Combinations for Sweep"):
-        num_custom_params = st.number_input("Number of Custom Parameter Sets", min_value=0, max_value=5, value=0, step=1)
-        custom_params = []
-        for i in range(num_custom_params):
-            st.write(f"Custom Parameter Set {i+1}")
-            ly_custom = st.number_input(
-                f"Custom Ly (μm) {i+1}",
-                min_value=30.0,
-                max_value=120.0,
-                value=ly_choice,
-                step=0.1,
-                format="%.1f",
-                key=f"ly_custom_{i}"
-            )
-            c_cu_custom = st.number_input(
-                f"Custom C_Cu (mol/cc) {i+1}",
-                min_value=1.5e-3,
-                max_value=2.9e-3,
-                value=c_cu_choice,
-                step=0.1e-3,
-                format="%.1e",
-                key=f"c_cu_custom_{i}"
-            )
-            c_ni_custom = st.number_input(
-                f"Custom C_Ni (mol/cc) {i+1}",
-                min_value=4.0e-4,
-                max_value=1.8e-3,
-                value=c_ni_choice,
-                step=0.1e-4,
-                format="%.1e",
-                key=f"c_ni_custom_{i}"
-            )
-            custom_params.append((ly_custom, c_cu_custom, c_ni_custom))
-    
-    # Combine exact and custom parameters
-    param_options = [(ly, c_cu, c_ni) for ly, c_cu, c_ni in params_list]
-    param_labels = [f"$L_y$={ly:.1f}, $C_{{Cu}}$={c_cu:.1e}, $C_{{Ni}}$={c_ni:.1e}" for ly, c_cu, c_ni in param_options]
-    default_params = param_options[:min(4, len(param_options))]
-    selected_labels = st.multiselect(
-        "Select Exact Parameter Combinations",
-        options=param_labels,
-        default=[param_labels[param_options.index(p)] for p in default_params],
-        format_func=lambda x: x
-    )
-    selected_params = [param_options[param_labels.index(label)] for label in selected_labels]
-    
-    # Add custom parameters to the selected parameters
-    selected_params.extend(custom_params)
-    
-    # Generate solutions for selected parameters (exact or interpolated)
-    sweep_solutions = []
-    sweep_params_list = []
-    for params in selected_params:
-        ly, c_cu, c_ni = params
-        try:
-            sol = load_and_interpolate_solution(solutions, params_list, ly, c_cu, c_ni)
-            sweep_solutions.append(sol)
-            sweep_params_list.append(params)
-        except Exception as e:
-            st.warning(f"Failed to load or interpolate solution for Ly={ly:.1f}, C_Cu={c_cu:.1e}, C_Ni={c_ni:.1e}: {str(e)}")
-    
-    # Plot parameter sweep
-    sweep_time_index = st.slider("Select Time Index for Sweep", 0, len(solution['times'])-1, len(solution['times'])-1)
-    
-    if sweep_solutions and sweep_params_list:
-        fig_sweep, filename_sweep = plot_parameter_sweep(
-            sweep_solutions, sweep_params_list, sweep_params_list, sweep_time_index, sidebar_metric=sidebar_metric,
-            label_size=label_size, title_size=title_size, tick_label_size=tick_label_size,
-            legend_loc=legend_loc, curve_colormap=curve_colormap,
-            axis_linewidth=axis_linewidth, tick_major_width=tick_major_width,
-            tick_major_length=tick_major_length, fig_width=fig_width, fig_height=fig_height,
-            curve_linewidth=curve_linewidth, grid_alpha=grid_alpha, grid_linestyle=grid_linestyle,
-            legend_frameon=legend_frameon, legend_framealpha=legend_framealpha
-        )
-        st.pyplot(fig_sweep)
-        st.download_button(
-            label="Download Sweep Plot as PNG",
-            data=open(os.path.join("figures", f"{filename_sweep}.png"), "rb").read(),
-            file_name=f"{filename_sweep}.png",
-            mime="image/png"
-        )
-        st.download_button(
-            label="Download Sweep Plot as PDF",
-            data=open(os.path.join("figures", f"{filename_sweep}.pdf"), "rb").read(),
-            file_name=f"{filename_sweep}.pdf",
-            mime="application/pdf"
-        )
-
-if __name__ == "__main__":
-    main()
+            spine.set_linewidth(axis_line
