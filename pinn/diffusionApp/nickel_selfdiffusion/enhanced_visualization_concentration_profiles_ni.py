@@ -532,7 +532,8 @@ def main():
         with col1:
             st.write("**Cu Concentration Limits**")
             custom_cu_min = st.number_input("Cu Min", value=0.0, format="%.2e", key="cu_min")
-            custom_cu_max = st.number_input("Cu Max", value=float(np.max([sol['c1_preds'] for sol in solutions])), format="%.2e", key="cu_max")
+            #custom_cu_max = st.number_input("Cu Max", value=float(np.max([sol['c1_preds'] for sol in solutions])), format="%.2e", key="cu_max")
+            custom_cu_max = st.number_input("Cu Max", value=1.0e-3, format="%.2e", key="cu_max")
         with col2:
             st.write("**Ni Concentration Limits**")
             custom_ni_min = st.number_input("Ni Min", value=0.0, format="%.2e", key="ni_min")
