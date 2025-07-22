@@ -73,14 +73,14 @@ def load_solutions(solution_dir):
                     load_logs.append(f"{fname}: Skipped - c1_preds or c2_preds is not a list. Types: c1_preds={type(sol['c1_preds'])}, c2_preds={type(sol['c2_preds'])}")
                     continue
                 
-                # Convert lists to NumPy arrays if necessary and validate
+                # Convert lists to NumPy arrays and validate
                 try:
                     c1_preds = [np.array(pred, dtype=float) if not isinstance(pred, np.ndarray) else pred for pred in sol['c1_preds']]
                     c2_preds = [np.array(pred, dtype=float) if not isinstance(pred, np.ndarray) else pred for pred in sol['c2_preds']]
                     sol['c1_preds'] = c1_preds
                     sol['c2_preds'] = c2_preds
                     
-                    # Validate data
+                    # Validate data for NaNs, zeros, or negative values
                     if (any(np.any(np.isnan(pred)) for pred in c1_preds) or 
                         any(np.any(np.isnan(pred)) for pred in c2_preds) or
                         any(np.all(pred == 0) for pred in c1_preds) or 
@@ -212,6 +212,12 @@ def plot_2d_concentration(solution, time_index, output_dir="figures", cmap_cu='v
     c1 = solution['c1_preds'][time_index]
     c2 = solution['c2_preds'][time_index]
     
+    # Apply custom limits or auto-scale
+    cu_min = vmin_cu if vmin_cu is not None else 0
+    cu_max = vmax_cu if vmax_cu is not None else np.max(c1)
+    ni_min = vmin_ni if vmin_ni is not None else 0
+    ni_max = vmax_ni if vmax_ni is not None else np.max(c2)
+    
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(10, 4), constrained_layout=True)
     
     # Cu heatmap
@@ -220,8 +226,8 @@ def plot_2d_concentration(solution, time_index, output_dir="figures", cmap_cu='v
         origin='lower',
         extent=[0, Lx, 0, Ly],
         cmap=cmap_cu,
-        vmin=vmin_cu if vmin_cu is not None else 0,
-        vmax=vmax_cu if vmax_cu is not None else np.max(c1)
+        vmin=cu_min,
+        vmax=cu_max
     )
     ax1.set_xlabel('x (μm)')
     ax1.set_ylabel('y (μm)')
@@ -236,8 +242,8 @@ def plot_2d_concentration(solution, time_index, output_dir="figures", cmap_cu='v
         origin='lower',
         extent=[0, Lx, 0, Ly],
         cmap=cmap_ni,
-        vmin=vmin_ni if vmin_ni is not None else 0,
-        vmax=vmax_ni if vmax_ni is not None else np.max(c2)
+        vmin=ni_min,
+        vmax=ni_max
     )
     ax2.set_xlabel('x (μm)')
     ax2.set_ylabel('y (μm)')
@@ -540,69 +546,27 @@ def main():
     cmap_ni = st.selectbox("Ni Heatmap Colormap", options=COLORMAPS, index=COLORMAPS.index('magma'))
     sidebar_metric = st.selectbox("Sidebar Metric for Curves", options=['mean_cu', 'mean_ni', 'loss'], index=0)
     
-    # Colorscale constraints
-    with st.expander("Colorscale Constraints"):
-        use_custom_colorscale = st.checkbox("Constrain Colorscale for Heatmaps", value=False)
-        if use_custom_colorscale:
-            # Debugging output to inspect the data
-            if not solutions or not solutions[0]['c1_preds'] or not solutions[0]['c2_preds']:
-                st.error("Invalid or empty solution data. Please check the loaded solutions.")
-                return
-            c1_data = solutions[0]['c1_preds'][0]
-            c2_data = solutions[0]['c2_preds'][0]
-            if np.any(np.isnan(c1_data)) or np.any(np.isnan(c2_data)):
-                st.error("Solution data contains NaN values. Please verify the PINN output.")
-                return
-            default_vmax_cu = float(np.max(c1_data)) if not np.any(np.isnan(c1_data)) and np.all(c1_data >= 0) else 1.0
-            default_vmax_ni = float(np.max(c2_data)) if not np.any(np.isnan(c2_data)) and np.all(c2_data >= 0) else 1.0
-            st.write(f"Debug: Cu max value = {default_vmax_cu:.1e}, Ni max value = {default_vmax_ni:.1e}")
-
-            # Clamp default values to ensure they are within min_value and max_value
-            min_value = 0.0
-            max_value = 1.0
-            default_vmax_cu = max(min_value, min(max_value, default_vmax_cu))
-            default_vmax_ni = max(min_value, min(max_value, default_vmax_ni))
-
-            vmin_cu = st.number_input(
-                "Cu Minimum Concentration (mol/cc)",
-                min_value=min_value,
-                max_value=max_value,
-                value=0.0,
-                step=0.1e-4,
-                format="%.1e"
-            )
-            vmax_cu = st.number_input(
-                "Cu Maximum Concentration (mol/cc)",
-                min_value=min_value,
-                max_value=max_value,
-                value=default_vmax_cu,
-                step=0.1e-4,
-                format="%.1e"
-            )
-            vmin_ni = st.number_input(
-                "Ni Minimum Concentration (mol/cc)",
-                min_value=min_value,
-                max_value=max_value,
-                value=0.0,
-                step=0.1e-4,
-                format="%.1e"
-            )
-            vmax_ni = st.number_input(
-                "Ni Maximum Concentration (mol/cc)",
-                min_value=min_value,
-                max_value=max_value,
-                value=default_vmax_ni,
-                step=0.1e-4,
-                format="%.1e"
-            )
-            if vmin_cu >= vmax_cu:
-                st.error("Cu minimum concentration must be less than maximum concentration.")
-                return
-            if vmin_ni >= vmax_ni:
-                st.error("Ni minimum concentration must be less than maximum concentration.")
-                return
-        else:
-            vmin_cu, vmax_cu, vmin_ni, vmax_ni = None, None, None, None
+    # Color scale limits
+    st.subheader("Color Scale Limits")
+    use_custom_scale = st.checkbox("Use custom color scale limits", value=False)
+    custom_cu_min, custom_cu_max, custom_ni_min, custom_ni_max = None, None, None, None
+    if use_custom_scale:
+        col1, col2 = st.columns(2)
+        with col1:
+            st.write("**Cu Concentration Limits**")
+            custom_cu_min = st.number_input("Cu Min", value=0.0, format="%.2e", key="cu_min")
+            custom_cu_max = st.number_input("Cu Max", value=0.0, format="%.2e", key="cu_max")
+        with col2:
+            st.write("**Ni Concentration Limits**")
+            custom_ni_min = st.number_input("Ni Min", value=0.0, format="%.2e", key="ni_min")
+            custom_ni_max = st.number_input("Ni Max", value=0.0, format="%.2e", key="ni_max")
+        # Validate color scale limits
+        if custom_cu_min >= custom_cu_max:
+            st.error("Cu minimum concentration must be less than maximum concentration.")
+            return
+        if custom_ni_min >= custom_ni_max:
+            st.error("Ni minimum concentration must be less than maximum concentration.")
+            return
     
     # Figure customization controls
     with st.expander("Figure Customization"):
@@ -653,7 +617,10 @@ def main():
     time_index = st.slider("Select Time Index for Heatmaps", 0, len(solution['times'])-1, len(solution['times'])-1)
     fig_2d, filename_2d = plot_2d_concentration(
         solution, time_index, cmap_cu=cmap_cu, cmap_ni=cmap_ni,
-        vmin_cu=vmin_cu, vmax_cu=vmax_cu, vmin_ni=vmin_ni, vmax_ni=vmax_ni
+        vmin_cu=custom_cu_min if use_custom_scale else None,
+        vmax_cu=custom_cu_max if use_custom_scale else None,
+        vmin_ni=custom_ni_min if use_custom_scale else None,
+        vmax_ni=custom_ni_max if use_custom_scale else None
     )
     st.pyplot(fig_2d)
     st.download_button(
