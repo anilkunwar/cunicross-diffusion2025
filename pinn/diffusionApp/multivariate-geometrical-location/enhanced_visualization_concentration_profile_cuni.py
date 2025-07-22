@@ -125,7 +125,7 @@ def attention_weighted_interpolation(solutions, params_list, ly_target, c_cu_tar
     
     Lx = solutions[0]['params']['Lx']
     t_max = solutions[0]['params']['t_max']
-    x Hawkins = np.linspace(0, Lx, 50)
+    x_coords = np.linspace(0, Lx, 50)
     y_coords = np.linspace(0, ly_target, 50)
     times = np.linspace(0, t_max, 50)
     
