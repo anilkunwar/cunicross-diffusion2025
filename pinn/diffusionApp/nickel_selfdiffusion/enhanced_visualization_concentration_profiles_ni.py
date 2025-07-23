@@ -499,7 +499,7 @@ def main():
         )
         c_ni_target = st.number_input(
             "Custom C_Ni (mol/cc)",
-            min_value=4.0e-4,
+            min_value=0.0, #4.0e-4,
             max_value=1.8e-3,
             value=max(c_ni_choice, 4.0e-4),
             step=0.1e-4,
