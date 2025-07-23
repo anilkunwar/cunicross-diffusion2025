@@ -491,7 +491,7 @@ def main():
         )
         c_cu_target = st.number_input(
             "Custom C_Cu (mol/cc)",
-            min_value=1.5e-3,
+            min_value=0.0, #1.5e-3,
             max_value=2.9e-3,
             value=max(c_cu_choice, 1.5e-3),
             step=0.1e-3,
