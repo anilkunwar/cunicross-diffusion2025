@@ -500,7 +500,8 @@ def main():
         )
         c_cu_target = st.number_input(
             "Custom C_Cu (mol/cc)",
-            min_value=1.5e-3,
+            min_value=0.0, #1.5e-3, The value of 0.0 will be useful for simulating self-diffusion of another species
+            max_value=1.8e-3,
             max_value=2.9e-3,
             value=max(c_cu_choice, 1.5e-3),
             step=0.1e-3,
@@ -508,7 +509,7 @@ def main():
         )
         c_ni_target = st.number_input(
             "Custom C_Ni (mol/cc)",
-            min_value=1.0e-4,
+            min_value=0.0, #1.0e-4, The value of 0.0 will be useful for simulating self-diffusion of another species
             max_value=1.8e-3,
             value=max(c_ni_choice, 1.0e-4),
             step=0.1e-4,
