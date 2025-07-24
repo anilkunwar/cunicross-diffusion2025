@@ -27,7 +27,11 @@ Optimized visualization of concentration fields
 Visualization of the training history 
 [![Visualization via Streamlit](https://static.streamlit.io/badges/streamlit_badge_black_white.svg)](https://diffusionpinntraining-history.streamlit.app/)
 
+------------------------------------------------------------------
+
 *Ni UBM Bottom and Cu Pillar Top ( Cross Diffusion -Case I)*
+
+------------------------------------------------------------------
 
 Training History:  
 [![meaningtowords](https://img.shields.io/badge/metricsNiCu-streamlit-red)](https://cunidiffusionpinn-traininghistory.streamlit.app/)
@@ -43,8 +47,11 @@ with training datasets for zero values for BCs: [![meaningtowords](https://img.s
 Concentration Fields, Flux and Others:
 [![meaningtowords](https://img.shields.io/badge/solutions-streamlit-red)](https://multivariatecrossdiffusion2d-cuni.streamlit.app/)
 
+------------------------------------------------------------------
 
 *Cu Pillar Bottom and Cu Pillar Top ( SelfDiffusion - Symmetry)*
+
+------------------------------------------------------------------
 
 Training History: 
 
@@ -55,11 +62,18 @@ Concentration Fields:
 
 with limits for colorscale: [![meaningtowords](https://img.shields.io/badge/optimizedConc-streamlit-red)](https://enhancedvisualizationconcentrationprofile-cu.streamlit.app/)
 
+with training datasets for zero values for diriclet BCs: [![meaningtowords](https://img.shields.io/badge/broadRangeConc-streamlit-red)](https://concentrationprofilesni-broadrange-pinn.streamlit.app/)
+
 Concentration Fields, Flux and Others:
 [![meaningtowords](https://img.shields.io/badge/solutions-streamlit-red)](https://multivariatecrossdiffusion2d-cu.streamlit.app/)
 
 
+
+------------------------------------------------------------------
+
 *Ni UBM Bottom and Ni UBM Top (  SelfDiffusion - Symmetry)*
+
+------------------------------------------------------------------
 
 Training History: 
 basic
