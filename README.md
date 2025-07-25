@@ -41,7 +41,7 @@ Concentration Fields:
 
 with limits for colorscale: [![meaningtowords](https://img.shields.io/badge/optimizedConc-streamlit-red)](https://enhancedvisualizationconcentrationprofile-cuni.streamlit.app/)
 
-with training datasets for zero values for BCs: [![meaningtowords](https://img.shields.io/badge/broadRangeConc-streamlit-red)](https://concentrationprofilecuni-broadrange-pinn.streamlit.app/)
+with training datasets for zero values for BCs (Gaussian-based Attention): [![meaningtowords](https://img.shields.io/badge/broadRangeConc-streamlit-red)](https://concentrationprofilecuni-broadrange-pinn.streamlit.app/)
 
 
 Concentration Fields, Flux and Others:
