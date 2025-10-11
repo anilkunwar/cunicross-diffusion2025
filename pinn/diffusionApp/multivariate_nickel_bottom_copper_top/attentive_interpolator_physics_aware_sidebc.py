@@ -307,7 +307,7 @@ def plot_centerline_curves(
         sidebar_label = 'Mean Ni Conc. (mol/cc)'
 
     fig = plt.figure(figsize=(fig_width, fig_height), constrained_layout=True)
-    gs = fig.add_gridspec(1, 4, width_ratios=[1, 1, 0.05, 0.5]
+    gs = fig.add_gridspec(1, 4, width_ratios=[1, 1, 0.05, 0.5])
     ax1 = fig.add_subplot(gs[0])
     ax2 = fig.add_subplot(gs[1])
     ax3 = fig.add_subplot(gs[3])
