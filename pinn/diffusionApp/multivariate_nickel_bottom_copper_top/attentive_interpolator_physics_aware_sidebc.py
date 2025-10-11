@@ -182,14 +182,11 @@ class MultiParamAttentionInterpolator(nn.Module):
         c1_interp[:, :, 0] = c_cu_target  # Cu at y=0
         c2_interp[:, :, -1] = c_ni_target  # Ni at y=Ly
 
-        # Enforce zero flux realism by averaging across x (eliminates artifacts at sides)
-        # This makes concentrations uniform in x, consistent with zero flux and uniform setup in x
+        # Enforce zero flux (Neumann) BCs at x=0 and x=Lx by setting boundary to adjacent interior
         for t_idx in range(len(times)):
-            c1_mean = np.mean(c1_interp[t_idx], axis=0)  # Mean over x for each y, shape (50,)
-            c1_interp[t_idx] = np.tile(c1_mean, (50, 1))  # Tile back to (50, 50)
-            
-            c2_mean = np.mean(c2_interp[t_idx], axis=0)
-            c2_interp[t_idx] = np.tile(c2_mean, (50, 1))
+            for conc in [c1_interp[t_idx], c2_interp[t_idx]]:
+                conc[0, :] = conc[1, :]
+                conc[-1, :] = conc[-2, :]
 
         param_set = solutions[0]['params'].copy()
         param_set['Ly'] = ly_target
