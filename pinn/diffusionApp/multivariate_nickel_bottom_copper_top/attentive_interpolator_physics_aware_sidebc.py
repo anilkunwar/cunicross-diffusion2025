@@ -181,12 +181,18 @@ class MultiParamAttentionInterpolator(nn.Module):
         # Enforce boundary conditions
         c1_interp[:, :, 0] = c_cu_target  # Cu at y=0
         c2_interp[:, :, -1] = c_ni_target  # Ni at y=Ly
-
-        # Enforce zero flux (Neumann) BCs at x=0 and x=Lx by setting boundary to adjacent interior
-        for t_idx in range(len(times)):
-            for conc in [c1_interp[t_idx], c2_interp[t_idx]]:
-                conc[0, :] = conc[1, :]
-                conc[-1, :] = conc[-2, :]
+        
+        # ENFORCE ZERO-FLUX BOUNDARY CONDITIONS ON SIDES (x=0 and x=Lx)
+        # For zero flux: ∂c/∂x = 0 at x=0 and x=Lx
+        # Use first-order finite difference approximation
+        
+        # At x=0 boundary: copy from x=1 to enforce zero gradient
+        c1_interp[:, 0, :] = c1_interp[:, 1, :]
+        c2_interp[:, 0, :] = c2_interp[:, 1, :]
+        
+        # At x=Lx boundary: copy from x=-2 to enforce zero gradient  
+        c1_interp[:, -1, :] = c1_interp[:, -2, :]
+        c2_interp[:, -1, :] = c2_interp[:, -2, :]
 
         param_set = solutions[0]['params'].copy()
         param_set['Ly'] = ly_target
