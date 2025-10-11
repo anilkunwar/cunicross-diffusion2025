@@ -70,14 +70,14 @@ def load_solutions(solution_dir):
                             np.all(sol['c1_preds'] == 0) or np.all(sol['c2_preds'] == 0)):
                         load_logs.append(f"{fname}: Skipped - Invalid data (NaNs or all zeros).")
                         continue
-                    # Enforce zero flux BCs on loaded solutions
+                    # Average across x to enforce uniformity and remove noise, preserving y-profile
                     for t_idx in range(len(sol['times'])):
                         c1 = sol['c1_preds'][t_idx]
                         c2 = sol['c2_preds'][t_idx]
-                        c1[0, :] = c1[1, :]
-                        c1[-1, :] = c1[-2, :]
-                        c2[0, :] = c2[1, :]
-                        c2[-1, :] = c2[-2, :]
+                        c1_mean = np.mean(c1, axis=0)  # mean over x for each y
+                        sol['c1_preds'][t_idx] = np.tile(c1_mean, (50, 1))
+                        c2_mean = np.mean(c2, axis=0)
+                        sol['c2_preds'][t_idx] = np.tile(c2_mean, (50, 1))
                     c1_min, c1_max = np.min(sol['c1_preds'][0]), np.max(sol['c1_preds'][0])
                     c2_min, c2_max = np.min(sol['c2_preds'][0]), np.max(sol['c2_preds'][0])
                     solutions.append(sol)
@@ -87,7 +87,7 @@ def load_solutions(solution_dir):
                     c_cus.append(sol['params']['C_Cu'])
                     c_nis.append(sol['params']['C_Ni'])
                     load_logs.append(
-                        f"{fname}: Loaded and BC enforced. Cu: {c1_min:.2e} to {c1_max:.2e}, Ni: {c2_min:.2e} to {c2_max:.2e}, "
+                        f"{fname}: Loaded. Cu: {c1_min:.2e} to {c1_max:.2e}, Ni: {c2_min:.2e} to {c2_max:.2e}, "
                         f"Ly={param_tuple[0]:.1f}, C_Cu={param_tuple[1]:.1e}, C_Ni={param_tuple[2]:.1e}"
                     )
                 else:
@@ -176,11 +176,11 @@ class MultiParamAttentionInterpolator(nn.Module):
                 Y_scaled = sol['Y'][0, :] * scale_factor
                 interp_c1 = RegularGridInterpolator(
                     (sol['X'][:, 0], Y_scaled), sol['c1_preds'][t_idx],
-                    method='cubic', bounds_error=False, fill_value=None
+                    method='linear', bounds_error=False, fill_value=0
                 )
                 interp_c2 = RegularGridInterpolator(
                     (sol['X'][:, 0], Y_scaled), sol['c2_preds'][t_idx],
-                    method='cubic', bounds_error=False, fill_value=None
+                    method='linear', bounds_error=False, fill_value=0
                 )
                 points = np.stack([X.flatten(), Y.flatten()], axis=1)
                 c1_interp[t_idx] += weight * interp_c1(points).reshape(50, 50)
