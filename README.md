@@ -44,7 +44,7 @@ with limits for colorscale: [![meaningtowords](https://img.shields.io/badge/opti
 with training datasets for zero values for BCs (Gaussian-based Attention): [![meaningtowords](https://img.shields.io/badge/broadRangeConc-streamlit-red)](https://concentrationprofilecuni-broadrange-pinn.streamlit.app/)
 
 with training datasets for 0 BCs (Transformer-inspired Attention): [![meaningtowords](https://img.shields.io/badge/broadRangeConcAttn-streamlit-red)](https://concentrationprofile-cuni-mpattentioninterpolator.streamlit.app/)
-
+ [![meaningtowords](https://img.shields.io/badge/broadRangeConcAttnSideBC-streamlit-red)](https://attentiveinterpolator-physicsawaresidebc.streamlit.app/) 
 
 Concentration Fields, Flux and Others:
 [![meaningtowords](https://img.shields.io/badge/solutions-streamlit-red)](https://multivariatecrossdiffusion2d-cuni.streamlit.app/)
