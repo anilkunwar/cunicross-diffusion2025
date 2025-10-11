@@ -70,16 +70,6 @@ def load_solutions(solution_dir):
                             np.all(sol['c1_preds'] == 0) or np.all(sol['c2_preds'] == 0)):
                         load_logs.append(f"{fname}: Skipped - Invalid data (NaNs or all zeros).")
                         continue
-                    # Enforce boundary conditions and average across x to remove artifacts
-                    for t_idx in range(len(sol['times'])):
-                        sol['c1_preds'][t_idx][:, -1] = sol['params']['C_Cu']  # Cu at y=Ly (top)
-                        sol['c2_preds'][t_idx][:, 0] = sol['params']['C_Ni']  # Ni at y=0 (bottom)
-                        c1 = sol['c1_preds'][t_idx]
-                        c2 = sol['c2_preds'][t_idx]
-                        c1_mean = np.mean(c1, axis=0)
-                        sol['c1_preds'][t_idx] = np.tile(c1_mean, (50, 1))
-                        c2_mean = np.mean(c2, axis=0)
-                        sol['c2_preds'][t_idx] = np.tile(c2_mean, (50, 1))
                     c1_min, c1_max = np.min(sol['c1_preds'][0]), np.max(sol['c1_preds'][0])
                     c2_min, c2_max = np.min(sol['c2_preds'][0]), np.max(sol['c2_preds'][0])
                     solutions.append(sol)
@@ -188,16 +178,15 @@ class MultiParamAttentionInterpolator(nn.Module):
                 c1_interp[t_idx] += weight * interp_c1(points).reshape(50, 50)
                 c2_interp[t_idx] += weight * interp_c2(points).reshape(50, 50)
 
-        # Enforce boundary conditions (swapped to match bottom Ni, top Cu)
-        c1_interp[:, :, -1] = c_cu_target  # Cu at y=Ly (top)
-        c2_interp[:, :, 0] = c_ni_target  # Ni at y=0 (bottom)
+        # Enforce boundary conditions
+        c1_interp[:, :, 0] = c_cu_target  # Cu at y=0
+        c2_interp[:, :, -1] = c_ni_target  # Ni at y=Ly
 
-        # Average across x to enforce uniformity and remove artifacts
+        # Enforce zero flux (Neumann) BCs at x=0 and x=Lx by setting boundary to adjacent interior
         for t_idx in range(len(times)):
-            c1_mean = np.mean(c1_interp[t_idx], axis=0)
-            c1_interp[t_idx] = np.tile(c1_mean, (50, 1))
-            c2_mean = np.mean(c2_interp[t_idx], axis=0)
-            c2_interp[t_idx] = np.tile(c2_mean, (50, 1))
+            for conc in [c1_interp[t_idx], c2_interp[t_idx]]:
+                conc[0, :] = conc[1, :]
+                conc[-1, :] = conc[-2, :]
 
         param_set = solutions[0]['params'].copy()
         param_set['Ly'] = ly_target
@@ -229,52 +218,6 @@ def load_and_interpolate_solution(solutions, params_list, ly_target, c_cu_target
     interpolator = MultiParamAttentionInterpolator(sigma=0.2)
     return interpolator(solutions, params_list, ly_target, c_cu_target, c_ni_target)
 
-def generate_vts(solution, time_index):
-    X = solution['X']
-    Y = solution['Y']
-    c1 = solution['c1_preds'][time_index]
-    c2 = solution['c2_preds'][time_index]
-    
-    nx, ny = c1.shape
-    nz = 1
-    
-    vts_content = '<?xml version="1.0"?>\n'
-    vts_content += '<VTKFile type="StructuredGrid" version="0.1" byte_order="LittleEndian">\n'
-    vts_content += f'  <StructuredGrid WholeExtent="0 {nx-1} 0 {ny-1} 0 0">\n'
-    vts_content += f'    <Piece Extent="0 {nx-1} 0 {ny-1} 0 0">\n'
-    
-    vts_content += '      <Points>\n'
-    vts_content += '        <DataArray type="Float32" NumberOfComponents="3" format="ascii">\n'
-    for i in range(nx):
-        for j in range(ny):
-            vts_content += f"{X[i,j]} {Y[i,j]} 0.0 "
-        vts_content += '\n'
-    vts_content += '        </DataArray>\n'
-    vts_content += '      </Points>\n'
-    
-    vts_content += '      <PointData Scalars="Cu Ni">\n'
-    
-    vts_content += '        <DataArray type="Float32" Name="Cu" format="ascii">\n'
-    for i in range(nx):
-        for j in range(ny):
-            vts_content += f"{c1[i,j]} "
-        vts_content += '\n'
-    vts_content += '        </DataArray>\n'
-    
-    vts_content += '        <DataArray type="Float32" Name="Ni" format="ascii">\n'
-    for i in range(nx):
-        for j in range(ny):
-            vts_content += f"{c2[i,j]} "
-        vts_content += '\n'
-    vts_content += '        </DataArray>\n'
-    
-    vts_content += '      </PointData>\n'
-    vts_content += '    </Piece>\n'
-    vts_content += '  </StructuredGrid>\n'
-    vts_content += '</VTKFile>\n'
-    
-    return vts_content
-
 def plot_2d_concentration(solution, time_index, output_dir="figures", cmap_cu='viridis', cmap_ni='magma', vmin_cu=None, vmax_cu=None, vmin_ni=None, vmax_ni=None):
     x_coords = solution['X'][:, 0]
     y_coords = solution['Y'][0, :]
@@ -292,9 +235,9 @@ def plot_2d_concentration(solution, time_index, output_dir="figures", cmap_cu='v
 
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(10, 4), constrained_layout=True)
 
-    # Cu heatmap (transpose to match axes: horizontal x, vertical y)
+    # Cu heatmap
     im1 = ax1.imshow(
-        c1.T,
+        c1,
         origin='lower',
         extent=[0, Lx, 0, Ly],
         cmap=cmap_cu,
@@ -310,7 +253,7 @@ def plot_2d_concentration(solution, time_index, output_dir="figures", cmap_cu='v
 
     # Ni heatmap
     im2 = ax2.imshow(
-        c2.T,
+        c2,
         origin='lower',
         extent=[0, Lx, 0, Ly],
         cmap=cmap_ni,
@@ -367,12 +310,12 @@ def plot_centerline_curves(
     ax2 = fig.add_subplot(gs[1])
     ax3 = fig.add_subplot(gs[3])
 
-    # Centerline curves (fixed x, all y)
+    # Centerline curves
     colors = cm.get_cmap(curve_colormap)(np.linspace(0, 1, len(time_indices)))
     for idx, t_idx in enumerate(time_indices):
         t_val = times[t_idx]
-        c1 = solution['c1_preds'][t_idx][center_idx, :]
-        c2 = solution['c2_preds'][t_idx][center_idx, :]
+        c1 = solution['c1_preds'][t_idx][:, center_idx]
+        c2 = solution['c2_preds'][t_idx][:, center_idx]
         ax1.plot(y_coords, c1, label=f't = {t_val:.1f} s', color=colors[idx], linewidth=curve_linewidth)
         ax2.plot(y_coords, c2, label=f't = {t_val:.1f} s', color=colors[idx], linewidth=curve_linewidth)
 
@@ -478,8 +421,8 @@ def plot_parameter_sweep(
         ly, c_cu, c_ni = params
         if params in selected_params:
             y_coords = sol['Y'][0, :]
-            c1 = sol['c1_preds'][time_index][center_idx, :]
-            c2 = sol['c2_preds'][time_index][center_idx, :]
+            c1 = sol['c1_preds'][time_index][:, center_idx]
+            c2 = sol['c2_preds'][time_index][:, center_idx]
             label = f'$L_y$={ly:.1f}, $C_{{Cu}}$={c_cu:.1e}, $C_{{Ni}}$={c_ni:.1e}'
             if sol.get('interpolated', False):
                 label += " (Interpolated)"
@@ -704,15 +647,6 @@ def main():
         data=open(os.path.join("figures", f"{filename_2d}.pdf"), "rb").read(),
         file_name=f"{filename_2d}.pdf",
         mime="application/pdf"
-    )
-
-    # Download VTS
-    vts_content = generate_vts(solution, time_index)
-    st.download_button(
-        label="Download VTS File",
-        data=vts_content.encode(),
-        file_name="simulation.vts",
-        mime="application/xml"
     )
 
     # Centerline Concentration Curves
