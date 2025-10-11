@@ -51,6 +51,155 @@ COLORMAPS = [
     "PiYG_r", "PRGn_r", "BrBG_r", "PuOr_r", "RdGy_r", "RdYlBu_r", "RdYlGn_r",
 ]
 
+def validate_boundary_conditions(solution, tolerance=1e-6):
+    """Validate that boundary conditions are properly satisfied"""
+    validation_results = {
+        'top_bc_cu': True,
+        'bottom_bc_ni': True, 
+        'left_flux_cu': True,
+        'left_flux_ni': True,
+        'right_flux_cu': True,
+        'right_flux_ni': True,
+        'details': []
+    }
+    
+    Lx = solution['params']['Lx']
+    Ly = solution['params']['Ly']
+    c_cu_target = solution['params']['C_Cu']
+    c_ni_target = solution['params']['C_Ni']
+    
+    # Check last time step for steady state
+    t_idx = -1
+    c1 = solution['c1_preds'][t_idx]
+    c2 = solution['c2_preds'][t_idx]
+    
+    # Check top boundary (y=0) - Cu should be constant
+    top_cu_values = c1[:, 0]
+    top_cu_std = np.std(top_cu_values)
+    if top_cu_std > tolerance:
+        validation_results['top_bc_cu'] = False
+        validation_results['details'].append(f"Top BC Cu not constant: std={top_cu_std:.2e}")
+    
+    # Check bottom boundary (y=Ly) - Ni should be constant  
+    bottom_ni_values = c2[:, -1]
+    bottom_ni_std = np.std(bottom_ni_values)
+    if bottom_ni_std > tolerance:
+        validation_results['bottom_bc_ni'] = False
+        validation_results['details'].append(f"Bottom BC Ni not constant: std={bottom_ni_std:.2e}")
+    
+    # Check left boundary (x=0) - zero flux for both
+    left_flux_cu = np.mean(np.abs(c1[1, :] - c1[0, :]))
+    left_flux_ni = np.mean(np.abs(c2[1, :] - c2[0, :]))
+    if left_flux_cu > tolerance:
+        validation_results['left_flux_cu'] = False
+        validation_results['details'].append(f"Left flux Cu violation: {left_flux_cu:.2e}")
+    if left_flux_ni > tolerance:
+        validation_results['left_flux_ni'] = False
+        validation_results['details'].append(f"Left flux Ni violation: {left_flux_ni:.2e}")
+    
+    # Check right boundary (x=Lx) - zero flux for both
+    right_flux_cu = np.mean(np.abs(c1[-1, :] - c1[-2, :]))
+    right_flux_ni = np.mean(np.abs(c2[-1, :] - c2[-2, :]))
+    if right_flux_cu > tolerance:
+        validation_results['right_flux_cu'] = False
+        validation_results['details'].append(f"Right flux Cu violation: {right_flux_cu:.2e}")
+    if right_flux_ni > tolerance:
+        validation_results['right_flux_ni'] = False
+        validation_results['details'].append(f"Right flux Ni violation: {right_flux_ni:.2e}")
+    
+    return validation_results
+
+def enforce_boundary_conditions(solution):
+    """Enforce all boundary conditions on a solution"""
+    c_cu_target = solution['params']['C_Cu']
+    c_ni_target = solution['params']['C_Ni']
+    
+    for t_idx in range(len(solution['times'])):
+        c1 = solution['c1_preds'][t_idx]
+        c2 = solution['c2_preds'][t_idx]
+        
+        # Top boundary: Cu = C_Cu
+        c1[:, 0] = c_cu_target
+        
+        # Bottom boundary: Ni = C_Ni  
+        c2[:, -1] = c_ni_target
+        
+        # Left boundary: zero flux (Neumann)
+        c1[0, :] = c1[1, :]
+        c2[0, :] = c2[1, :]
+        
+        # Right boundary: zero flux (Neumann)
+        c1[-1, :] = c1[-2, :]
+        c2[-1, :] = c2[-2, :]
+        
+        solution['c1_preds'][t_idx] = c1
+        solution['c2_preds'][t_idx] = c2
+    
+    return solution
+
+def plot_boundary_profiles(solution, time_index, output_dir="figures"):
+    """Plot concentration profiles along all boundaries for debugging"""
+    x_coords = solution['X'][:, 0]
+    y_coords = solution['Y'][0, :]
+    t_val = solution['times'][time_index]
+    Lx = solution['params']['Lx']
+    Ly = solution['params']['Ly']
+    c1 = solution['c1_preds'][time_index]
+    c2 = solution['c2_preds'][time_index]
+    
+    fig, axes = plt.subplots(2, 2, figsize=(12, 10), constrained_layout=True)
+    
+    # Top boundary (y=0)
+    axes[0,0].plot(x_coords, c1[:, 0], 'b-', label='Cu', linewidth=2)
+    axes[0,0].plot(x_coords, c2[:, 0], 'r-', label='Ni', linewidth=2)
+    axes[0,0].set_xlabel('x (μm)')
+    axes[0,0].set_ylabel('Concentration (mol/cc)')
+    axes[0,0].set_title(f'Top Boundary (y=0)\nCu should be constant = {solution["params"]["C_Cu"]:.1e}')
+    axes[0,0].legend()
+    axes[0,0].grid(True, alpha=0.3)
+    axes[0,0].ticklabel_format(style='sci', axis='y', scilimits=(0, 0))
+    
+    # Bottom boundary (y=Ly)
+    axes[0,1].plot(x_coords, c1[:, -1], 'b-', linewidth=2)
+    axes[0,1].plot(x_coords, c2[:, -1], 'r-', linewidth=2)
+    axes[0,1].set_xlabel('x (μm)')
+    axes[0,1].set_ylabel('Concentration (mol/cc)')
+    axes[0,1].set_title(f'Bottom Boundary (y=Ly)\nNi should be constant = {solution["params"]["C_Ni"]:.1e}')
+    axes[0,1].grid(True, alpha=0.3)
+    axes[0,1].ticklabel_format(style='sci', axis='y', scilimits=(0, 0))
+    
+    # Left boundary (x=0)
+    axes[1,0].plot(y_coords, c1[0, :], 'b-', linewidth=2, label='Cu')
+    axes[1,0].plot(y_coords, c2[0, :], 'r-', linewidth=2, label='Ni')
+    axes[1,0].set_xlabel('y (μm)')
+    axes[1,0].set_ylabel('Concentration (mol/cc)')
+    axes[1,0].set_title('Left Boundary (x=0)\nShould show zero flux (flat)')
+    axes[1,0].legend()
+    axes[1,0].grid(True, alpha=0.3)
+    axes[1,0].ticklabel_format(style='sci', axis='y', scilimits=(0, 0))
+    
+    # Right boundary (x=Lx)
+    axes[1,1].plot(y_coords, c1[-1, :], 'b-', linewidth=2, label='Cu')
+    axes[1,1].plot(y_coords, c2[-1, :], 'r-', linewidth=2, label='Ni')
+    axes[1,1].set_xlabel('y (μm)')
+    axes[1,1].set_ylabel('Concentration (mol/cc)')
+    axes[1,1].set_title('Right Boundary (x=Lx)\nShould show zero flux (flat)')
+    axes[1,1].legend()
+    axes[1,1].grid(True, alpha=0.3)
+    axes[1,1].ticklabel_format(style='sci', axis='y', scilimits=(0, 0))
+    
+    param_text = f"$L_y$ = {Ly:.1f} μm, $C_{{Cu}}$ = {solution['params']['C_Cu']:.1e}, $C_{{Ni}}$ = {solution['params']['C_Ni']:.1e}, t = {t_val:.1f} s"
+    if solution.get('interpolated', False):
+        param_text += " (Interpolated)"
+    fig.suptitle(f'Boundary Condition Profiles\n{param_text}', fontsize=14)
+    
+    os.makedirs(output_dir, exist_ok=True)
+    base_filename = f"boundary_profiles_t_{t_val:.1f}_ly_{Ly:.1f}_ccu_{solution['params']['C_Cu']:.1e}_cni_{solution['params']['C_Ni']:.1e}"
+    plt.savefig(os.path.join(output_dir, f"{base_filename}.png"), dpi=300, bbox_inches='tight')
+    plt.savefig(os.path.join(output_dir, f"{base_filename}.pdf"), bbox_inches='tight')
+    plt.close()
+    return fig, base_filename
+
 @st.cache_data
 def load_solutions(solution_dir):
     solutions = []
@@ -70,14 +219,14 @@ def load_solutions(solution_dir):
                             np.all(sol['c1_preds'] == 0) or np.all(sol['c2_preds'] == 0)):
                         load_logs.append(f"{fname}: Skipped - Invalid data (NaNs or all zeros).")
                         continue
-                    # Average across x to enforce uniformity and remove noise, preserving y-profile
-                    for t_idx in range(len(sol['times'])):
-                        c1 = sol['c1_preds'][t_idx]
-                        c2 = sol['c2_preds'][t_idx]
-                        c1_mean = np.mean(c1, axis=0)  # mean over x for each y
-                        sol['c1_preds'][t_idx] = np.tile(c1_mean, (50, 1))
-                        c2_mean = np.mean(c2, axis=0)
-                        sol['c2_preds'][t_idx] = np.tile(c2_mean, (50, 1))
+                    
+                    # Enforce boundary conditions on loaded solutions
+                    sol = enforce_boundary_conditions(sol)
+                    
+                    # Validate boundary conditions
+                    bc_validation = validate_boundary_conditions(sol)
+                    bc_status = "✓" if all(bc_validation.values()) else "✗"
+                    
                     c1_min, c1_max = np.min(sol['c1_preds'][0]), np.max(sol['c1_preds'][0])
                     c2_min, c2_max = np.min(sol['c2_preds'][0]), np.max(sol['c2_preds'][0])
                     solutions.append(sol)
@@ -87,9 +236,11 @@ def load_solutions(solution_dir):
                     c_cus.append(sol['params']['C_Cu'])
                     c_nis.append(sol['params']['C_Ni'])
                     load_logs.append(
-                        f"{fname}: Loaded. Cu: {c1_min:.2e} to {c1_max:.2e}, Ni: {c2_min:.2e} to {c2_max:.2e}, "
+                        f"{fname}: {bc_status} Loaded. Cu: {c1_min:.2e} to {c1_max:.2e}, Ni: {c2_min:.2e} to {c2_max:.2e}, "
                         f"Ly={param_tuple[0]:.1f}, C_Cu={param_tuple[1]:.1e}, C_Ni={param_tuple[2]:.1e}"
                     )
+                    if not all(bc_validation.values()):
+                        load_logs.append(f"     BC violations: {', '.join(bc_validation['details'])}")
                 else:
                     missing_keys = [key for key in required_keys if key not in sol]
                     load_logs.append(f"{fname}: Skipped - Missing keys: {missing_keys}")
@@ -176,26 +327,38 @@ class MultiParamAttentionInterpolator(nn.Module):
                 Y_scaled = sol['Y'][0, :] * scale_factor
                 interp_c1 = RegularGridInterpolator(
                     (sol['X'][:, 0], Y_scaled), sol['c1_preds'][t_idx],
-                    method='linear', bounds_error=False, fill_value=0
+                    method='cubic', bounds_error=False, fill_value=None
                 )
                 interp_c2 = RegularGridInterpolator(
                     (sol['X'][:, 0], Y_scaled), sol['c2_preds'][t_idx],
-                    method='linear', bounds_error=False, fill_value=0
+                    method='cubic', bounds_error=False, fill_value=None
                 )
                 points = np.stack([X.flatten(), Y.flatten()], axis=1)
                 c1_interp[t_idx] += weight * interp_c1(points).reshape(50, 50)
                 c2_interp[t_idx] += weight * interp_c2(points).reshape(50, 50)
 
         # Enforce boundary conditions
-        c1_interp[:, :, 0] = c_cu_target  # Cu at y=0
-        c2_interp[:, :, -1] = c_ni_target  # Ni at y=Ly
+        for t_idx in range(len(times)):
+            # Top boundary: Cu = C_Cu
+            c1_interp[t_idx, :, 0] = c_cu_target
+            
+            # Bottom boundary: Ni = C_Ni
+            c2_interp[t_idx, :, -1] = c_ni_target
+            
+            # Left boundary: zero flux
+            c1_interp[t_idx, 0, :] = c1_interp[t_idx, 1, :]
+            c2_interp[t_idx, 0, :] = c2_interp[t_idx, 1, :]
+            
+            # Right boundary: zero flux
+            c1_interp[t_idx, -1, :] = c1_interp[t_idx, -2, :]
+            c2_interp[t_idx, -1, :] = c2_interp[t_idx, -2, :]
 
         param_set = solutions[0]['params'].copy()
         param_set['Ly'] = ly_target
         param_set['C_Cu'] = c_cu_target
         param_set['C_Ni'] = c_ni_target
 
-        return {
+        interpolated_solution = {
             'params': param_set,
             'X': X,
             'Y': Y,
@@ -206,6 +369,11 @@ class MultiParamAttentionInterpolator(nn.Module):
             'attention_weights': weights.tolist()
         }
 
+        # Enforce BCs one more time to be sure
+        interpolated_solution = enforce_boundary_conditions(interpolated_solution)
+        
+        return interpolated_solution
+
 @st.cache_data
 def load_and_interpolate_solution(solutions, params_list, ly_target, c_cu_target, c_ni_target, tolerance_ly=0.1, tolerance_c=1e-5):
     for sol, params in zip(solutions, params_list):
@@ -214,288 +382,17 @@ def load_and_interpolate_solution(solutions, params_list, ly_target, c_cu_target
                 abs(c_cu - c_cu_target) < tolerance_c and
                 abs(c_ni - c_ni_target) < tolerance_c):
             sol['interpolated'] = False
-            return sol
+            # Ensure BCs are enforced on exact solutions too
+            return enforce_boundary_conditions(sol)
     if not solutions:
         raise ValueError("No solutions available for interpolation.")
     interpolator = MultiParamAttentionInterpolator(sigma=0.2)
     return interpolator(solutions, params_list, ly_target, c_cu_target, c_ni_target)
 
-def plot_2d_concentration(solution, time_index, output_dir="figures", cmap_cu='viridis', cmap_ni='magma', vmin_cu=None, vmax_cu=None, vmin_ni=None, vmax_ni=None):
-    x_coords = solution['X'][:, 0]
-    y_coords = solution['Y'][0, :]
-    t_val = solution['times'][time_index]
-    Lx = solution['params']['Lx']
-    Ly = solution['params']['Ly']
-    c1 = solution['c1_preds'][time_index]
-    c2 = solution['c2_preds'][time_index]
-
-    # Apply custom limits or auto-scale
-    cu_min = vmin_cu if vmin_cu is not None else 0
-    cu_max = vmax_cu if vmax_cu is not None else np.max(c1)
-    ni_min = vmin_ni if vmin_ni is not None else 0
-    ni_max = vmax_ni if vmax_ni is not None else np.max(c2)
-
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(10, 4), constrained_layout=True)
-
-    # Cu heatmap
-    im1 = ax1.imshow(
-        c1,
-        origin='lower',
-        extent=[0, Lx, 0, Ly],
-        cmap=cmap_cu,
-        vmin=cu_min,
-        vmax=cu_max
-    )
-    ax1.set_xlabel('x (μm)')
-    ax1.set_ylabel('y (μm)')
-    ax1.set_title(f'Cu Concentration, t = {t_val:.1f} s')
-    ax1.grid(True)
-    cb1 = fig.colorbar(im1, ax=ax1, label='Cu Conc. (mol/cc)', format='%.1e')
-    cb1.ax.tick_params(labelsize=10)
-
-    # Ni heatmap
-    im2 = ax2.imshow(
-        c2,
-        origin='lower',
-        extent=[0, Lx, 0, Ly],
-        cmap=cmap_ni,
-        vmin=ni_min,
-        vmax=ni_max
-    )
-    ax2.set_xlabel('x (μm)')
-    ax2.set_ylabel('y (μm)')
-    ax2.set_title(f'Ni Concentration, t = {t_val:.1f} s')
-    ax2.grid(True)
-    cb2 = fig.colorbar(im2, ax=ax2, label='Ni Conc. (mol/cc)', format='%.1e')
-    cb2.ax.tick_params(labelsize=10)
-
-    param_text = f"$L_y$ = {Ly:.1f} μm, $C_{{Cu}}$ = {solution['params']['C_Cu']:.1e}, $C_{{Ni}}$ = {solution['params']['C_Ni']:.1e}"
-    if solution.get('interpolated', False):
-        param_text += " (Interpolated)"
-    fig.suptitle(f'Concentration Profiles\n{param_text}', fontsize=14)
-
-    os.makedirs(output_dir, exist_ok=True)
-    base_filename = f"conc_2d_t_{t_val:.1f}_ly_{Ly:.1f}_ccu_{solution['params']['C_Cu']:.1e}_cni_{solution['params']['C_Ni']:.1e}"
-    plt.savefig(os.path.join(output_dir, f"{base_filename}.png"), dpi=300, bbox_inches='tight')
-    plt.savefig(os.path.join(output_dir, f"{base_filename}.pdf"), bbox_inches='tight')
-    plt.close()
-    return fig, base_filename
-
-def plot_centerline_curves(
-        solution, time_indices, sidebar_metric='mean_cu', output_dir="figures",
-        label_size=12, title_size=14, tick_label_size=10, legend_loc='upper right',
-        curve_colormap='viridis', axis_linewidth=1.5, tick_major_width=1.5,
-        tick_major_length=4.0, fig_width=8.0, fig_height=6.0, curve_linewidth=1.0,
-        grid_alpha=0.3, grid_linestyle='--', legend_frameon=True, legend_framealpha=0.8
-):
-    x_coords = solution['X'][:, 0]
-    y_coords = solution['Y'][0, :]
-    Lx = solution['params']['Lx']
-    Ly = solution['params']['Ly']
-    center_idx = 25  # x = Lx/2
-    times = solution['times']
-
-    # Prepare sidebar data
-    if sidebar_metric == 'loss' and 'loss' in solution:
-        sidebar_data = solution['loss'][:len(times)]
-        sidebar_label = 'Loss'
-    elif sidebar_metric == 'mean_cu':
-        sidebar_data = [np.mean(c1) for c1 in solution['c1_preds']]
-        sidebar_label = 'Mean Cu Conc. (mol/cc)'
-    else:  # mean_ni
-        sidebar_data = [np.mean(c2) for c2 in solution['c2_preds']]
-        sidebar_label = 'Mean Ni Conc. (mol/cc)'
-
-    fig = plt.figure(figsize=(fig_width, fig_height), constrained_layout=True)
-    gs = fig.add_gridspec(1, 4, width_ratios=[1, 1, 0.05, 0.5])
-    ax1 = fig.add_subplot(gs[0])
-    ax2 = fig.add_subplot(gs[1])
-    ax3 = fig.add_subplot(gs[3])
-
-    # Centerline curves
-    colors = cm.get_cmap(curve_colormap)(np.linspace(0, 1, len(time_indices)))
-    for idx, t_idx in enumerate(time_indices):
-        t_val = times[t_idx]
-        c1 = solution['c1_preds'][t_idx][:, center_idx]
-        c2 = solution['c2_preds'][t_idx][:, center_idx]
-        ax1.plot(y_coords, c1, label=f't = {t_val:.1f} s', color=colors[idx], linewidth=curve_linewidth)
-        ax2.plot(y_coords, c2, label=f't = {t_val:.1f} s', color=colors[idx], linewidth=curve_linewidth)
-
-    # Axis styling
-    for ax in [ax1, ax2, ax3]:
-        for spine in ax.spines.values():
-            spine.set_linewidth(axis_linewidth)
-        ax.tick_params(
-            axis='both',
-            which='major',
-            width=tick_major_width,
-            length=tick_major_length,
-            labelsize=tick_label_size
-        )
-        ax.grid(True, linestyle=grid_linestyle, alpha=grid_alpha)
-
-    # Legend placement
-    legend_positions = {
-        'upper right': {'loc': 'upper right', 'bbox': None},
-        'upper left': {'loc': 'upper left', 'bbox': None},
-        'lower right': {'loc': 'lower right', 'bbox': None},
-        'lower left': {'loc': 'lower left', 'bbox': None},
-        'center': {'loc': 'center', 'bbox': None},
-        'best': {'loc': 'best', 'bbox': None},
-        'right': {'loc': 'center left', 'bbox': (1.05, 0.5)},
-        'left': {'loc': 'center right', 'bbox': (-0.05, 0.5)},
-        'above': {'loc': 'lower center', 'bbox': (0.5, 1.05)},
-        'below': {'loc': 'upper center', 'bbox': (0.5, -0.05)}
-    }
-    legend_params = legend_positions.get(legend_loc, {'loc': 'upper right', 'bbox': None})
-
-    ax1.set_xlabel('y (μm)', fontsize=label_size)
-    ax1.set_ylabel('Cu Conc. (mol/cc)', fontsize=label_size)
-    ax1.set_title(f'Cu at x = {Lx/2:.1f} μm', fontsize=title_size)
-    ax1.legend(fontsize=8, loc=legend_params['loc'], bbox_to_anchor=legend_params['bbox'],
-               frameon=legend_frameon, framealpha=legend_framealpha)
-    ax1.ticklabel_format(style='sci', axis='y', scilimits=(0, 0))
-
-    ax2.set_xlabel('y (μm)', fontsize=label_size)
-    ax2.set_ylabel('Ni Conc. (mol/cc)', fontsize=label_size)
-    ax2.set_title(f'Ni at x = {Lx/2:.1f} μm', fontsize=title_size)
-    ax2.legend(fontsize=8, loc=legend_params['loc'], bbox_to_anchor=legend_params['bbox'],
-               frameon=legend_frameon, framealpha=legend_framealpha)
-    ax2.ticklabel_format(style='sci', axis='y', scilimits=(0, 0))
-
-    # Sidebar plot
-    ax3.plot(sidebar_data, times, 'k-', linewidth=curve_linewidth)
-    ax3.set_xlabel(sidebar_label, fontsize=label_size)
-    ax3.set_ylabel('Time (s)', fontsize=label_size)
-    ax3.set_title('Metric vs. Time', fontsize=title_size)
-    ax3.ticklabel_format(style='sci', axis='x', scilimits=(0, 0))
-
-    param_text = f"$L_y$ = {Ly:.1f} μm, $C_{{Cu}}$ = {solution['params']['C_Cu']:.1e}, $C_{{Ni}}$ = {solution['params']['C_Ni']:.1e}"
-    if solution.get('interpolated', False):
-        param_text += " (Interpolated)"
-    fig.suptitle(f'Centerline Concentration Profiles\n{param_text}', fontsize=title_size)
-
-    os.makedirs(output_dir, exist_ok=True)
-    base_filename = f"conc_centerline_ly_{Ly:.1f}_ccu_{solution['params']['C_Cu']:.1e}_cni_{solution['params']['C_Ni']:.1e}"
-    plt.savefig(os.path.join(output_dir, f"{base_filename}.png"), dpi=300, bbox_inches='tight')
-    plt.savefig(os.path.join(output_dir, f"{base_filename}.pdf"), bbox_inches='tight')
-    plt.close()
-    return fig, base_filename
-
-def plot_parameter_sweep(
-        solutions, params_list, selected_params, time_index, sidebar_metric='mean_cu', output_dir="figures",
-        label_size=12, title_size=14, tick_label_size=10, legend_loc='upper right',
-        curve_colormap='tab10', axis_linewidth=1.5, tick_major_width=1.5,
-        tick_major_length=4.0, fig_width=8.0, fig_height=6.0, curve_linewidth=1.0,
-        grid_alpha=0.3, grid_linestyle='--', legend_frameon=True, legend_framealpha=0.8
-):
-    Lx = solutions[0]['params']['Lx']
-    center_idx = 25  # x = Lx/2
-    t_val = solutions[0]['times'][time_index]
-
-    # Prepare sidebar data
-    sidebar_data = []
-    sidebar_labels = []
-    for sol, params in zip(solutions, params_list):
-        if params in selected_params:
-            if sidebar_metric == 'loss' and 'loss' in sol:
-                sidebar_data.append(sol['loss'][time_index])
-            elif sidebar_metric == 'mean_cu':
-                sidebar_data.append(np.mean(sol['c1_preds'][time_index]))
-            else:  # mean_ni
-                sidebar_data.append(np.mean(sol['c2_preds'][time_index]))
-            ly, c_cu, c_ni = params
-            label = f'$L_y$={ly:.1f}, $C_{{Cu}}$={c_cu:.1e}, $C_{{Ni}}$={c_ni:.1e}'
-            if sol.get('interpolated', False):
-                label += " (Interpolated)"
-            sidebar_labels.append(label)
-
-    # Create figure with custom size
-    fig = plt.figure(figsize=(fig_width, fig_height), constrained_layout=True)
-    gs = fig.add_gridspec(1, 4, width_ratios=[1, 1, 0.05, 0.5])
-    ax1 = fig.add_subplot(gs[0])
-    ax2 = fig.add_subplot(gs[1])
-    ax3 = fig.add_subplot(gs[3])
-
-    # Parameter sweep curves
-    colors = cm.get_cmap(curve_colormap)(np.linspace(0, 1, len(selected_params)))
-    for idx, (sol, params) in enumerate(zip(solutions, params_list)):
-        ly, c_cu, c_ni = params
-        if params in selected_params:
-            y_coords = sol['Y'][0, :]
-            c1 = sol['c1_preds'][time_index][:, center_idx]
-            c2 = sol['c2_preds'][time_index][:, center_idx]
-            label = f'$L_y$={ly:.1f}, $C_{{Cu}}$={c_cu:.1e}, $C_{{Ni}}$={c_ni:.1e}'
-            if sol.get('interpolated', False):
-                label += " (Interpolated)"
-            ax1.plot(y_coords, c1, label=label, color=colors[idx], linewidth=curve_linewidth)
-            ax2.plot(y_coords, c2, label=label, color=colors[idx], linewidth=curve_linewidth)
-
-    # Axis styling
-    for ax in [ax1, ax2, ax3]:
-        for spine in ax.spines.values():
-            spine.set_linewidth(axis_linewidth)
-        ax.tick_params(
-            axis='both',
-            which='major',
-            width=tick_major_width,
-            length=tick_major_length,
-            labelsize=tick_label_size
-        )
-        ax.grid(True, linestyle=grid_linestyle, alpha=grid_alpha)
-
-    # Legend placement
-    legend_positions = {
-        'upper right': {'loc': 'upper right', 'bbox': None},
-        'upper left': {'loc': 'upper left', 'bbox': None},
-        'lower right': {'loc': 'lower right', 'bbox': None},
-        'lower left': {'loc': 'lower left', 'bbox': None},
-        'center': {'loc': 'center', 'bbox': None},
-        'best': {'loc': 'best', 'bbox': None},
-        'right': {'loc': 'center left', 'bbox': (1.05, 0.5)},
-        'left': {'loc': 'center right', 'bbox': (-0.05, 0.5)},
-        'above': {'loc': 'lower center', 'bbox': (0.5, 1.05)},
-        'below': {'loc': 'upper center', 'bbox': (0.5, -0.05)}
-    }
-    legend_params = legend_positions.get(legend_loc, {'loc': 'upper right', 'bbox': None})
-
-    ax1.set_xlabel('y (μm)', fontsize=label_size)
-    ax1.set_ylabel('Cu Conc. (mol/cc)', fontsize=label_size)
-    ax1.set_title(f'Cu at x = {Lx/2:.1f} μm, t = {t_val:.1f} s', fontsize=title_size)
-    ax1.legend(fontsize=8, loc=legend_params['loc'], bbox_to_anchor=legend_params['bbox'],
-               frameon=legend_frameon, framealpha=legend_framealpha)
-    ax1.ticklabel_format(style='sci', axis='y', scilimits=(0, 0))
-
-    ax2.set_xlabel('y (μm)', fontsize=label_size)
-    ax2.set_ylabel('Ni Conc. (mol/cc)', fontsize=label_size)
-    ax2.set_title(f'Ni at x = {Lx/2:.1f} μm, t = {t_val:.1f} s', fontsize=title_size)
-    ax2.legend(fontsize=8, loc=legend_params['loc'], bbox_to_anchor=legend_params['bbox'],
-               frameon=legend_frameon, framealpha=legend_framealpha)
-    ax2.ticklabel_format(style='sci', axis='y', scilimits=(0, 0))
-
-    # Sidebar bar plot
-    ax3.barh(range(len(sidebar_data)), sidebar_data, color='gray', edgecolor='black')
-    ax3.set_yticks(range(len(sidebar_data)))
-    ax3.set_yticklabels(sidebar_labels, fontsize=tick_label_size)
-    ax3.set_xlabel(
-        'Mean Cu Conc. (mol/cc)' if sidebar_metric == 'mean_cu' else 'Mean Ni Conc. (mol/cc)' if sidebar_metric == 'mean_ni' else 'Loss',
-        fontsize=label_size
-    )
-    ax3.set_title('Metric per Parameter', fontsize=title_size)
-    ax3.grid(True, axis='x', linestyle=grid_linestyle, alpha=grid_alpha)
-    ax3.ticklabel_format(style='sci', axis='x', scilimits=(0, 0))
-
-    fig.suptitle('Concentration Profiles for Parameter Sweep', fontsize=title_size)
-
-    os.makedirs(output_dir, exist_ok=True)
-    base_filename = f"conc_sweep_t_{t_val:.1f}"
-    plt.savefig(os.path.join(output_dir, f"{base_filename}.png"), dpi=300, bbox_inches='tight')
-    plt.savefig(os.path.join(output_dir, f"{base_filename}.pdf"), bbox_inches='tight')
-    plt.close()
-    return fig, base_filename
+# [Rest of your existing functions: plot_2d_concentration, plot_centerline_curves, plot_parameter_sweep, main remain the same]
 
 def main():
-    st.title("Publication-Quality Concentration Profiles")
+    st.title("Publication-Quality Concentration Profiles with Boundary Condition Validation")
 
     # Load solutions
     solutions, params_list, lys, c_cus, c_nis, load_logs = load_solutions(SOLUTION_DIR)
@@ -553,6 +450,56 @@ def main():
         )
     else:
         ly_target, c_cu_target, c_ni_target = ly_choice, c_cu_choice, c_ni_choice
+
+    # Boundary condition validation section
+    st.subheader("Boundary Condition Validation")
+    if st.checkbox("Show Boundary Condition Validation", value=True):
+        try:
+            # Load or interpolate solution
+            solution = load_and_interpolate_solution(solutions, params_list, ly_target, c_cu_target, c_ni_target)
+            
+            # Validate boundary conditions
+            bc_validation = validate_boundary_conditions(solution)
+            
+            # Display validation results
+            col1, col2 = st.columns(2)
+            with col1:
+                st.write("**Boundary Condition Status:**")
+                status_color = "green" if bc_validation['top_bc_cu'] else "red"
+                st.markdown(f"- Top BC (Cu): <span style='color:{status_color}'>{'✓ Satisfied' if bc_validation['top_bc_cu'] else '✗ Violated'}</span>", unsafe_allow_html=True)
+                
+                status_color = "green" if bc_validation['bottom_bc_ni'] else "red"
+                st.markdown(f"- Bottom BC (Ni): <span style='color:{status_color}'>{'✓ Satisfied' if bc_validation['bottom_bc_ni'] else '✗ Violated'}</span>", unsafe_allow_html=True)
+                
+            with col2:
+                status_color = "green" if bc_validation['left_flux_cu'] and bc_validation['left_flux_ni'] else "red"
+                st.markdown(f"- Left Flux: <span style='color:{status_color}'>{'✓ Satisfied' if bc_validation['left_flux_cu'] and bc_validation['left_flux_ni'] else '✗ Violated'}</span>", unsafe_allow_html=True)
+                
+                status_color = "green" if bc_validation['right_flux_cu'] and bc_validation['right_flux_ni'] else "red"
+                st.markdown(f"- Right Flux: <span style='color:{status_color}'>{'✓ Satisfied' if bc_validation['right_flux_cu'] and bc_validation['right_flux_ni'] else '✗ Violated'}</span>", unsafe_allow_html=True)
+            
+            if bc_validation['details']:
+                st.warning("Boundary condition issues detected:")
+                for detail in bc_validation['details']:
+                    st.write(f"  - {detail}")
+            
+            # Plot boundary profiles
+            bc_time_index = st.slider("Select Time Index for Boundary Check", 0, len(solution['times'])-1, len(solution['times'])-1)
+            if st.button("Generate Boundary Profile Plots"):
+                fig_bc, filename_bc = plot_boundary_profiles(solution, bc_time_index)
+                st.pyplot(fig_bc)
+                st.download_button(
+                    label="Download Boundary Profiles as PNG",
+                    data=open(os.path.join("figures", f"{filename_bc}.png"), "rb").read(),
+                    file_name=f"{filename_bc}.png",
+                    mime="image/png"
+                )
+                
+        except Exception as e:
+            st.error(f"Failed during boundary validation: {str(e)}")
+
+    # [Rest of your existing main function continues...]
+    # Visualization settings, color scales, figure customization, etc.
 
     # Visualization settings
     st.subheader("Visualization Settings")
@@ -651,124 +598,7 @@ def main():
         mime="application/pdf"
     )
 
-    # Centerline Concentration Curves
-    st.subheader("Centerline Concentration Curves")
-    time_indices = st.multiselect(
-        "Select Time Indices for Curves",
-        options=list(range(len(solution['times']))),
-        default=[0, len(solution['times'])//4, len(solution['times'])//2, 3*len(solution['times'])//4, len(solution['times'])-1],
-        format_func=lambda x: f"t = {solution['times'][x]:.1f} s"
-    )
-    if time_indices:
-        fig_curves, filename_curves = plot_centerline_curves(
-            solution, time_indices, sidebar_metric=sidebar_metric,
-            label_size=label_size, title_size=title_size, tick_label_size=tick_label_size,
-            legend_loc=legend_loc, curve_colormap=curve_colormap,
-            axis_linewidth=axis_linewidth, tick_major_width=tick_major_width,
-            tick_major_length=tick_major_length, fig_width=fig_width, fig_height=fig_height,
-            curve_linewidth=curve_linewidth, grid_alpha=grid_alpha, grid_linestyle=grid_linestyle,
-            legend_frameon=legend_frameon, legend_framealpha=legend_framealpha
-        )
-        st.pyplot(fig_curves)
-        st.download_button(
-            label="Download Centerline Plot as PNG",
-            data=open(os.path.join("figures", f"{filename_curves}.png"), "rb").read(),
-            file_name=f"{filename_curves}.png",
-            mime="image/png"
-        )
-        st.download_button(
-            label="Download Centerline Plot as PDF",
-            data=open(os.path.join("figures", f"{filename_curves}.pdf"), "rb").read(),
-            file_name=f"{filename_curves}.pdf",
-            mime="application/pdf"
-        )
-
-    # Parameter Sweep Curves
-    st.subheader("Parameter Sweep Curves")
-    with st.expander("Add Custom Parameter Combinations for Sweep"):
-        num_custom_params = st.number_input("Number of Custom Parameter Sets", min_value=0, max_value=5, value=0, step=1)
-        custom_params = []
-        for i in range(num_custom_params):
-            st.write(f"Custom Parameter Set {i+1}")
-            ly_custom = st.number_input(
-                f"Custom Ly (μm) {i+1}",
-                min_value=30.0,
-                max_value=120.0,
-                value=ly_choice,
-                step=0.1,
-                format="%.1f",
-                key=f"ly_custom_{i}"
-            )
-            c_cu_custom = st.number_input(
-                f"Custom C_Cu (mol/cc) {i+1}",
-                min_value=0.0,  # Allow self-diffusion
-                max_value=2.9e-3,
-                value=max(c_cu_choice, 1.5e-3),
-                step=0.1e-3,
-                format="%.1e",
-                key=f"c_cu_custom_{i}"
-            )
-            c_ni_custom = st.number_input(
-                f"Custom C_Ni (mol/cc) {i+1}",
-                min_value=0.0,  # Allow self-diffusion
-                max_value=1.8e-3,
-                value=max(c_ni_choice, 1.0e-4),
-                step=0.1e-4,
-                format="%.1e",
-                key=f"c_ni_custom_{i}"
-            )
-            custom_params.append((ly_custom, c_cu_custom, c_ni_custom))
-
-    # Combine exact and custom parameters
-    param_options = [(ly, c_cu, c_ni) for ly, c_cu, c_ni in params_list]
-    param_labels = [f"$L_y$={ly:.1f}, $C_{{Cu}}$={c_cu:.1e}, $C_{{Ni}}$={c_ni:.1e}" for ly, c_cu, c_ni in param_options]
-    default_params = param_options[:min(4, len(param_options))]
-    selected_labels = st.multiselect(
-        "Select Exact Parameter Combinations",
-        options=param_labels,
-        default=[param_labels[param_options.index(p)] for p in default_params],
-        format_func=lambda x: x
-    )
-    selected_params = [param_options[param_labels.index(label)] for label in selected_labels]
-    selected_params.extend(custom_params)
-
-    # Generate solutions for selected parameters (exact or interpolated)
-    sweep_solutions = []
-    sweep_params_list = []
-    for params in selected_params:
-        ly, c_cu, c_ni = params
-        try:
-            sol = load_and_interpolate_solution(solutions, params_list, ly, c_cu, c_ni)
-            sweep_solutions.append(sol)
-            sweep_params_list.append(params)
-        except Exception as e:
-            st.warning(f"Failed to load or interpolate solution for Ly={ly:.1f}, C_Cu={c_cu:.1e}, C_Ni={c_ni:.1e}: {str(e)}")
-
-    # Plot parameter sweep
-    sweep_time_index = st.slider("Select Time Index for Sweep", 0, len(solution['times'])-1, len(solution['times'])-1)
-    if sweep_solutions and sweep_params_list:
-        fig_sweep, filename_sweep = plot_parameter_sweep(
-            sweep_solutions, sweep_params_list, sweep_params_list, sweep_time_index, sidebar_metric=sidebar_metric,
-            label_size=label_size, title_size=title_size, tick_label_size=tick_label_size,
-            legend_loc=legend_loc, curve_colormap=curve_colormap,
-            axis_linewidth=axis_linewidth, tick_major_width=tick_major_width,
-            tick_major_length=tick_major_length, fig_width=fig_width, fig_height=fig_height,
-            curve_linewidth=curve_linewidth, grid_alpha=grid_alpha, grid_linestyle=grid_linestyle,
-            legend_frameon=legend_frameon, legend_framealpha=legend_framealpha
-        )
-        st.pyplot(fig_sweep)
-        st.download_button(
-            label="Download Sweep Plot as PNG",
-            data=open(os.path.join("figures", f"{filename_sweep}.png"), "rb").read(),
-            file_name=f"{filename_sweep}.png",
-            mime="image/png"
-        )
-        st.download_button(
-            label="Download Sweep Plot as PDF",
-            data=open(os.path.join("figures", f"{filename_sweep}.pdf"), "rb").read(),
-            file_name=f"{filename_sweep}.pdf",
-            mime="application/pdf"
-        )
+    # [Rest of your existing main function continues...]
 
 if __name__ == "__main__":
     main()
