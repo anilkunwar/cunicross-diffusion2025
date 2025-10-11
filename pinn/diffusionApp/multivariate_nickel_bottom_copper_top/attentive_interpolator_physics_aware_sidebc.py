@@ -70,6 +70,14 @@ def load_solutions(solution_dir):
                             np.all(sol['c1_preds'] == 0) or np.all(sol['c2_preds'] == 0)):
                         load_logs.append(f"{fname}: Skipped - Invalid data (NaNs or all zeros).")
                         continue
+                    # Average across x to enforce uniformity and remove noise, preserving y-profile
+                    for t_idx in range(len(sol['times'])):
+                        c1 = sol['c1_preds'][t_idx]
+                        c2 = sol['c2_preds'][t_idx]
+                        c1_mean = np.mean(c1, axis=0)  # mean over x for each y
+                        sol['c1_preds'][t_idx] = np.tile(c1_mean, (50, 1))
+                        c2_mean = np.mean(c2, axis=0)
+                        sol['c2_preds'][t_idx] = np.tile(c2_mean, (50, 1))
                     c1_min, c1_max = np.min(sol['c1_preds'][0]), np.max(sol['c1_preds'][0])
                     c2_min, c2_max = np.min(sol['c2_preds'][0]), np.max(sol['c2_preds'][0])
                     solutions.append(sol)
@@ -181,12 +189,6 @@ class MultiParamAttentionInterpolator(nn.Module):
         # Enforce boundary conditions
         c1_interp[:, :, 0] = c_cu_target  # Cu at y=0
         c2_interp[:, :, -1] = c_ni_target  # Ni at y=Ly
-
-        # Enforce zero flux (Neumann) BCs at x=0 and x=Lx by setting boundary to adjacent interior
-        for t_idx in range(len(times)):
-            for conc in [c1_interp[t_idx], c2_interp[t_idx]]:
-                conc[0, :] = conc[1, :]
-                conc[-1, :] = conc[-2, :]
 
         param_set = solutions[0]['params'].copy()
         param_set['Ly'] = ly_target
