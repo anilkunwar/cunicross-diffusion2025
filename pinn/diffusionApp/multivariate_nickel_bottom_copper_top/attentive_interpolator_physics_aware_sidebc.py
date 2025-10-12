@@ -52,6 +52,12 @@ COLORMAPS = [
     "PiYG_r", "PRGn_r", "BrBG_r", "PuOr_r", "RdGy_r", "RdYlBu_r", "RdYlGn_r",
 ]
 
+# Fixed boundary conditions from PINN formulation
+C_CU_TOP = 0.0
+C_CU_BOTTOM = 1.6e-3
+C_NI_TOP = 1.25e-3
+C_NI_BOTTOM = 0.0
+
 def compute_boundary_modes(solutions, time_index=-1):
     """Compute the most frequent (mode) boundary values across all solutions"""
     if not solutions:
@@ -69,11 +75,13 @@ def compute_boundary_modes(solutions, time_index=-1):
         c1 = sol['c1_preds'][time_index]  # Cu concentrations
         c2 = sol['c2_preds'][time_index]  # Ni concentrations
         
-        # Top boundary (y=0) - Cu values
-        top_cu_values.extend(c1[:, 0])
+        # Top boundary (y=Ly) - Cu and Ni values
+        top_cu_values.extend(c1[:, -1])
+        top_ni_values = c2[:, -1]
         
-        # Bottom boundary (y=Ly) - Ni values  
-        bottom_ni_values.extend(c2[:, -1])
+        # Bottom boundary (y=0) - Cu and Ni values
+        bottom_cu_values = c1[:, 0]
+        bottom_ni_values.extend(c2[:, 0])
         
         # Left boundary (x=0) - both Cu and Ni
         left_cu_values.extend(c1[0, :])
@@ -85,6 +93,8 @@ def compute_boundary_modes(solutions, time_index=-1):
     
     # Convert to numpy arrays
     top_cu_values = np.array(top_cu_values)
+    top_ni_values = np.array(top_ni_values)
+    bottom_cu_values = np.array(bottom_cu_values)
     bottom_ni_values = np.array(bottom_ni_values)
     left_cu_values = np.array(left_cu_values)
     left_ni_values = np.array(left_ni_values)
@@ -108,6 +118,8 @@ def compute_boundary_modes(solutions, time_index=-1):
     
     boundary_modes = {
         'top_cu': safe_mode(top_cu_values),
+        'top_ni': safe_mode(top_ni_values),
+        'bottom_cu': safe_mode(bottom_cu_values),
         'bottom_ni': safe_mode(bottom_ni_values),
         'left_cu': safe_mode(left_cu_values),
         'left_ni': safe_mode(left_ni_values),
@@ -116,6 +128,10 @@ def compute_boundary_modes(solutions, time_index=-1):
         'stats': {
             'top_cu_mean': float(np.mean(top_cu_values)),
             'top_cu_std': float(np.std(top_cu_values)),
+            'top_ni_mean': float(np.mean(top_ni_values)),
+            'top_ni_std': float(np.std(top_ni_values)),
+            'bottom_cu_mean': float(np.mean(bottom_cu_values)),
+            'bottom_cu_std': float(np.std(bottom_cu_values)),
             'bottom_ni_mean': float(np.mean(bottom_ni_values)),
             'bottom_ni_std': float(np.std(bottom_ni_values)),
             'left_cu_mean': float(np.mean(left_cu_values)),
@@ -135,37 +151,49 @@ def validate_boundary_conditions(solution, tolerance=1e-6):
     """Validate that boundary conditions are properly satisfied"""
     validation_results = {
         'top_bc_cu': True,
-        'bottom_bc_ni': True, 
+        'top_bc_ni': True,
+        'bottom_bc_cu': True,
+        'bottom_bc_ni': True,
         'left_flux_cu': True,
         'left_flux_ni': True,
         'right_flux_cu': True,
         'right_flux_ni': True,
+        'initial_condition': True,
         'details': []
     }
-    
-    Lx = solution['params']['Lx']
-    Ly = solution['params']['Ly']
-    c_cu_target = solution['params']['C_Cu']
-    c_ni_target = solution['params']['C_Ni']
     
     # Check last time step for steady state
     t_idx = -1
     c1 = solution['c1_preds'][t_idx]
     c2 = solution['c2_preds'][t_idx]
     
-    # Check top boundary (y=0) - Cu should be constant
-    top_cu_values = c1[:, 0]
+    # Check top boundary (y=Ly) - Cu = 0, Ni = 1.25e-3
+    top_cu_values = c1[:, -1]
+    top_ni_values = c2[:, -1]
     top_cu_std = np.std(top_cu_values)
-    if top_cu_std > tolerance:
+    top_ni_std = np.std(top_ni_values)
+    top_cu_mean = np.mean(top_cu_values)
+    top_ni_mean = np.mean(top_ni_values)
+    if top_cu_std > tolerance or abs(top_cu_mean - C_CU_TOP) > tolerance:
         validation_results['top_bc_cu'] = False
-        validation_results['details'].append(f"Top BC Cu not constant: std={top_cu_std:.2e}")
+        validation_results['details'].append(f"Top BC Cu not constant at {C_CU_TOP}: mean={top_cu_mean:.2e}, std={top_cu_std:.2e}")
+    if top_ni_std > tolerance or abs(top_ni_mean - C_NI_TOP) > tolerance:
+        validation_results['top_bc_ni'] = False
+        validation_results['details'].append(f"Top BC Ni not constant at {C_NI_TOP}: mean={top_ni_mean:.2e}, std={top_ni_std:.2e}")
     
-    # Check bottom boundary (y=Ly) - Ni should be constant  
-    bottom_ni_values = c2[:, -1]
+    # Check bottom boundary (y=0) - Cu = 1.6e-3, Ni = 0
+    bottom_cu_values = c1[:, 0]
+    bottom_ni_values = c2[:, 0]
+    bottom_cu_std = np.std(bottom_cu_values)
     bottom_ni_std = np.std(bottom_ni_values)
-    if bottom_ni_std > tolerance:
+    bottom_cu_mean = np.mean(bottom_cu_values)
+    bottom_ni_mean = np.mean(bottom_ni_values)
+    if bottom_cu_std > tolerance or abs(bottom_cu_mean - C_CU_BOTTOM) > tolerance:
+        validation_results['bottom_bc_cu'] = False
+        validation_results['details'].append(f"Bottom BC Cu not constant at {C_CU_BOTTOM}: mean={bottom_cu_mean:.2e}, std={bottom_cu_std:.2e}")
+    if bottom_ni_std > tolerance or abs(bottom_ni_mean - C_NI_BOTTOM) > tolerance:
         validation_results['bottom_bc_ni'] = False
-        validation_results['details'].append(f"Bottom BC Ni not constant: std={bottom_ni_std:.2e}")
+        validation_results['details'].append(f"Bottom BC Ni not constant at {C_NI_BOTTOM}: mean={bottom_ni_mean:.2e}, std={bottom_ni_std:.2e}")
     
     # Check left boundary (x=0) - zero flux for both
     left_flux_cu = np.mean(np.abs(c1[1, :] - c1[0, :]))
@@ -187,33 +215,48 @@ def validate_boundary_conditions(solution, tolerance=1e-6):
         validation_results['right_flux_ni'] = False
         validation_results['details'].append(f"Right flux Ni violation: {right_flux_ni:.2e}")
     
+    # Check initial condition (t=0)
+    c1_initial = solution['c1_preds'][0]
+    c2_initial = solution['c2_preds'][0]
+    initial_cu_mean = np.mean(np.abs(c1_initial))
+    initial_ni_mean = np.mean(np.abs(c2_initial))
+    if initial_cu_mean > tolerance:
+        validation_results['initial_condition'] = False
+        validation_results['details'].append(f"Initial condition Cu not zero: mean={initial_cu_mean:.2e}")
+    if initial_ni_mean > tolerance:
+        validation_results['initial_condition'] = False
+        validation_results['details'].append(f"Initial condition Ni not zero: mean={initial_ni_mean:.2e}")
+    
     return validation_results
 
 def enforce_boundary_conditions(solution):
-    """Enforce all boundary conditions on a solution"""
-    c_cu_target = solution['params']['C_Cu']
-    c_ni_target = solution['params']['C_Ni']
-    
+    """Enforce boundary conditions consistent with PINN formulation"""
     for t_idx in range(len(solution['times'])):
         c1 = solution['c1_preds'][t_idx]
         c2 = solution['c2_preds'][t_idx]
         
-        # Top boundary: Cu = C_Cu
-        c1[:, 0] = c_cu_target
+        # Top boundary (y=Ly): Cu = 0, Ni = 1.25e-3
+        c1[:, -1] = C_CU_TOP
+        c2[:, -1] = C_NI_TOP
         
-        # Bottom boundary: Ni = C_Ni  
-        c2[:, -1] = c_ni_target
+        # Bottom boundary (y=0): Cu = 1.6e-3, Ni = 0
+        c1[:, 0] = C_CU_BOTTOM
+        c2[:, 0] = C_NI_BOTTOM
         
-        # Left boundary: zero flux (Neumann)
+        # Left boundary (x=0): zero flux (Neumann)
         c1[0, :] = c1[1, :]
         c2[0, :] = c2[1, :]
         
-        # Right boundary: zero flux (Neumann)
+        # Right boundary (x=Lx): zero flux (Neumann)
         c1[-1, :] = c1[-2, :]
         c2[-1, :] = c2[-2, :]
         
         solution['c1_preds'][t_idx] = c1
         solution['c2_preds'][t_idx] = c2
+    
+    # Enforce initial condition (t=0): c1 = c2 = 0 everywhere
+    solution['c1_preds'][0] = np.zeros_like(solution['c1_preds'][0])
+    solution['c2_preds'][0] = np.zeros_like(solution['c2_preds'][0])
     
     return solution
 
@@ -229,22 +272,23 @@ def plot_boundary_profiles(solution, time_index, output_dir="figures"):
     
     fig, axes = plt.subplots(2, 2, figsize=(12, 10), constrained_layout=True)
     
-    # Top boundary (y=0)
-    axes[0,0].plot(x_coords, c1[:, 0], 'b-', label='Cu', linewidth=2)
-    axes[0,0].plot(x_coords, c2[:, 0], 'r-', label='Ni', linewidth=2)
+    # Top boundary (y=Ly)
+    axes[0,0].plot(x_coords, c1[:, -1], 'b-', label='Cu', linewidth=2)
+    axes[0,0].plot(x_coords, c2[:, -1], 'r-', label='Ni', linewidth=2)
     axes[0,0].set_xlabel('x (μm)')
     axes[0,0].set_ylabel('Concentration (mol/cc)')
-    axes[0,0].set_title(f'Top Boundary (y=0)\nCu should be constant = {solution["params"]["C_Cu"]:.1e}')
+    axes[0,0].set_title(f'Top Boundary (y=Ly)\nCu = {C_CU_TOP:.1e}, Ni = {C_NI_TOP:.1e}')
     axes[0,0].legend()
     axes[0,0].grid(True, alpha=0.3)
     axes[0,0].ticklabel_format(style='sci', axis='y', scilimits=(0, 0))
     
-    # Bottom boundary (y=Ly)
-    axes[0,1].plot(x_coords, c1[:, -1], 'b-', linewidth=2)
-    axes[0,1].plot(x_coords, c2[:, -1], 'r-', linewidth=2)
+    # Bottom boundary (y=0)
+    axes[0,1].plot(x_coords, c1[:, 0], 'b-', label='Cu', linewidth=2)
+    axes[0,1].plot(x_coords, c2[:, 0], 'r-', label='Ni', linewidth=2)
     axes[0,1].set_xlabel('x (μm)')
     axes[0,1].set_ylabel('Concentration (mol/cc)')
-    axes[0,1].set_title(f'Bottom Boundary (y=Ly)\nNi should be constant = {solution["params"]["C_Ni"]:.1e}')
+    axes[0,1].set_title(f'Bottom Boundary (y=0)\nCu = {C_CU_BOTTOM:.1e}, Ni = {C_NI_BOTTOM:.1e}')
+    axes[0,1].legend()
     axes[0,1].grid(True, alpha=0.3)
     axes[0,1].ticklabel_format(style='sci', axis='y', scilimits=(0, 0))
     
@@ -268,13 +312,13 @@ def plot_boundary_profiles(solution, time_index, output_dir="figures"):
     axes[1,1].grid(True, alpha=0.3)
     axes[1,1].ticklabel_format(style='sci', axis='y', scilimits=(0, 0))
     
-    param_text = f"$L_y$ = {Ly:.1f} μm, $C_{{Cu}}$ = {solution['params']['C_Cu']:.1e}, $C_{{Ni}}$ = {solution['params']['C_Ni']:.1e}, t = {t_val:.1f} s"
+    param_text = f"$L_y$ = {Ly:.1f} μm, t = {t_val:.1f} s"
     if solution.get('interpolated', False):
         param_text += " (Interpolated)"
     fig.suptitle(f'Boundary Condition Profiles\n{param_text}', fontsize=14)
     
     os.makedirs(output_dir, exist_ok=True)
-    base_filename = f"boundary_profiles_t_{t_val:.1f}_ly_{Ly:.1f}_ccu_{solution['params']['C_Cu']:.1e}_cni_{solution['params']['C_Ni']:.1e}"
+    base_filename = f"boundary_profiles_t_{t_val:.1f}_ly_{Ly:.1f}"
     plt.savefig(os.path.join(output_dir, f"{base_filename}.png"), dpi=300, bbox_inches='tight')
     plt.savefig(os.path.join(output_dir, f"{base_filename}.pdf"), bbox_inches='tight')
     plt.close()
@@ -286,8 +330,6 @@ def load_solutions(solution_dir):
     params_list = []
     load_logs = []
     lys = []
-    c_cus = []
-    c_nis = []
     for fname in os.listdir(solution_dir):
         if fname.endswith(".pkl"):
             try:
@@ -300,30 +342,32 @@ def load_solutions(solution_dir):
                         load_logs.append(f"{fname}: Skipped - Invalid data (NaNs or all zeros).")
                         continue
                     
-                    # Enforce boundary conditions on loaded solutions
+                    # Enforce boundary conditions consistent with PINN
                     sol = enforce_boundary_conditions(sol)
                     
                     # Validate boundary conditions
                     bc_validation = validate_boundary_conditions(sol)
-                    bc_status = "✓" if all([bc_validation['top_bc_cu'], bc_validation['bottom_bc_ni'], 
+                    bc_status = "✓" if all([bc_validation['top_bc_cu'], bc_validation['top_bc_ni'],
+                                           bc_validation['bottom_bc_cu'], bc_validation['bottom_bc_ni'],
                                            bc_validation['left_flux_cu'], bc_validation['left_flux_ni'],
-                                           bc_validation['right_flux_cu'], bc_validation['right_flux_ni']]) else "✗"
+                                           bc_validation['right_flux_cu'], bc_validation['right_flux_ni'],
+                                           bc_validation['initial_condition']]) else "✗"
                     
                     c1_min, c1_max = np.min(sol['c1_preds'][0]), np.max(sol['c1_preds'][0])
                     c2_min, c2_max = np.min(sol['c2_preds'][0]), np.max(sol['c2_preds'][0])
                     solutions.append(sol)
-                    param_tuple = (sol['params']['Ly'], sol['params']['C_Cu'], sol['params']['C_Ni'])
+                    param_tuple = (sol['params']['Ly'],)
                     params_list.append(param_tuple)
                     lys.append(sol['params']['Ly'])
-                    c_cus.append(sol['params']['C_Cu'])
-                    c_nis.append(sol['params']['C_Ni'])
                     load_logs.append(
                         f"{fname}: {bc_status} Loaded. Cu: {c1_min:.2e} to {c1_max:.2e}, Ni: {c2_min:.2e} to {c2_max:.2e}, "
-                        f"Ly={param_tuple[0]:.1f}, C_Cu={param_tuple[1]:.1e}, C_Ni={param_tuple[2]:.1e}"
+                        f"Ly={param_tuple[0]:.1f}"
                     )
-                    if not all([bc_validation['top_bc_cu'], bc_validation['bottom_bc_ni'], 
+                    if not all([bc_validation['top_bc_cu'], bc_validation['top_bc_ni'],
+                               bc_validation['bottom_bc_cu'], bc_validation['bottom_bc_ni'],
                                bc_validation['left_flux_cu'], bc_validation['left_flux_ni'],
-                               bc_validation['right_flux_cu'], bc_validation['right_flux_ni']]):
+                               bc_validation['right_flux_cu'], bc_validation['right_flux_ni'],
+                               bc_validation['initial_condition']]):
                         load_logs.append(f"     BC violations: {', '.join(bc_validation['details'])}")
                 else:
                     missing_keys = [key for key in required_keys if key not in sol]
@@ -333,8 +377,8 @@ def load_solutions(solution_dir):
     if len(solutions) < 1:
         load_logs.append("Error: No valid solutions loaded. Interpolation will fail.")
     else:
-        load_logs.append(f"Loaded {len(solutions)} solutions. Expected 32.")
-    return solutions, params_list, lys, c_cus, c_nis, load_logs
+        load_logs.append(f"Loaded {len(solutions)} solutions.")
+    return solutions, params_list, lys, load_logs
 
 class MultiParamAttentionInterpolator(nn.Module):
     def __init__(self, sigma=0.2, num_heads=4, d_head=8):
@@ -342,30 +386,21 @@ class MultiParamAttentionInterpolator(nn.Module):
         self.sigma = sigma
         self.num_heads = num_heads
         self.d_head = d_head
-        self.W_q = nn.Linear(3, self.num_heads * self.d_head)  # Query projection
-        self.W_k = nn.Linear(3, self.num_heads * self.d_head)  # Key projection
+        self.W_q = nn.Linear(1, self.num_heads * self.d_head)  # Query projection (only Ly)
+        self.W_k = nn.Linear(1, self.num_heads * self.d_head)  # Key projection
 
-    def forward(self, solutions, params_list, ly_target, c_cu_target, c_ni_target):
+    def forward(self, solutions, params_list, ly_target):
         if not solutions or not params_list:
             raise ValueError("No solutions or parameters available for interpolation.")
 
-        # Extract and normalize parameters
+        # Extract and normalize Ly parameter
         lys = np.array([p[0] for p in params_list])
-        c_cus = np.array([p[1] for p in params_list])
-        c_nis = np.array([p[2] for p in params_list])
-        if not (lys.shape == c_cus.shape == c_nis.shape):
-            raise ValueError(f"Parameter array shapes mismatch: lys={lys.shape}, c_cus={c_cus.shape}, c_nis={c_nis.shape}")
-
         ly_norm = (lys - 30.0) / (120.0 - 30.0)
-        c_cu_norm = (c_cus - 0.0) / (2.9e-3 - 0.0)  # Updated to allow C_Cu = 0
-        c_ni_norm = (c_nis - 0.0) / (1.8e-3 - 0.0)  # Updated to allow C_Ni = 0
         target_ly_norm = (ly_target - 30.0) / (120.0 - 30.0)
-        target_c_cu_norm = (c_cu_target - 0.0) / (2.9e-3 - 0.0)
-        target_c_ni_norm = (c_ni_target - 0.0) / (1.8e-3 - 0.0)
 
         # Combine normalized parameters into tensors
-        params_tensor = torch.tensor(np.stack([ly_norm, c_cu_norm, c_ni_norm], axis=1), dtype=torch.float32)  # [N, 3]
-        target_params_tensor = torch.tensor([[target_ly_norm, target_c_cu_norm, target_c_ni_norm]], dtype=torch.float32)  # [1, 3]
+        params_tensor = torch.tensor(ly_norm, dtype=torch.float32).reshape(-1, 1)  # [N, 1]
+        target_params_tensor = torch.tensor([target_ly_norm], dtype=torch.float32).reshape(1, 1)  # [1, 1]
 
         # Project to query/key space
         queries = self.W_q(target_params_tensor)  # [1, num_heads * d_head]
@@ -382,9 +417,7 @@ class MultiParamAttentionInterpolator(nn.Module):
 
         # Spatial weights (Gaussian-like for locality)
         scaled_distances = torch.sqrt(
-            ((torch.tensor(ly_norm) - target_ly_norm) / self.sigma)**2 +
-            ((torch.tensor(c_cu_norm) - target_c_cu_norm) / self.sigma)**2 +
-            ((torch.tensor(c_ni_norm) - target_c_ni_norm) / self.sigma)**2
+            ((torch.tensor(ly_norm) - target_ly_norm) / self.sigma)**2
         )
         spatial_weights = torch.exp(-scaled_distances**2 / 2)
         spatial_weights /= spatial_weights.sum()  # Normalize
@@ -393,9 +426,9 @@ class MultiParamAttentionInterpolator(nn.Module):
         combined_weights = attn_weights * spatial_weights
         combined_weights /= combined_weights.sum()  # Normalize
 
-        return self._physics_aware_interpolation(solutions, combined_weights.detach().numpy(), ly_target, c_cu_target, c_ni_target)
+        return self._physics_aware_interpolation(solutions, combined_weights.detach().numpy(), ly_target)
 
-    def _physics_aware_interpolation(self, solutions, weights, ly_target, c_cu_target, c_ni_target):
+    def _physics_aware_interpolation(self, solutions, weights, ly_target):
         Lx = solutions[0]['params']['Lx']
         t_max = solutions[0]['params']['t_max']
         x_coords = np.linspace(0, Lx, 50)
@@ -421,26 +454,32 @@ class MultiParamAttentionInterpolator(nn.Module):
                 c1_interp[t_idx] += weight * interp_c1(points).reshape(50, 50)
                 c2_interp[t_idx] += weight * interp_c2(points).reshape(50, 50)
 
-        # Enforce boundary conditions
+        # Enforce boundary conditions consistent with PINN
         for t_idx in range(len(times)):
-            # Top boundary: Cu = C_Cu
-            c1_interp[t_idx, :, 0] = c_cu_target
+            # Top boundary (y=Ly): Cu = 0, Ni = 1.25e-3
+            c1_interp[t_idx, :, -1] = C_CU_TOP
+            c2_interp[t_idx, :, -1] = C_NI_TOP
             
-            # Bottom boundary: Ni = C_Ni
-            c2_interp[t_idx, :, -1] = c_ni_target
+            # Bottom boundary (y=0): Cu = 1.6e-3, Ni = 0
+            c1_interp[t_idx, :, 0] = C_CU_BOTTOM
+            c2_interp[t_idx, :, 0] = C_NI_BOTTOM
             
-            # Left boundary: zero flux
+            # Left boundary (x=0): zero flux
             c1_interp[t_idx, 0, :] = c1_interp[t_idx, 1, :]
             c2_interp[t_idx, 0, :] = c2_interp[t_idx, 1, :]
             
-            # Right boundary: zero flux
+            # Right boundary (x=Lx): zero flux
             c1_interp[t_idx, -1, :] = c1_interp[t_idx, -2, :]
             c2_interp[t_idx, -1, :] = c2_interp[t_idx, -2, :]
 
+        # Enforce initial condition (t=0): c1 = c2 = 0 everywhere
+        c1_interp[0] = np.zeros_like(c1_interp[0])
+        c2_interp[0] = np.zeros_like(c2_interp[0])
+
         param_set = solutions[0]['params'].copy()
         param_set['Ly'] = ly_target
-        param_set['C_Cu'] = c_cu_target
-        param_set['C_Ni'] = c_ni_target
+        param_set['C_Cu'] = C_CU_BOTTOM  # For display purposes
+        param_set['C_Ni'] = C_NI_TOP     # For display purposes
 
         interpolated_solution = {
             'params': param_set,
@@ -453,25 +492,23 @@ class MultiParamAttentionInterpolator(nn.Module):
             'attention_weights': weights.tolist()
         }
 
-        # Enforce BCs one more time to be sure
+        # Enforce BCs and IC one more time to be sure
         interpolated_solution = enforce_boundary_conditions(interpolated_solution)
         
         return interpolated_solution
 
 @st.cache_data
-def load_and_interpolate_solution(solutions, params_list, ly_target, c_cu_target, c_ni_target, tolerance_ly=0.1, tolerance_c=1e-5):
+def load_and_interpolate_solution(solutions, params_list, ly_target, tolerance_ly=0.1):
     for sol, params in zip(solutions, params_list):
-        ly, c_cu, c_ni = params
-        if (abs(ly - ly_target) < tolerance_ly and
-                abs(c_cu - c_cu_target) < tolerance_c and
-                abs(c_ni - c_ni_target) < tolerance_c):
+        ly = params[0]
+        if abs(ly - ly_target) < tolerance_ly:
             sol['interpolated'] = False
-            # Ensure BCs are enforced on exact solutions too
+            # Ensure BCs are enforced on exact solutions
             return enforce_boundary_conditions(sol)
     if not solutions:
         raise ValueError("No solutions available for interpolation.")
     interpolator = MultiParamAttentionInterpolator(sigma=0.2)
-    return interpolator(solutions, params_list, ly_target, c_cu_target, c_ni_target)
+    return interpolator(solutions, params_list, ly_target)
 
 def plot_2d_concentration(solution, time_index, output_dir="figures", cmap_cu='viridis', cmap_ni='magma', vmin_cu=None, vmax_cu=None, vmin_ni=None, vmax_ni=None):
     x_coords = solution['X'][:, 0]
@@ -522,13 +559,13 @@ def plot_2d_concentration(solution, time_index, output_dir="figures", cmap_cu='v
     cb2 = fig.colorbar(im2, ax=ax2, label='Ni Conc. (mol/cc)', format='%.1e')
     cb2.ax.tick_params(labelsize=10)
 
-    param_text = f"$L_y$ = {Ly:.1f} μm, $C_{{Cu}}$ = {solution['params']['C_Cu']:.1e}, $C_{{Ni}}$ = {solution['params']['C_Ni']:.1e}"
+    param_text = f"$L_y$ = {Ly:.1f} μm"
     if solution.get('interpolated', False):
         param_text += " (Interpolated)"
     fig.suptitle(f'Concentration Profiles\n{param_text}', fontsize=14)
 
     os.makedirs(output_dir, exist_ok=True)
-    base_filename = f"conc_2d_t_{t_val:.1f}_ly_{Ly:.1f}_ccu_{solution['params']['C_Cu']:.1e}_cni_{solution['params']['C_Ni']:.1e}"
+    base_filename = f"conc_2d_t_{t_val:.1f}_ly_{Ly:.1f}"
     plt.savefig(os.path.join(output_dir, f"{base_filename}.png"), dpi=300, bbox_inches='tight')
     plt.savefig(os.path.join(output_dir, f"{base_filename}.pdf"), bbox_inches='tight')
     plt.close()
@@ -623,13 +660,13 @@ def plot_centerline_curves(
     ax3.set_title('Metric vs. Time', fontsize=title_size)
     ax3.ticklabel_format(style='sci', axis='x', scilimits=(0, 0))
 
-    param_text = f"$L_y$ = {Ly:.1f} μm, $C_{{Cu}}$ = {solution['params']['C_Cu']:.1e}, $C_{{Ni}}$ = {solution['params']['C_Ni']:.1e}"
+    param_text = f"$L_y$ = {Ly:.1f} μm"
     if solution.get('interpolated', False):
         param_text += " (Interpolated)"
     fig.suptitle(f'Centerline Concentration Profiles\n{param_text}', fontsize=title_size)
 
     os.makedirs(output_dir, exist_ok=True)
-    base_filename = f"conc_centerline_ly_{Ly:.1f}_ccu_{solution['params']['C_Cu']:.1e}_cni_{solution['params']['C_Ni']:.1e}"
+    base_filename = f"conc_centerline_ly_{Ly:.1f}"
     plt.savefig(os.path.join(output_dir, f"{base_filename}.png"), dpi=300, bbox_inches='tight')
     plt.savefig(os.path.join(output_dir, f"{base_filename}.pdf"), bbox_inches='tight')
     plt.close()
@@ -657,8 +694,8 @@ def plot_parameter_sweep(
                 sidebar_data.append(np.mean(sol['c1_preds'][time_index]))
             else:  # mean_ni
                 sidebar_data.append(np.mean(sol['c2_preds'][time_index]))
-            ly, c_cu, c_ni = params
-            label = f'$L_y$={ly:.1f}, $C_{{Cu}}$={c_cu:.1e}, $C_{{Ni}}$={c_ni:.1e}'
+            ly = params[0]
+            label = f'$L_y$={ly:.1f}'
             if sol.get('interpolated', False):
                 label += " (Interpolated)"
             sidebar_labels.append(label)
@@ -673,12 +710,12 @@ def plot_parameter_sweep(
     # Parameter sweep curves
     colors = cm.get_cmap(curve_colormap)(np.linspace(0, 1, len(selected_params)))
     for idx, (sol, params) in enumerate(zip(solutions, params_list)):
-        ly, c_cu, c_ni = params
+        ly = params[0]
         if params in selected_params:
             y_coords = sol['Y'][0, :]
             c1 = sol['c1_preds'][time_index][:, center_idx]
             c2 = sol['c2_preds'][time_index][:, center_idx]
-            label = f'$L_y$={ly:.1f}, $C_{{Cu}}$={c_cu:.1e}, $C_{{Ni}}$={c_ni:.1e}'
+            label = f'$L_y$={ly:.1f}'
             if sol.get('interpolated', False):
                 label += " (Interpolated)"
             ax1.plot(y_coords, c1, label=label, color=colors[idx], linewidth=curve_linewidth)
@@ -751,7 +788,7 @@ def main():
     st.title("Publication-Quality Concentration Profiles with Boundary Condition Validation")
 
     # Load solutions
-    solutions, params_list, lys, c_cus, c_nis, load_logs = load_solutions(SOLUTION_DIR)
+    solutions, params_list, lys, load_logs = load_solutions(SOLUTION_DIR)
 
     # Display load logs
     if load_logs:
@@ -764,7 +801,7 @@ def main():
         st.error("No valid solution files found in pinn_solutions directory. Please check the directory and file contents.")
         return
 
-    st.write(f"Loaded {len(solutions)} solutions. Unique Ly: {len(set(lys))}, C_Cu: {len(set(c_cus))}, C_Ni: {len(set(c_nis))}")
+    st.write(f"Loaded {len(solutions)} solutions. Unique Ly: {len(set(lys))}")
 
     # Compute boundary modes
     boundary_modes = compute_boundary_modes(solutions)
@@ -780,8 +817,18 @@ def main():
                 f"{boundary_modes['top_cu']:.2e} mol/cc",
                 f"±{boundary_modes['stats']['top_cu_std']:.1e}"
             )
+            st.metric(
+                "Top Boundary (Ni)", 
+                f"{boundary_modes['top_ni']:.2e} mol/cc",
+                f"±{boundary_modes['stats']['top_ni_std']:.1e}"
+            )
         
         with col2:
+            st.metric(
+                "Bottom Boundary (Cu)", 
+                f"{boundary_modes['bottom_cu']:.2e} mol/cc",
+                f"±{boundary_modes['stats']['bottom_cu_std']:.1e}"
+            )
             st.metric(
                 "Bottom Boundary (Ni)", 
                 f"{boundary_modes['bottom_ni']:.2e} mol/cc",
@@ -815,24 +862,18 @@ def main():
         # Verbal summary
         st.info(
             f"**Boundary Value Summary:** The most common values across all loaded solutions are: "
-            f"**{boundary_modes['top_cu']:.2e} mol/cc** for Cu at the top boundary, "
-            f"**{boundary_modes['bottom_ni']:.2e} mol/cc** for Ni at the bottom boundary, "
-            f"**{boundary_modes['left_cu']:.2e} mol/cc** for Cu at the left boundary, "
-            f"**{boundary_modes['left_ni']:.2e} mol/cc** for Ni at the left boundary, "
-            f"**{boundary_modes['right_cu']:.2e} mol/cc** for Cu at the right boundary, and "
-            f"**{boundary_modes['right_ni']:.2e} mol/cc** for Ni at the right boundary."
+            f"**{boundary_modes['top_cu']:.2e} mol/cc** for Cu and **{boundary_modes['top_ni']:.2e} mol/cc** for Ni at the top boundary, "
+            f"**{boundary_modes['bottom_cu']:.2e} mol/cc** for Cu and **{boundary_modes['bottom_ni']:.2e} mol/cc** for Ni at the bottom boundary, "
+            f"**{boundary_modes['left_cu']:.2e} mol/cc** for Cu and **{boundary_modes['left_ni']:.2e} mol/cc** for Ni at the left boundary, "
+            f"**{boundary_modes['right_cu']:.2e} mol/cc** for Cu and **{boundary_modes['right_ni']:.2e} mol/cc** for Ni at the right boundary."
         )
 
     # Sort unique parameters
     lys = sorted(set(lys))
-    c_cus = sorted(set(c_cus))
-    c_nis = sorted(set(c_nis))
 
     # Parameter selection for single solution
     st.subheader("Select Parameters for Single Solution")
     ly_choice = st.selectbox("Domain Height (Ly, μm)", options=lys, format_func=lambda x: f"{x:.1f}")
-    c_cu_choice = st.selectbox("Cu Boundary Concentration (mol/cc)", options=c_cus, format_func=lambda x: f"{x:.1e}")
-    c_ni_choice = st.selectbox("Ni Boundary Concentration (mol/cc)", options=c_nis, format_func=lambda x: f"{x:.1e}")
 
     # Custom parameters for interpolation
     use_custom_params = st.checkbox("Use Custom Parameters for Interpolation", value=False)
@@ -845,31 +886,15 @@ def main():
             step=0.1,
             format="%.1f"
         )
-        c_cu_target = st.number_input(
-            "Custom C_Cu (mol/cc)",
-            min_value=0.0,  # Allow self-diffusion
-            max_value=2.9e-3,
-            value=max(c_cu_choice, 1.5e-3),
-            step=0.1e-3,
-            format="%.1e"
-        )
-        c_ni_target = st.number_input(
-            "Custom C_Ni (mol/cc)",
-            min_value=0.0,  # Allow self-diffusion
-            max_value=1.8e-3,
-            value=max(c_ni_choice, 1.0e-4),
-            step=0.1e-4,
-            format="%.1e"
-        )
     else:
-        ly_target, c_cu_target, c_ni_target = ly_choice, c_cu_choice, c_ni_choice
+        ly_target = ly_choice
 
     # Boundary condition validation section
     st.subheader("Boundary Condition Validation")
     if st.checkbox("Show Boundary Condition Validation", value=True):
         try:
             # Load or interpolate solution
-            solution = load_and_interpolate_solution(solutions, params_list, ly_target, c_cu_target, c_ni_target)
+            solution = load_and_interpolate_solution(solutions, params_list, ly_target)
             
             # Validate boundary conditions
             bc_validation = validate_boundary_conditions(solution)
@@ -879,17 +904,21 @@ def main():
             with col1:
                 st.write("**Boundary Condition Status:**")
                 status_color = "green" if bc_validation['top_bc_cu'] else "red"
-                st.markdown(f"- Top BC (Cu): <span style='color:{status_color}'>{'✓ Satisfied' if bc_validation['top_bc_cu'] else '✗ Violated'}</span>", unsafe_allow_html=True)
-                
+                st.markdown(f"- Top BC (Cu = {C_CU_TOP:.1e}): <span style='color:{status_color}'>{'✓ Satisfied' if bc_validation['top_bc_cu'] else '✗ Violated'}</span>", unsafe_allow_html=True)
+                status_color = "green" if bc_validation['top_bc_ni'] else "red"
+                st.markdown(f"- Top BC (Ni = {C_NI_TOP:.1e}): <span style='color:{status_color}'>{'✓ Satisfied' if bc_validation['top_bc_ni'] else '✗ Violated'}</span>", unsafe_allow_html=True)
+                status_color = "green" if bc_validation['bottom_bc_cu'] else "red"
+                st.markdown(f"- Bottom BC (Cu = {C_CU_BOTTOM:.1e}): <span style='color:{status_color}'>{'✓ Satisfied' if bc_validation['bottom_bc_cu'] else '✗ Violated'}</span>", unsafe_allow_html=True)
                 status_color = "green" if bc_validation['bottom_bc_ni'] else "red"
-                st.markdown(f"- Bottom BC (Ni): <span style='color:{status_color}'>{'✓ Satisfied' if bc_validation['bottom_bc_ni'] else '✗ Violated'}</span>", unsafe_allow_html=True)
-                
+                st.markdown(f"- Bottom BC (Ni = {C_NI_BOTTOM:.1e}): <span style='color:{status_color}'>{'✓ Satisfied' if bc_validation['bottom_bc_ni'] else '✗ Violated'}</span>", unsafe_allow_html=True)
+            
             with col2:
                 status_color = "green" if bc_validation['left_flux_cu'] and bc_validation['left_flux_ni'] else "red"
                 st.markdown(f"- Left Flux: <span style='color:{status_color}'>{'✓ Satisfied' if bc_validation['left_flux_cu'] and bc_validation['left_flux_ni'] else '✗ Violated'}</span>", unsafe_allow_html=True)
-                
                 status_color = "green" if bc_validation['right_flux_cu'] and bc_validation['right_flux_ni'] else "red"
                 st.markdown(f"- Right Flux: <span style='color:{status_color}'>{'✓ Satisfied' if bc_validation['right_flux_cu'] and bc_validation['right_flux_ni'] else '✗ Violated'}</span>", unsafe_allow_html=True)
+                status_color = "green" if bc_validation['initial_condition'] else "red"
+                st.markdown(f"- Initial Condition (c1=c2=0): <span style='color:{status_color}'>{'✓ Satisfied' if bc_validation['initial_condition'] else '✗ Violated'}</span>", unsafe_allow_html=True)
             
             if bc_validation['details']:
                 st.warning("Boundary condition issues detected:")
@@ -975,7 +1004,7 @@ def main():
 
     # Load or interpolate single solution
     try:
-        solution = load_and_interpolate_solution(solutions, params_list, ly_target, c_cu_target, c_ni_target)
+        solution = load_and_interpolate_solution(solutions, params_list, ly_target)
     except Exception as e:
         st.error(f"Failed to load or interpolate solution: {str(e)}")
         return
@@ -983,8 +1012,8 @@ def main():
     # Display solution details
     st.subheader("Solution Details")
     st.write(f"$L_y$ = {solution['params']['Ly']:.1f} μm")
-    st.write(f"$C_{{Cu}}$ = {solution['params']['C_Cu']:.1e} mol/cc")
-    st.write(f"$C_{{Ni}}$ = {solution['params']['C_Ni']:.1e} mol/cc")
+    st.write(f"$C_{{Cu}}$ (bottom) = {C_CU_BOTTOM:.1e} mol/cc, $C_{{Cu}}$ (top) = {C_CU_TOP:.1e} mol/cc")
+    st.write(f"$C_{{Ni}}$ (bottom) = {C_NI_BOTTOM:.1e} mol/cc, $C_{{Ni}}$ (top) = {C_NI_TOP:.1e} mol/cc")
     if solution.get('interpolated', False):
         st.write("**Status**: Interpolated solution")
     else:
@@ -1062,29 +1091,11 @@ def main():
                 format="%.1f",
                 key=f"ly_custom_{i}"
             )
-            c_cu_custom = st.number_input(
-                f"Custom C_Cu (mol/cc) {i+1}",
-                min_value=0.0,  # Allow self-diffusion
-                max_value=2.9e-3,
-                value=max(c_cu_choice, 1.5e-3),
-                step=0.1e-3,
-                format="%.1e",
-                key=f"c_cu_custom_{i}"
-            )
-            c_ni_custom = st.number_input(
-                f"Custom C_Ni (mol/cc) {i+1}",
-                min_value=0.0,  # Allow self-diffusion
-                max_value=1.8e-3,
-                value=max(c_ni_choice, 1.0e-4),
-                step=0.1e-4,
-                format="%.1e",
-                key=f"c_ni_custom_{i}"
-            )
-            custom_params.append((ly_custom, c_cu_custom, c_ni_custom))
+            custom_params.append((ly_custom,))
 
     # Combine exact and custom parameters
-    param_options = [(ly, c_cu, c_ni) for ly, c_cu, c_ni in params_list]
-    param_labels = [f"$L_y$={ly:.1f}, $C_{{Cu}}$={c_cu:.1e}, $C_{{Ni}}$={c_ni:.1e}" for ly, c_cu, c_ni in param_options]
+    param_options = [(ly,) for ly in lys]
+    param_labels = [f"$L_y$={ly:.1f}" for ly in lys]
     default_params = param_options[:min(4, len(param_options))]
     selected_labels = st.multiselect(
         "Select Exact Parameter Combinations",
@@ -1099,13 +1110,13 @@ def main():
     sweep_solutions = []
     sweep_params_list = []
     for params in selected_params:
-        ly, c_cu, c_ni = params
+        ly = params[0]
         try:
-            sol = load_and_interpolate_solution(solutions, params_list, ly, c_cu, c_ni)
+            sol = load_and_interpolate_solution(solutions, params_list, ly)
             sweep_solutions.append(sol)
             sweep_params_list.append(params)
         except Exception as e:
-            st.warning(f"Failed to load or interpolate solution for Ly={ly:.1f}, C_Cu={c_cu:.1e}, C_Ni={c_ni:.1e}: {str(e)}")
+            st.warning(f"Failed to load or interpolate solution for Ly={ly:.1f}: {str(e)}")
 
     # Plot parameter sweep
     sweep_time_index = st.slider("Select Time Index for Sweep", 0, len(solution['times'])-1, len(solution['times'])-1)
