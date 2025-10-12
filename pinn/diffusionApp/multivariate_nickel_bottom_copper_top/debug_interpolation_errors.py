@@ -191,7 +191,7 @@ def interpolate_solution_with_boundary_masking(sol1, sol2, ly_target):
         Y1_scaled = sol1['Y'][0, :] * scale1
         Y2_scaled = sol2['Y'][0, :] * scale2
         
-        # Interpolate interior points only (exclude boundaries)
+        # Interpolate interior points only
         interp1_c1 = RegularGridInterpolator(
             (sol1['X'][:, 0], Y1_scaled), sol1['c1_preds'][t_idx],
             method='linear', bounds_error=False, fill_value=0
@@ -209,23 +209,18 @@ def interpolate_solution_with_boundary_masking(sol1, sol2, ly_target):
             method='linear', bounds_error=False, fill_value=0
         )
         
-        # Create interior grid (excluding boundaries)
         x_interior = X[1:-1, 0]
         y_interior = y_coords[1:-1]
         X_interior, Y_interior = np.meshgrid(x_interior, y_interior, indexing='ij')
         points_interior = np.stack([X_interior.flatten(), Y_interior.flatten()], axis=1)
         
-        # Interpolate interior
         c1 = weight1 * interp1_c1(points_interior) + weight2 * interp2_c1(points_interior)
         c2 = weight1 * interp1_c2(points_interior) + weight2 * interp2_c2(points_interior)
         c1 = c1.reshape(X_interior.shape)
         c2 = c2.reshape(X_interior.shape)
         
-        # Create full grid with boundaries
         c1_full = np.zeros_like(X)
         c2_full = np.zeros_like(X)
-        
-        # Copy interior points
         c1_full[1:-1, 1:-1] = c1
         c2_full[1:-1, 1:-1] = c2
         
@@ -263,11 +258,9 @@ def compute_errors(sol_ref, sol_interp, time_idx):
     c1_interp = sol_interp['c1_preds'][time_idx]
     c2_interp = sol_interp['c2_preds'][time_idx]
     
-    # Overall L2 error (interior only)
     l2_error_cu = np.mean((c1_ref[1:-1, 1:-1] - c1_interp[1:-1, 1:-1])**2)
     l2_error_ni = np.mean((c2_ref[1:-1, 1:-1] - c2_interp[1:-1, 1:-1])**2)
     
-    # Boundary-specific errors
     top_error_cu = np.mean(np.abs(c1_ref[:, 0] - c1_interp[:, 0]))
     top_error_ni = np.mean(np.abs(c2_ref[:, 0] - c2_interp[:, 0]))
     bottom_error_cu = np.mean(np.abs(c1_ref[:, -1] - c1_interp[:, -1]))
@@ -282,54 +275,68 @@ def compute_errors(sol_ref, sol_interp, time_idx):
         'bottom_error_ni': bottom_error_ni
     }
 
-def plot_time_based_comparison(sol_ref, sol_interp, time_indices, ly_value, output_dir="figures"):
-    """Plot time-based concentration profiles for PINN vs interpolated solutions"""
-    fig, axes = plt.subplots(2, len(time_indices), figsize=(4*len(time_indices), 8), sharex=True, sharey='row')
-    if len(time_indices) == 1:
-        axes = np.array([axes]).T  # Ensure axes is 2D for single time index
+def plot_2d_comparison(sol_ref, sol_interp, time_indices, ly_value, output_dir="figures"):
+    """Plot 2D concentration distributions for PINN vs interpolated solutions"""
+    Lx = sol_ref['params']['Lx']
+    Ly = sol_ref['params']['Ly']
     
-    center_idx = sol_ref['X'].shape[0] // 2
-    
-    for idx, t_idx in enumerate(time_indices):
+    for t_idx in time_indices:
         t_val = sol_ref['times'][t_idx]
         
-        # Cu profiles
-        axes[0, idx].plot(sol_ref['Y'][0, :], sol_ref['c1_preds'][t_idx][center_idx, :], 
-                         'b-', label=f'PINN Ly={ly_value:.0f} μm', linewidth=2)
-        axes[0, idx].plot(sol_interp['Y'][0, :], sol_interp['c1_preds'][t_idx][center_idx, :], 
-                         'r--', label='Interpolated', linewidth=2)
-        if idx == 0:
-            axes[0, idx].set_ylabel('Cu Concentration (mol/cc)')
-        axes[0, idx].set_xlabel('y (μm)')
-        axes[0, idx].set_title(f't = {t_val:.1f} s')
-        axes[0, idx].legend()
-        axes[0, idx].grid(True)
-        axes[0, idx].ticklabel_format(style='sci', axis='y', scilimits=(0, 0))
+        fig, axes = plt.subplots(2, 2, figsize=(10, 8))
         
-        # Ni profiles
-        axes[1, idx].plot(sol_ref['Y'][0, :], sol_ref['c2_preds'][t_idx][center_idx, :], 
-                         'b-', label=f'PINN Ly={ly_value:.0f} μm', linewidth=2)
-        axes[1, idx].plot(sol_interp['Y'][0, :], sol_interp['c2_preds'][t_idx][center_idx, :], 
-                         'r--', label='Interpolated', linewidth=2)
-        if idx == 0:
-            axes[1, idx].set_ylabel('Ni Concentration (mol/cc)')
-        axes[1, idx].set_xlabel('y (μm)')
-        axes[1, idx].set_title(f't = {t_val:.1f} s')
-        axes[1, idx].legend()
-        axes[1, idx].grid(True)
-        axes[1, idx].ticklabel_format(style='sci', axis='y', scilimits=(0, 0))
-    
-    fig.suptitle(f'Concentration Profiles: PINN vs Interpolated (Ly={ly_value:.0f} μm)', fontsize=14)
-    plt.tight_layout(rect=[0, 0, 1, 0.95])
-    
-    os.makedirs(output_dir, exist_ok=True)
-    filename = f"time_profiles_ly_{ly_value:.0f}_t_{'_'.join([f'{sol_ref['times'][t]:.1f}' for t in time_indices])}.png"
-    plt.savefig(os.path.join(output_dir, filename), dpi=300, bbox_inches='tight')
-    plt.close()
-    return fig, filename
+        # Cu PINN
+        im1 = axes[0, 0].imshow(sol_ref['c1_preds'][t_idx], origin='lower', 
+                               extent=[0, Lx, 0, Ly], cmap='viridis',
+                               vmin=0, vmax=C_CU_BOTTOM)
+        axes[0, 0].set_title(f'Cu PINN (Ly={ly_value:.0f} μm, t={t_val:.1f} s)')
+        axes[0, 0].set_xlabel('x (μm)')
+        axes[0, 0].set_ylabel('y (μm)')
+        axes[0, 0].grid(True, alpha=0.3)
+        cb1 = fig.colorbar(im1, ax=axes[0, 0], label='Cu Conc. (mol/cc)', format='%.1e')
+        
+        # Cu Interpolated
+        im2 = axes[0, 1].imshow(sol_interp['c1_preds'][t_idx], origin='lower', 
+                               extent=[0, Lx, 0, Ly], cmap='viridis',
+                               vmin=0, vmax=C_CU_BOTTOM)
+        axes[0, 1].set_title(f'Cu Interpolated (Ly={ly_value:.0f} μm, t={t_val:.1f} s)')
+        axes[0, 1].set_xlabel('x (μm)')
+        axes[0, 1].set_ylabel('y (μm)')
+        axes[0, 1].grid(True, alpha=0.3)
+        cb2 = fig.colorbar(im2, ax=axes[0, 1], label='Cu Conc. (mol/cc)', format='%.1e')
+        
+        # Ni PINN
+        im3 = axes[1, 0].imshow(sol_ref['c2_preds'][t_idx], origin='lower', 
+                               extent=[0, Lx, 0, Ly], cmap='magma',
+                               vmin=0, vmax=C_NI_TOP)
+        axes[1, 0].set_title(f'Ni PINN (Ly={ly_value:.0f} μm, t={t_val:.1f} s)')
+        axes[1, 0].set_xlabel('x (μm)')
+        axes[1, 0].set_ylabel('y (μm)')
+        axes[1, 0].grid(True, alpha=0.3)
+        cb3 = fig.colorbar(im3, ax=axes[1, 0], label='Ni Conc. (mol/cc)', format='%.1e')
+        
+        # Ni Interpolated
+        im4 = axes[1, 1].imshow(sol_interp['c2_preds'][t_idx], origin='lower', 
+                               extent=[0, Lx, 0, Ly], cmap='magma',
+                               vmin=0, vmax=C_NI_TOP)
+        axes[1, 1].set_title(f'Ni Interpolated (Ly={ly_value:.0f} μm, t={t_val:.1f} s)')
+        axes[1, 1].set_xlabel('x (μm)')
+        axes[1, 1].set_ylabel('y (μm)')
+        axes[1, 1].grid(True, alpha=0.3)
+        cb4 = fig.colorbar(im4, ax=axes[1, 1], label='Ni Conc. (mol/cc)', format='%.1e')
+        
+        fig.suptitle(f'2D Concentration Profiles (Ly={ly_value:.0f} μm)', fontsize=14)
+        plt.tight_layout(rect=[0, 0, 1, 0.95])
+        
+        os.makedirs(output_dir, exist_ok=True)
+        filename = f"2d_profiles_ly_{ly_value:.0f}_t_{t_val:.1f}.png"
+        plt.savefig(os.path.join(output_dir, filename), dpi=300, bbox_inches='tight')
+        plt.close()
+        
+        yield fig, filename
 
 def main():
-    st.title("Debug Interpolation Errors: PINN vs Interpolated Solutions with Boundary Masking")
+    st.title("Debug Interpolation: 2D Concentration Profiles with Boundary Masking")
     
     # Load all solutions
     solutions, params_list, lys, load_logs = load_solutions(SOLUTION_DIR)
@@ -361,13 +368,13 @@ def main():
     
     st.success(f"Loaded PINN solutions: Ly={ly_30:.1f} μm (with alt Ly={ly_alt_30:.1f} μm) and Ly={ly_120:.1f} μm (with alt Ly={ly_alt_120:.1f} μm)")
     
-    # Enforce boundary conditions on reference solutions
+    # Enforce boundary conditions
     sol_30 = enforce_boundary_conditions(sol_30)
     sol_120 = enforce_boundary_conditions(sol_120)
     sol_alt_30 = enforce_boundary_conditions(sol_alt_30)
     sol_alt_120 = enforce_boundary_conditions(sol_alt_120)
     
-    # Generate interpolated solutions with boundary masking
+    # Generate interpolated solutions
     st.subheader("Interpolation with Boundary Masking")
     with st.spinner("Interpolating..."):
         sol_interp_30 = interpolate_solution_with_boundary_masking(sol_30, sol_alt_30, 30.0)
@@ -393,8 +400,8 @@ def main():
         bc_interp_120 = validate_boundary_conditions(sol_interp_120) if sol_interp_120 else {'valid': False, 'details': ['Not generated']}
         st.metric("120 μm Interp BC", "✓" if bc_interp_120['valid'] else "✗", f"{len(bc_interp_120['details'])} issues")
     
-    # Time-based profile comparison
-    st.subheader("Time-Based Profile Comparison")
+    # 2D profile comparison
+    st.subheader("2D Concentration Profiles")
     time_indices = st.multiselect(
         "Select Time Indices for Comparison",
         options=list(range(len(sol_30['times']))),
@@ -406,26 +413,26 @@ def main():
         # 30 μm comparison
         if sol_interp_30:
             st.write("**Ly=30 μm: PINN vs Interpolated**")
-            fig_30, filename_30 = plot_time_based_comparison(sol_30, sol_interp_30, time_indices, 30.0)
-            st.pyplot(fig_30)
-            st.download_button(
-                label="Download 30 μm Plot as PNG",
-                data=open(os.path.join("figures", filename_30), "rb").read(),
-                file_name=filename_30,
-                mime="image/png"
-            )
+            for fig, filename in plot_2d_comparison(sol_30, sol_interp_30, time_indices, 30.0):
+                st.pyplot(fig)
+                st.download_button(
+                    label=f"Download 30 μm Plot (t={sol_30['times'][time_indices[0]]:.1f} s) as PNG",
+                    data=open(os.path.join("figures", filename), "rb").read(),
+                    file_name=filename,
+                    mime="image/png"
+                )
         
         # 120 μm comparison
         if sol_interp_120:
             st.write("**Ly=120 μm: PINN vs Interpolated**")
-            fig_120, filename_120 = plot_time_based_comparison(sol_120, sol_interp_120, time_indices, 120.0)
-            st.pyplot(fig_120)
-            st.download_button(
-                label="Download 120 μm Plot as PNG",
-                data=open(os.path.join("figures", filename_120), "rb").read(),
-                file_name=filename_120,
-                mime="image/png"
-            )
+            for fig, filename in plot_2d_comparison(sol_120, sol_interp_120, time_indices, 120.0):
+                st.pyplot(fig)
+                st.download_button(
+                    label=f"Download 120 μm Plot (t={sol_120['times'][time_indices[0]]:.1f} s) as PNG",
+                    data=open(os.path.join("figures", filename), "rb").read(),
+                    file_name=filename,
+                    mime="image/png"
+                )
     
     # Error metrics
     st.subheader("Error Metrics")
@@ -458,18 +465,9 @@ def main():
         for issue in bc_interp_120['details']:
             st.write(f"• {issue}")
     
-    # Recommendations
-    st.subheader("Boundary Issue Resolution")
-    st.write("**Implemented**: Boundary Masking - Interpolation performed only on interior points, with PINN boundary conditions (Cu: 1.6e-3 bottom/0 top, Ni: 0 bottom/1.25e-3 top) applied post-interpolation.")
-    st.write("**Remaining Recommendations** for further improvement:")
-    recommendations = [
-        "1. **Coordinate Normalization**: Normalize y to [0,1] before interpolation to align boundaries, then denormalize.",
-        "2. **Physics-Constrained Weights**: Modify interpolation weights to downweight boundary regions.",
-        "3. **Boundary Loss**: Add boundary condition residual to interpolation objective.",
-        "4. **Hybrid Approach**: Use PINN solutions near boundaries, interpolate only in interior with smooth blending."
-    ]
-    for rec in recommendations:
-        st.write(f"• {rec}")
+    # Clarification on previous curves
+    st.subheader("Note on Previous Curve Plots")
+    st.write("The 'curve' plots in the previous code were **centerline concentration profiles** plotted along **x = Lx/2** (midpoint in the x-direction, typically x=100 μm if Lx=200 μm) as a function of y (from 0 to Ly). These showed Cu and Ni concentrations along the y-direction at the domain's x-midpoint.")
 
 if __name__ == "__main__":
     main()
