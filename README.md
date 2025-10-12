@@ -55,7 +55,7 @@ with training datasets for 0 BCs (Transformer-inspired Attention): [![meaningtow
   cloud computing with side bc corrected:
   [![meaningtowords](https://img.shields.io/badge/cloudComp-streamlit-red)](https://crossdiffusion2dpinn-sidebc-modeling.streamlit.app/)   
 
-   [![meaningtowords](https://img.shields.io/badge/advcloudComp-streamlit-red)](https://advanced-crossdiffusion2dpinn-sidebc-modeling.streamlit.app/)  
+   [![meaningtowords](https://img.shields.io/badge/advcloudComp-streamlit-red)](https://advanced-crossdiffusion2dpinn-sidebc.streamlit.app/)  
 
 Concentration Fields, Flux and Others:
 [![meaningtowords](https://img.shields.io/badge/solutions-streamlit-red)](https://multivariatecrossdiffusion2d-cuni.streamlit.app/)
