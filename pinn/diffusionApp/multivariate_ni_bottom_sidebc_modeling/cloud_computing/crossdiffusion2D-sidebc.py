@@ -1,3 +1,4 @@
+import streamlit as st
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -6,6 +7,31 @@ import pickle
 import os
 import matplotlib.pyplot as plt
 from torch.optim.lr_scheduler import ReduceLROnPlateau
+import zipfile
+import io
+import matplotlib as mpl
+from scipy.interpolate import RegularGridInterpolator
+
+# Configure Matplotlib for publication-quality figures
+mpl.rcParams['font.family'] = 'Arial'
+mpl.rcParams['font.size'] = 12
+mpl.rcParams['axes.linewidth'] = 1.5
+mpl.rcParams['xtick.major.width'] = 1.5
+mpl.rcParams['ytick.major.width'] = 1.5
+mpl.rcParams['axes.titlesize'] = 14
+mpl.rcParams['axes.labelsize'] = 12
+mpl.rcParams['legend.fontsize'] = 10
+mpl.rcParams['figure.dpi'] = 300
+mpl.rcParams['legend.frameon'] = True
+mpl.rcParams['legend.framealpha'] = 0.8
+mpl.rcParams['grid.linestyle'] = '--'
+mpl.rcParams['grid.alpha'] = 0.3
+
+# Fixed boundary conditions
+C_CU_BOTTOM = 1.6e-3
+C_CU_TOP = 0.0
+C_NI_BOTTOM = 0.0
+C_NI_TOP = 1.25e-3
 
 # Set random seeds for reproducibility
 torch.manual_seed(42)
@@ -99,28 +125,27 @@ def physics_loss(model, x, y, t):
     return torch.mean(residual1**2 + residual2**2)
 
 def boundary_loss_bottom(model):
-    num = 200  # Increased sampling points
+    num = 200
     x = torch.rand(num, 1) * model.Lx
     y = torch.zeros(num, 1)
     t = torch.rand(num, 1) * model.T_max
     
     c_pred = model(x, y, t)
-    return (torch.mean((c_pred[:, 0] - 0.0)**2) + 
-            torch.mean((c_pred[:, 1] - model.C_Ni)**2))
+    return (torch.mean((c_pred[:, 0] - C_CU_TOP)**2) + 
+            torch.mean((c_pred[:, 1] - C_NI_TOP)**2))
 
 def boundary_loss_top(model):
-    num = 200  # Increased sampling points
+    num = 200
     x = torch.rand(num, 1) * model.Lx
     y = torch.full((num, 1), model.Ly)
     t = torch.rand(num, 1) * model.T_max
     
     c_pred = model(x, y, t)
-    return (torch.mean((c_pred[:, 0] - model.C_Cu)**2) + 
-            torch.mean((c_pred[:, 1] - 0.0)**2))
+    return (torch.mean((c_pred[:, 0] - C_CU_BOTTOM)**2) + 
+            torch.mean((c_pred[:, 1] - C_NI_BOTTOM)**2))
 
 def boundary_loss_sides(model):
-    num = 200  # Increased sampling points
-    # Independent sampling for left and right boundaries
+    num = 200
     x_left = torch.zeros(num, 1, dtype=torch.float32, requires_grad=True)
     y_left = torch.rand(num, 1, requires_grad=True) * model.Ly
     t_left = torch.rand(num, 1, requires_grad=True) * model.T_max
@@ -132,7 +157,6 @@ def boundary_loss_sides(model):
     t_right = torch.rand(num, 1, requires_grad=True) * model.T_max
     c_right = model(x_right, y_right, t_right)
     
-    # Normalize x for gradient calculation
     x_left_norm = x_left / model.Lx
     x_right_norm = x_right / model.Lx
     
@@ -160,7 +184,6 @@ def boundary_loss_sides(model):
         create_graph=True, retain_graph=True
     )[0]
     
-    # Clip gradients to prevent numerical instability
     grad_cu_x_left = torch.clamp(grad_cu_x_left, -1.0, 1.0)
     grad_ni_x_left = torch.clamp(grad_ni_x_left, -1.0, 1.0)
     grad_cu_x_right = torch.clamp(grad_cu_x_right, -1.0, 1.0)
@@ -178,8 +201,68 @@ def initial_loss(model):
     t = torch.zeros(num, 1)
     return torch.mean(model(x, y, t)**2)
 
+def validate_boundary_conditions(solution, tolerance=1e-6):
+    """Validate boundary conditions against PINN specifications"""
+    results = {
+        'top_bc_cu': True,
+        'top_bc_ni': True,
+        'bottom_bc_cu': True,
+        'bottom_bc_ni': True,
+        'left_flux_cu': True,
+        'left_flux_ni': True,
+        'right_flux_cu': True,
+        'right_flux_ni': True,
+        'details': []
+    }
+    t_idx = -1  # Check last time step
+    c1 = solution['c1_preds'][t_idx]
+    c2 = solution['c2_preds'][t_idx]
+    
+    top_cu_mean = np.mean(c1[:, 0])
+    top_ni_mean = np.mean(c2[:, 0])
+    if abs(top_cu_mean - C_CU_TOP) > tolerance:
+        results['top_bc_cu'] = False
+        results['details'].append(f"Top Cu: {top_cu_mean:.2e} != {C_CU_TOP:.2e}")
+    if abs(top_ni_mean - C_NI_TOP) > tolerance:
+        results['top_bc_ni'] = False
+        results['details'].append(f"Top Ni: {top_ni_mean:.2e} != {C_NI_TOP:.2e}")
+    
+    bottom_cu_mean = np.mean(c1[:, -1])
+    bottom_ni_mean = np.mean(c2[:, -1])
+    if abs(bottom_cu_mean - C_CU_BOTTOM) > tolerance:
+        results['bottom_bc_cu'] = False
+        results['details'].append(f"Bottom Cu: {bottom_cu_mean:.2e} != {C_CU_BOTTOM:.2e}")
+    if abs(bottom_ni_mean - C_NI_BOTTOM) > tolerance:
+        results['bottom_bc_ni'] = False
+        results['details'].append(f"Bottom Ni: {bottom_ni_mean:.2e} != {C_NI_BOTTOM:.2e}")
+    
+    left_flux_cu = np.mean(np.abs(c1[1, :] - c1[0, :]))
+    left_flux_ni = np.mean(np.abs(c2[1, :] - c2[0, :]))
+    right_flux_cu = np.mean(np.abs(c1[-1, :] - c1[-2, :]))
+    right_flux_ni = np.mean(np.abs(c2[-1, :] - c2[-2, :]))
+    if left_flux_cu > tolerance:
+        results['left_flux_cu'] = False
+        results['details'].append(f"Left flux Cu: {left_flux_cu:.2e}")
+    if left_flux_ni > tolerance:
+        results['left_flux_ni'] = False
+        results['details'].append(f"Left flux Ni: {left_flux_ni:.2e}")
+    if right_flux_cu > tolerance:
+        results['right_flux_cu'] = False
+        results['details'].append(f"Right flux Cu: {right_flux_cu:.2e}")
+    if right_flux_ni > tolerance:
+        results['right_flux_ni'] = False
+        results['details'].append(f"Right flux Ni: {right_flux_ni:.2e}")
+    
+    results['valid'] = all([
+        results['top_bc_cu'], results['top_bc_ni'],
+        results['bottom_bc_cu'], results['bottom_bc_ni'],
+        results['left_flux_cu'], results['left_flux_ni'],
+        results['right_flux_cu'], results['right_flux_ni']
+    ])
+    return results
+
 def plot_losses(loss_history, Ly, C_Cu, C_Ni, output_dir):
-    """Generate publishable-quality loss plot."""
+    """Generate and save loss plot, return file path"""
     epochs = np.array(loss_history['epochs'])
     total_loss = np.array(loss_history['total'])
     physics_loss = np.array(loss_history['physics'])
@@ -204,12 +287,50 @@ def plot_losses(loss_history, Ly, C_Cu, C_Ni, output_dir):
     plt.legend(fontsize=12, loc='upper right')
     plt.tight_layout()
     
+    os.makedirs(output_dir, exist_ok=True)
     plot_filename = os.path.join(output_dir, f'loss_plot_ly_{Ly:.1f}_ccu_{C_Cu:.1e}_cni_{C_Ni:.1e}.png')
     plt.savefig(plot_filename, dpi=300, bbox_inches='tight')
     plt.close()
-    print(f"Saved loss plot to {plot_filename}")
+    return plot_filename
 
-def train_PINN(D11, D12, D21, D22, Lx, Ly, T_max, C_Cu, C_Ni, epochs=5000, lr=0.001, output_dir="pinn_solutions"):
+def plot_2d_profiles(solution, time_idx, output_dir):
+    """Generate 2D concentration profiles, return file path"""
+    Lx = solution['params']['Lx']
+    Ly = solution['params']['Ly']
+    t_val = solution['times'][time_idx]
+    
+    fig, axes = plt.subplots(1, 2, figsize=(12, 5))
+    
+    im1 = axes[0].imshow(solution['c1_preds'][time_idx], origin='lower', 
+                        extent=[0, Lx, 0, Ly], cmap='viridis',
+                        vmin=0, vmax=C_CU_BOTTOM)
+    axes[0].set_title(f'Cu Concentration (t={t_val:.1f} s)')
+    axes[0].set_xlabel('x (μm)')
+    axes[0].set_ylabel('y (μm)')
+    axes[0].grid(True, alpha=0.3)
+    fig.colorbar(im1, ax=axes[0], label='Cu Conc. (mol/cc)', format='%.1e')
+    
+    im2 = axes[1].imshow(solution['c2_preds'][time_idx], origin='lower', 
+                        extent=[0, Lx, 0, Ly], cmap='magma',
+                        vmin=0, vmax=C_NI_TOP)
+    axes[1].set_title(f'Ni Concentration (t={t_val:.1f} s)')
+    axes[1].set_xlabel('x (μm)')
+    axes[1].set_ylabel('y (μm)')
+    axes[1].grid(True, alpha=0.3)
+    fig.colorbar(im2, ax=axes[1], label='Ni Conc. (mol/cc)', format='%.1e')
+    
+    fig.suptitle(f'2D Profiles (Ly={Ly:.0f} μm)', fontsize=14)
+    plt.tight_layout(rect=[0, 0, 1, 0.95])
+    
+    os.makedirs(output_dir, exist_ok=True)
+    plot_filename = os.path.join(output_dir, f'profile_ly_{Ly:.1f}_t_{t_val:.1f}.png')
+    plt.savefig(plot_filename, dpi=300, bbox_inches='tight')
+    plt.close()
+    return plot_filename
+
+@st.cache_resource
+def train_pinn_cached(D11, D12, D21, D22, Lx, Ly, T_max, C_Cu, C_Ni, epochs, lr, output_dir):
+    """Cached training function to prevent re-running during downloads"""
     model = DualScaledPINN(D11, D12, D21, D22, Lx, Ly, T_max, C_Cu, C_Ni)
     optimizer = optim.Adam(model.parameters(), lr=lr)
     scheduler = ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=200)
@@ -228,6 +349,9 @@ def train_PINN(D11, D12, D21, D22, Lx, Ly, T_max, C_Cu, C_Ni, epochs=5000, lr=0.
         'initial': []
     }
     
+    progress = st.progress(0)
+    status_text = st.empty()
+    
     for epoch in range(epochs):
         optimizer.zero_grad()
         
@@ -237,7 +361,6 @@ def train_PINN(D11, D12, D21, D22, Lx, Ly, T_max, C_Cu, C_Ni, epochs=5000, lr=0.
         side_loss = boundary_loss_sides(model)
         init_loss = initial_loss(model)
         
-        # Increased weight for side loss to 100
         loss = (10 * phys_loss + 100 * bot_loss + 100 * top_loss + 
                 100 * side_loss + 100 * init_loss)
         
@@ -253,48 +376,19 @@ def train_PINN(D11, D12, D21, D22, Lx, Ly, T_max, C_Cu, C_Ni, epochs=5000, lr=0.
             loss_history['physics'].append(10 * phys_loss.item())
             loss_history['bottom'].append(100 * bot_loss.item())
             loss_history['top'].append(100 * top_loss.item())
-            loss_history['sides'].append(100 * side_loss.item())  # Updated weight
+            loss_history['sides'].append(100 * side_loss.item())
             loss_history['initial'].append(100 * init_loss.item())
             
-            if (epoch + 1) % 500 == 0:
-                print(f"Epoch {epoch + 1}/{epochs}, Total Loss: {loss.item():.6f}, "
-                      f"Physics: {10 * phys_loss.item():.6f}, "
-                      f"Bottom: {100 * bot_loss.item():.6f}, "
-                      f"Top: {100 * top_loss.item():.6f}, "
-                      f"Sides: {100 * side_loss.item():.6f}, "
-                      f"Initial: {100 * init_loss.item():.6f}")
+            progress.progress((epoch + 1) / epochs)
+            status_text.text(
+                f"Epoch {epoch + 1}/{epochs}, Total Loss: {loss.item():.6f}, "
+                f"Sides Loss: {100 * side_loss.item():.6f}"
+            )
     
-    plot_losses(loss_history, Ly, C_Cu, C_Ni, output_dir)
+    progress.progress(1.0)
+    status_text.text("Training completed!")
     
     return model, loss_history
-
-def compute_flux(model, X, Y, t_val, D11, D12, D21, D22):
-    X_torch = torch.tensor(X, dtype=torch.float32, requires_grad=True).reshape(-1, 1)
-    Y_torch = torch.tensor(Y, dtype=torch.float32, requires_grad=True).reshape(-1, 1)
-    t = torch.full((X_torch.numel(), 1), t_val, dtype=torch.float32, requires_grad=True)
-    
-    c_pred = model(X_torch, Y_torch, t)
-    c1_pred, c2_pred = c_pred[:, 0:1], c_pred[:, 1:2]
-    
-    grad_c1_x = torch.autograd.grad(c1_pred, X_torch, 
-                                    grad_outputs=torch.ones_like(c1_pred),
-                                    create_graph=True)[0]
-    grad_c1_y = torch.autograd.grad(c1_pred, Y_torch,
-                                    grad_outputs=torch.ones_like(c1_pred),
-                                    create_graph=True)[0]
-    grad_c2_x = torch.autograd.grad(c2_pred, X_torch,
-                                    grad_outputs=torch.ones_like(c2_pred),
-                                    create_graph=True)[0]
-    grad_c2_y = torch.autograd.grad(c2_pred, Y_torch,
-                                    grad_outputs=torch.ones_like(c2_pred),
-                                    create_graph=True)[0]
-    
-    J1_x = -D11 * grad_c1_x.detach().numpy() - D12 * grad_c2_x.detach().numpy()
-    J1_y = -D11 * grad_c1_y.detach().numpy() - D12 * grad_c2_y.detach().numpy()
-    J2_x = -D21 * grad_c1_x.detach().numpy() - D22 * grad_c2_x.detach().numpy()
-    J2_y = -D21 * grad_c1_y.detach().numpy() - D22 * grad_c2_y.detach().numpy()
-    return (J1_x.reshape(X.shape), J1_y.reshape(X.shape)), \
-           (J2_x.reshape(X.shape), J2_y.reshape(X.shape))
 
 def evaluate_model(model, times, Lx, Ly, D11, D12, D21, D22):
     x = torch.linspace(0, Lx, 50)
@@ -310,88 +404,190 @@ def evaluate_model(model, times, Lx, Ly, D11, D12, D21, D22):
         c1_preds.append(c1)
         c2_preds.append(c2)
         
-        (J1_x, J1_y), (J2_x, J2_y) = compute_flux(model, X.numpy(), Y.numpy(), t_val, D11, D12, D21, D22)
-        J1_preds.append((J1_x, J1_y))
-        J2_preds.append((J2_x, J2_y))
+        X_np, Y_np = X.numpy(), Y.numpy()
+        X_torch = torch.tensor(X_np, dtype=torch.float32, requires_grad=True).reshape(-1, 1)
+        Y_torch = torch.tensor(Y_np, dtype=torch.float32, requires_grad=True).reshape(-1, 1)
+        t_torch = torch.full((X_torch.numel(), 1), t_val, dtype=torch.float32, requires_grad=True)
+        
+        c_pred = model(X_torch, Y_torch, t_torch)
+        c1_pred, c2_pred = c_pred[:, 0:1], c_pred[:, 1:2]
+        
+        grad_c1_x = torch.autograd.grad(c1_pred, X_torch, 
+                                        grad_outputs=torch.ones_like(c1_pred),
+                                        create_graph=True)[0]
+        grad_c1_y = torch.autograd.grad(c1_pred, Y_torch,
+                                        grad_outputs=torch.ones_like(c1_pred),
+                                        create_graph=True)[0]
+        grad_c2_x = torch.autograd.grad(c2_pred, X_torch,
+                                        grad_outputs=torch.ones_like(c2_pred),
+                                        create_graph=True)[0]
+        grad_c2_y = torch.autograd.grad(c2_pred, Y_torch,
+                                        grad_outputs=torch.ones_like(c2_pred),
+                                        create_graph=True)[0]
+        
+        J1_x = -D11 * grad_c1_x.detach().numpy() - D12 * grad_c2_x.detach().numpy()
+        J1_y = -D11 * grad_c1_y.detach().numpy() - D12 * grad_c2_y.detach().numpy()
+        J2_x = -D21 * grad_c1_x.detach().numpy() - D22 * grad_c2_x.detach().numpy()
+        J2_y = -D21 * grad_c1_y.detach().numpy() - D22 * grad_c2_y.detach().numpy()
+        
+        J1_preds.append((J1_x.reshape(X_np.shape), J1_y.reshape(X_np.shape)))
+        J2_preds.append((J2_x.reshape(X_np.shape), J2_y.reshape(Y_np.shape)))
     
-    return X.numpy(), Y.numpy(), c1_preds, c2_preds, J1_preds, J2_preds
+    return X_np, Y_np, c1_preds, c2_preds, J1_preds, J2_preds
 
-def generate_parameter_sets(D11, D12, D21, D22, Lx, t_max, epochs):
-    Ly_range = [30.0, 60.0, 120.0]
-    C_Cu_range = [0.0, 1.5e-3, 2.5e-3, 3.0e-3]
-    C_Ni_range = [0.0, 4.0e-4, 8.0e-4, 1.8e-3]
+@st.cache_resource
+def generate_and_save_solution(_model, times, param_set, output……
+
+def generate_and_save_solution(_model, times, param_set, output_dir):
+    """Generate and save solution, return file path"""
+    X, Y, c1_preds, c2_preds, J1_preds, J2_preds = evaluate_model(
+        _model, times, param_set['Lx'], param_set['Ly'],
+        param_set['D11'], param_set['D12'], param_set['D21'], param_set['D22']
+    )
     
-    params = []
-    for Ly in Ly_range:
-        for C_Cu in C_Cu_range:
-            for C_Ni in C_Ni_range:
-                param_set = {
-                    'D11': D11,
-                    'D12': D12,
-                    'D21': D21,
-                    'D22': D22,
-                    'Lx': Lx,
-                    'Ly': float(Ly),
-                    't_max': t_max,
-                    'C_Cu': float(C_Cu),
-                    'C_Ni': float(C_Ni),
-                    'epochs': epochs
-                }
-                params.append(param_set)
-    return params
-
-def train_and_save_solutions(D11, D12, D21, D22, Lx, t_max, epochs, output_dir="pinn_solutions"):
+    solution = {
+        'params': param_set,
+        'X': X,
+        'Y': Y,
+        'c1_preds': c1_preds,
+        'c2_preds': c2_preds,
+        'J1_preds': J1_preds,
+        'J2_preds': J2_preds,
+        'times': times,
+        'orientation_note': 'c1_preds and c2_preds are arrays of shape (50,50) where rows (i) correspond to y-coordinates and columns (j) correspond to x-coordinates due to transpose.'
+    }
+    
     os.makedirs(output_dir, exist_ok=True)
-    params = generate_parameter_sets(D11, D12, D21, D22, Lx, t_max, epochs)
-    times = np.linspace(0, t_max, 50)
+    solution_filename = os.path.join(output_dir, 
+        f"solution_ly_{param_set['Ly']:.1f}_ccu_{param_set['C_Cu']:.1e}_cni_{param_set['C_Ni']:.1e}_d11_{param_set['D11']:.6f}_d12_{param_set['D12']:.6f}_d21_{param_set['D21']:.6f}_d22_{param_set['D22']:.6f}_lx_{param_set['Lx']:.1f}_tmax_{param_set['t_max']:.1f}.pkl")
     
-    for idx, param_set in enumerate(params):
-        print(f"Training model {idx + 1}/{len(params)} for Ly={param_set['Ly']:.1f} μm, "
-              f"C_Cu={param_set['C_Cu']:.1e}, C_Ni={param_set['C_Ni']:.1e}...")
-        model, loss_history = train_PINN(
-            param_set['D11'], param_set['D12'],
-            param_set['D21'], param_set['D22'],
-            param_set['Lx'], param_set['Ly'],
-            param_set['t_max'],
-            param_set['C_Cu'], param_set['C_Ni'],
-            epochs=param_set['epochs'],
-            output_dir=output_dir
-        )
-        
-        X, Y, c1_preds, c2_preds, J1_preds, J2_preds = evaluate_model(
-            model, times, param_set['Lx'], param_set['Ly'],
-            param_set['D11'], param_set['D12'], param_set['D21'], param_set['D22']
-        )
-        
-        solution = {
-            'params': param_set,
-            'X': X,
-            'Y': Y,
-            'c1_preds': c1_preds,
-            'c2_preds': c2_preds,
-            'J1_preds': J1_preds,
-            'J2_preds': J2_preds,
-            'times': times,
-            'loss_history': loss_history,
-            'orientation_note': 'c1_preds and c2_preds are arrays of shape (50,50) where rows (i) correspond to y-coordinates and columns (j) correspond to x-coordinates due to transpose.'
-        }
-        solution_filename = os.path.join(output_dir, 
-            f"solution_ly_{param_set['Ly']:.1f}_ccu_{param_set['C_Cu']:.1e}_cni_{param_set['C_Ni']:.1e}_d11_{D11:.6f}_d12_{D12:.6f}_d21_{D21:.6f}_d22_{D22:.6f}_lx_{Lx:.1f}_tmax_{t_max:.1f}.pkl")
-        with open(solution_filename, 'wb') as f:
-            pickle.dump(solution, f)
-        
-        print(f"Saved solution {idx + 1} to {solution_filename}")
+    with open(solution_filename, 'wb') as f:
+        pickle.dump(solution, f)
     
-    return len(params)
+    return solution_filename, solution
 
-if __name__ == "__main__":
+@st.cache_resource
+def create_zip_file(_files, output_dir):
+    """Create a ZIP file containing all generated files, return file path"""
+    zip_buffer = io.BytesIO()
+    with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zip_file:
+        for file_path in _files:
+            zip_file.write(file_path, os.path.basename(file_path))
+    
+    zip_filename = os.path.join(output_dir, 'pinn_solutions.zip')
+    with open(zip_filename, 'wb') as f:
+        f.write(zip_buffer.getvalue())
+    
+    return zip_filename
+
+def main():
+    st.title("PINN Training and Visualization App")
+    
+    # Parameter selection
+    st.sidebar.header("Model Parameters")
+    Ly = st.sidebar.selectbox("Ly (μm)", [30.0, 60.0, 120.0], index=0)
+    C_Cu = st.sidebar.selectbox("C_Cu (mol/cc)", [0.0, 1.5e-3, 1.6e-3, 2.5e-3, 3.0e-3], index=2)
+    C_Ni = st.sidebar.selectbox("C_Ni (mol/cc)", [0.0, 4.0e-4, 8.0e-4, 1.25e-3, 1.8e-3], index=3)
+    epochs = st.sidebar.slider("Epochs", 1000, 10000, 5000, 1000)
+    lr = st.sidebar.slider("Learning Rate", 1e-4, 1e-2, 1e-3, 1e-4, format="%.4f")
+    
     D11 = 0.006
     D12 = 0.00427
     D21 = 0.003697
     D22 = 0.0054
     Lx = 60.0
     t_max = 200.0
-    epochs = 5000
     
-    num_saved = train_and_save_solutions(D11, D12, D21, D22, Lx, t_max, epochs)
-    print(f"Saved {num_saved} solutions to pinn_solutions/")
+    output_dir = "/tmp/pinn_solutions"  # Suitable for Streamlit Cloud
+    
+    param_set = {
+        'D11': D11, 'D12': D12, 'D21': D21, 'D22': D22,
+        'Lx': Lx, 'Ly': float(Ly), 't_max': t_max,
+        'C_Cu': float(C_Cu), 'C_Ni': float(C_Ni),
+        'epochs': epochs
+    }
+    
+    # Training button
+    if st.button("Train PINN Model"):
+        try:
+            with st.spinner("Training model..."):
+                model, loss_history = train_pinn_cached(
+                    D11, D12, D21, D22, Lx, Ly, t_max, C_Cu, C_Ni, epochs, lr, output_dir
+                )
+            
+            times = np.linspace(0, t_max, 50)
+            solution_filename, solution = generate_and_save_solution(model, times, param_set, output_dir)
+            loss_plot_filename = plot_losses(loss_history, Ly, C_Cu, C_Ni, output_dir)
+            profile_plot_filename = plot_2d_profiles(solution, -1, output_dir)
+            
+            st.success(f"Model trained successfully! Saved to {solution_filename}")
+            
+            # Display loss plot
+            st.subheader("Training Loss")
+            st.image(loss_plot_filename)
+            
+            # Validate boundary conditions
+            st.subheader("Boundary Condition Validation")
+            bc_results = validate_boundary_conditions(solution)
+            st.metric("Boundary Conditions", "✓" if bc_results['valid'] else "✗", 
+                     f"{len(bc_results['details'])} issues")
+            with st.expander("Boundary Condition Details"):
+                for issue in bc_results['details']:
+                    st.write(f"• {issue}")
+            
+            # Display 2D profiles
+            st.subheader("2D Concentration Profiles (Final Time Step)")
+            st.image(profile_plot_filename)
+            
+            # Download individual files
+            st.subheader("Download Individual Files")
+            with open(solution_filename, 'rb') as f:
+                st.download_button(
+                    label="Download Solution (.pkl)",
+                    data=f,
+                    file_name=os.path.basename(solution_filename),
+                    mime="application/octet-stream"
+                )
+            
+            with open(loss_plot_filename, 'rb') as f:
+                st.download_button(
+                    label="Download Loss Plot (.png)",
+                    data=f,
+                    file_name=os.path.basename(loss_plot_filename),
+                    mime="image/png"
+                )
+            
+            with open(profile_plot_filename, 'rb') as f:
+                st.download_button(
+                    label="Download 2D Profile Plot (.png)",
+                    data=f,
+                    file_name=os.path.basename(profile_plot_filename),
+                    mime="image/png"
+                )
+            
+            # Create and download ZIP file
+            st.subheader("Download All Files as ZIP")
+            files_to_zip = [solution_filename, loss_plot_filename, profile_plot_filename]
+            zip_filename = create_zip_file(files_to_zip, output_dir)
+            with open(zip_filename, 'rb') as f:
+                st.download_button(
+                    label="Download All Files (.zip)",
+                    data=f,
+                    file_name="pinn_solutions.zip",
+                    mime="application/zip"
+                )
+        
+        except Exception as e:
+            st.error(f"Training failed: {str(e)}")
+    
+    # Instructions for Streamlit Cloud
+    st.sidebar.markdown("""
+    **Notes for Streamlit Cloud:**
+    - Files are saved to `/tmp/pinn_solutions`.
+    - Use the 'Train PINN Model' button to start training.
+    - Download individual `.pkl` and `.png` files or all as a ZIP.
+    - Cached training prevents crashes during downloads.
+    """)
+
+if __name__ == "__main__":
+    main()
