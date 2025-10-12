@@ -436,8 +436,6 @@ def evaluate_model(model, times, Lx, Ly, D11, D12, D21, D22):
     return X_np, Y_np, c1_preds, c2_preds, J1_preds, J2_preds
 
 @st.cache_resource
-def generate_and_save_solution(_model, times, param_set, output……
-
 def generate_and_save_solution(_model, times, param_set, output_dir):
     """Generate and save solution, return file path"""
     X, Y, c1_preds, c2_preds, J1_preds, J2_preds = evaluate_model(
