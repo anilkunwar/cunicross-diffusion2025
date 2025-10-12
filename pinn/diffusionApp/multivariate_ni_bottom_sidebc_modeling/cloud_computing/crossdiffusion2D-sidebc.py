@@ -28,7 +28,7 @@ mpl.rcParams['grid.linestyle'] = '--'
 mpl.rcParams['grid.alpha'] = 0.3
 
 # Configure logging
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(level=logging.INFO, filename='/tmp/pinn_solutions/training.log', filemode='a')
 logger = logging.getLogger(__name__)
 
 # Fixed boundary conditions
@@ -160,7 +160,6 @@ def boundary_loss_sides(model):
     t_right = torch.rand(num, 1, requires_grad=True) * model.T_max
     c_right = model(x_right, y_right, t_right)
     
-    # Compute gradients with respect to original x (not normalized)
     try:
         grad_cu_x_left = torch.autograd.grad(
             c_left[:, 0], x_left,
@@ -186,25 +185,21 @@ def boundary_loss_sides(model):
             create_graph=True, retain_graph=True
         )[0]
         
-        # Log gradient shapes and check for None
-        logger.info(f"grad_cu_x_left shape: {grad_cu_x_left.shape if grad_cu_x_left is not None else 'None'}")
-        logger.info(f"grad_ni_x_left shape: {grad_ni_x_left.shape if grad_ni_x_left is not None else 'None'}")
-        logger.info(f"grad_cu_x_right shape: {grad_cu_x_right.shape if grad_cu_x_right is not None else 'None'}")
-        logger.info(f"grad_ni_x_right shape: {grad_ni_x_right.shape if grad_ni_x_right is not None else 'None'}")
+        logger.info(f"grad_cu_x_left shape: {grad_cu_x_left.shape if grad_cu_x_left is not None else 'None'}, requires_grad: {grad_cu_x_left.requires_grad if grad_cu_x_left is not None else False}")
+        logger.info(f"grad_ni_x_left shape: {grad_ni_x_left.shape if grad_ni_x_left is not None else 'None'}, requires_grad: {grad_ni_x_left.requires_grad if grad_ni_x_left is not None else False}")
+        logger.info(f"grad_cu_x_right shape: {grad_cu_x_right.shape if grad_cu_x_right is not None else 'None'}, requires_grad: {grad_cu_x_right.requires_grad if grad_cu_x_right is not None else False}")
+        logger.info(f"grad_ni_x_right shape: {grad_ni_x_right.shape if grad_ni_x_right is not None else 'None'}, requires_grad: {grad_ni_x_right.requires_grad if grad_ni_x_right is not None else False}")
         
-        # Handle None gradients
         grad_cu_x_left = grad_cu_x_left if grad_cu_x_left is not None else torch.zeros_like(c_left[:, 0])
         grad_ni_x_left = grad_ni_x_left if grad_ni_x_left is not None else torch.zeros_like(c_left[:, 1])
         grad_cu_x_right = grad_cu_x_right if grad_cu_x_right is not None else torch.zeros_like(c_right[:, 0])
         grad_ni_x_right = grad_ni_x_right if grad_ni_x_right is not None else torch.zeros_like(c_right[:, 1])
         
-        # Scale gradients by Lx to account for normalization in forward pass
         grad_cu_x_left = grad_cu_x_left * model.Lx
         grad_ni_x_left = grad_ni_x_left * model.Lx
         grad_cu_x_right = grad_cu_x_right * model.Lx
         grad_ni_x_right = grad_ni_x_right * model.Lx
         
-        # Clip gradients to prevent numerical instability
         grad_cu_x_left = torch.clamp(grad_cu_x_left, -1.0, 1.0)
         grad_ni_x_left = torch.clamp(grad_ni_x_left, -1.0, 1.0)
         grad_cu_x_right = torch.clamp(grad_cu_x_right, -1.0, 1.0)
@@ -228,7 +223,6 @@ def initial_loss(model):
     return torch.mean(model(x, y, t)**2)
 
 def validate_boundary_conditions(solution, tolerance=1e-6):
-    """Validate boundary conditions against PINN specifications"""
     results = {
         'top_bc_cu': True,
         'top_bc_ni': True,
@@ -240,7 +234,7 @@ def validate_boundary_conditions(solution, tolerance=1e-6):
         'right_flux_ni': True,
         'details': []
     }
-    t_idx = -1  # Check last time step
+    t_idx = -1
     c1 = solution['c1_preds'][t_idx]
     c2 = solution['c2_preds'][t_idx]
     
@@ -288,7 +282,6 @@ def validate_boundary_conditions(solution, tolerance=1e-6):
     return results
 
 def plot_losses(loss_history, Ly, C_Cu, C_Ni, output_dir):
-    """Generate and save loss plot, return file path"""
     epochs = np.array(loss_history['epochs'])
     total_loss = np.array(loss_history['total'])
     physics_loss = np.array(loss_history['physics'])
@@ -320,7 +313,6 @@ def plot_losses(loss_history, Ly, C_Cu, C_Ni, output_dir):
     return plot_filename
 
 def plot_2d_profiles(solution, time_idx, output_dir):
-    """Generate 2D concentration profiles, return file path"""
     Lx = solution['params']['Lx']
     Ly = solution['params']['Ly']
     t_val = solution['times'][time_idx]
@@ -356,7 +348,6 @@ def plot_2d_profiles(solution, time_idx, output_dir):
     return plot_filename
 
 def plot_side_gradients(solution, model, time_idx, output_dir):
-    """Plot gradients at side boundaries to validate zero-flux conditions"""
     Lx = solution['params']['Lx']
     Ly = solution['params']['Ly']
     t_val = solution['times'][time_idx]
@@ -364,30 +355,46 @@ def plot_side_gradients(solution, model, time_idx, output_dir):
     y = torch.linspace(0, Ly, 50, requires_grad=True)
     t = torch.full((50, 1), t_val, requires_grad=True)
     
-    # Left boundary (x=0)
     x_left = torch.zeros(50, 1, requires_grad=True)
     c_left = model(x_left, y.reshape(-1, 1), t)
-    grad_cu_x_left = torch.autograd.grad(c_left[:, 0], x_left,
-                                        grad_outputs=torch.ones_like(c_left[:, 0]),
-                                        create_graph=True)[0].detach().numpy()
-    grad_ni_x_left = torch.autograd.grad(c_left[:, 1], x_left,
-                                        grad_outputs=torch.ones_like(c_left[:, 1]),
-                                        create_graph=True)[0].detach().numpy()
+    try:
+        grad_cu_x_left = torch.autograd.grad(c_left[:, 0], x_left,
+                                            grad_outputs=torch.ones_like(c_left[:, 0]),
+                                            create_graph=True)[0]
+        grad_ni_x_left = torch.autograd.grad(c_left[:, 1], x_left,
+                                            grad_outputs=torch.ones_like(c_left[:, 1]),
+                                            create_graph=True)[0]
+        logger.info(f"plot_side_gradients: grad_cu_x_left requires_grad: {grad_cu_x_left.requires_grad}")
+        logger.info(f"plot_side_gradients: grad_ni_x_left requires_grad: {grad_ni_x_left.requires_grad}")
+        grad_cu_x_left_np = grad_cu_x_left.detach().numpy()
+        grad_ni_x_left_np = grad_ni_x_left.detach().numpy()
+    except Exception as e:
+        logger.error(f"Gradient computation failed in plot_side_gradients (left): {str(e)}")
+        grad_cu_x_left_np = np.zeros(50)
+        grad_ni_x_left_np = np.zeros(50)
     
-    # Right boundary (x=Lx)
     x_right = torch.full((50, 1), Lx, requires_grad=True)
     c_right = model(x_right, y.reshape(-1, 1), t)
-    grad_cu_x_right = torch.autograd.grad(c_right[:, 0], x_right,
-                                         grad_outputs=torch.ones_like(c_right[:, 0]),
-                                         create_graph=True)[0].detach().numpy()
-    grad_ni_x_right = torch.autograd.grad(c_right[:, 1], x_right,
-                                         grad_outputs=torch.ones_like(c_right[:, 1]),
-                                         create_graph=True)[0].detach().numpy()
+    try:
+        grad_cu_x_right = torch.autograd.grad(c_right[:, 0], x_right,
+                                             grad_outputs=torch.ones_like(c_right[:, 0]),
+                                             create_graph=True)[0]
+        grad_ni_x_right = torch.autograd.grad(c_right[:, 1], x_right,
+                                             grad_outputs=torch.ones_like(c_right[:, 1]),
+                                             create_graph=True)[0]
+        logger.info(f"plot_side_gradients: grad_cu_x_right requires_grad: {grad_cu_x_right.requires_grad}")
+        logger.info(f"plot_side_gradients: grad_ni_x_right requires_grad: {grad_ni_x_right.requires_grad}")
+        grad_cu_x_right_np = grad_cu_x_right.detach().numpy()
+        grad_ni_x_right_np = grad_ni_x_right.detach().numpy()
+    except Exception as e:
+        logger.error(f"Gradient computation failed in plot_side_gradients (right): {str(e)}")
+        grad_cu_x_right_np = np.zeros(50)
+        grad_ni_x_right_np = np.zeros(50)
     
     plt.figure(figsize=(12, 5))
     plt.subplot(1, 2, 1)
-    plt.plot(y.numpy(), grad_cu_x_left, label='Cu (x=0)', color='blue')
-    plt.plot(y.numpy(), grad_ni_x_left, label='Ni (x=0)', color='red')
+    plt.plot(y.detach().numpy(), grad_cu_x_left_np, label='Cu (x=0)', color='blue')
+    plt.plot(y.detach().numpy(), grad_ni_x_left_np, label='Ni (x=0)', color='red')
     plt.axhline(0, color='black', linestyle='--', alpha=0.5)
     plt.title(f'Gradients at Left Boundary (t={t_val:.1f} s)')
     plt.xlabel('y (μm)')
@@ -396,8 +403,8 @@ def plot_side_gradients(solution, model, time_idx, output_dir):
     plt.legend()
     
     plt.subplot(1, 2, 2)
-    plt.plot(y.numpy(), grad_cu_x_right, label='Cu (x=Lx)', color='blue')
-    plt.plot(y.numpy(), grad_ni_x_right, label='Ni (x=Lx)', color='red')
+    plt.plot(y.detach().numpy(), grad_cu_x_right_np, label='Cu (x=Lx)', color='blue')
+    plt.plot(y.detach().numpy(), grad_ni_x_right_np, label='Ni (x=Lx)', color='red')
     plt.axhline(0, color='black', linestyle='--', alpha=0.5)
     plt.title(f'Gradients at Right Boundary (t={t_val:.1f} s)')
     plt.xlabel('y (μm)')
@@ -416,7 +423,6 @@ def plot_side_gradients(solution, model, time_idx, output_dir):
 
 @st.cache_resource
 def train_pinn_cached(D11, D12, D21, D22, Lx, Ly, T_max, C_Cu, C_Ni, epochs, lr, output_dir):
-    """Cached training function to prevent re-running during downloads"""
     logger.info(f"Starting training with Ly={Ly}, C_Cu={C_Cu}, C_Ni={C_Ni}, epochs={epochs}, lr={lr}")
     model = DualScaledPINN(D11, D12, D21, D22, Lx, Ly, T_max, C_Cu, C_Ni)
     optimizer = optim.Adam(model.parameters(), lr=lr)
@@ -486,16 +492,80 @@ def train_pinn_cached(D11, D12, D21, D22, Lx, Ly, T_max, C_Cu, C_Ni, epochs, lr,
     return model, loss_history
 
 @st.cache_resource
+def evaluate_model(_model, times, Lx, Ly, D11, D12, D21, D22):
+    x = torch.linspace(0, Lx, 50, requires_grad=False)
+    y = torch.linspace(0, Ly, 50, requires_grad=False)
+    X, Y = torch.meshgrid(x, y, indexing='ij')
+    
+    c1_preds, c2_preds, J1_preds, J2_preds = [], [], [], []
+    for t_val in times:
+        t = torch.full((X.numel(), 1), t_val, requires_grad=False)
+        c_pred = _model(X.reshape(-1,1), Y.reshape(-1,1), t)
+        try:
+            c1 = c_pred[:,0].detach().numpy().reshape(50,50).T
+            c2 = c_pred[:,1].detach().numpy().reshape(50,50).T
+        except RuntimeError as e:
+            logger.error(f"Failed to convert concentration predictions to NumPy: {str(e)}")
+            raise e
+        
+        c1_preds.append(c1)
+        c2_preds.append(c2)
+        
+        X_np, Y_np = X.numpy(), Y.numpy()
+        X_torch = torch.tensor(X_np, dtype=torch.float32, requires_grad=True).reshape(-1, 1)
+        Y_torch = torch.tensor(Y_np, dtype=torch.float32, requires_grad=True).reshape(-1, 1)
+        t_torch = torch.full((X_torch.numel(), 1), t_val, dtype=torch.float32, requires_grad=True)
+        
+        c_pred = _model(X_torch, Y_torch, t_torch)
+        c1_pred, c2_pred = c_pred[:, 0:1], c_pred[:, 1:2]
+        
+        try:
+            grad_c1_x = torch.autograd.grad(c1_pred, X_torch, 
+                                            grad_outputs=torch.ones_like(c1_pred),
+                                            create_graph=True)[0]
+            grad_c1_y = torch.autograd.grad(c1_pred, Y_torch,
+                                            grad_outputs=torch.ones_like(c1_pred),
+                                            create_graph=True)[0]
+            grad_c2_x = torch.autograd.grad(c2_pred, X_torch,
+                                            grad_outputs=torch.ones_like(c2_pred),
+                                            create_graph=True)[0]
+            grad_c2_y = torch.autograd.grad(c2_pred, Y_torch,
+                                            grad_outputs=torch.ones_like(c2_pred),
+                                            create_graph=True)[0]
+            
+            logger.info(f"evaluate_model: grad_c1_x requires_grad: {grad_c1_x.requires_grad}")
+            logger.info(f"evaluate_model: grad_c1_y requires_grad: {grad_c1_y.requires_grad}")
+            logger.info(f"evaluate_model: grad_c2_x requires_grad: {grad_c2_x.requires_grad}")
+            logger.info(f"evaluate_model: grad_c2_y requires_grad: {grad_c2_y.requires_grad}")
+            
+            J1_x = -D11 * grad_c1_x.detach().numpy() - D12 * grad_c2_x.detach().numpy()
+            J1_y = -D11 * grad_c1_y.detach().numpy() - D12 * grad_c2_y.detach().numpy()
+            J2_x = -D21 * grad_c1_x.detach().numpy() - D22 * grad_c2_x.detach().numpy()
+            J2_y = -D21 * grad_c1_y.detach().numpy() - D22 * grad_c2_y.detach().numpy()
+        except RuntimeError as e:
+            logger.error(f"Failed to compute fluxes: {str(e)}")
+            raise e
+        
+        J1_preds.append((J1_x.reshape(X_np.shape), J1_y.reshape(X_np.shape)))
+        J2_preds.append((J2_x.reshape(X_np.shape), J2_y.reshape(X_np.shape)))
+    
+    return X_np, Y_np, c1_preds, c2_preds, J1_preds, J2_preds
+
+@st.cache_resource
 def generate_and_save_solution(_model, times, param_set, output_dir):
-    """Generate and save solution, return file path and solution"""
     if _model is None:
         logger.error("Model is None, cannot generate solution")
         return None, None
     
-    X, Y, c1_preds, c2_preds, J1_preds, J2_preds = evaluate_model(
-        _model, times, param_set['Lx'], param_set['Ly'],
-        param_set['D11'], param_set['D12'], param_set['D21'], param_set['D22']
-    )
+    try:
+        X, Y, c1_preds, c2_preds, J1_preds, J2_preds = evaluate_model(
+            _model, times, param_set['Lx'], param_set['Ly'],
+            param_set['D11'], param_set['D12'], param_set['D21'], param_set['D22']
+        )
+    except RuntimeError as e:
+        logger.error(f"evaluate_model failed: {str(e)}")
+        st.error(f"evaluate_model failed: {str(e)}")
+        return None, None
     
     solution = {
         'params': param_set,
@@ -506,7 +576,7 @@ def generate_and_save_solution(_model, times, param_set, output_dir):
         'J1_preds': J1_preds,
         'J2_preds': J2_preds,
         'times': times,
-        'loss_history': {},  # Will be updated later
+        'loss_history': {},
         'orientation_note': 'c1_preds and c2_preds are arrays of shape (50,50) where rows (i) correspond to y-coordinates and columns (j) correspond to x-coordinates due to transpose.'
     }
     
@@ -527,7 +597,6 @@ def generate_and_save_solution(_model, times, param_set, output_dir):
 
 @st.cache_resource
 def create_zip_file(_files, output_dir):
-    """Create a ZIP file containing all generated files, return file path"""
     zip_buffer = io.BytesIO()
     try:
         with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zip_file:
@@ -547,55 +616,9 @@ def create_zip_file(_files, output_dir):
         st.error(f"Failed to create ZIP file: {str(e)}")
         return None
 
-def evaluate_model(model, times, Lx, Ly, D11, D12, D21, D22):
-    x = torch.linspace(0, Lx, 50)
-    y = torch.linspace(0, Ly, 50)
-    X, Y = torch.meshgrid(x, y, indexing='ij')
-    
-    c1_preds, c2_preds, J1_preds, J2_preds = [], [], [], []
-    for t_val in times:
-        t = torch.full((X.numel(), 1), t_val)
-        c_pred = model(X.reshape(-1,1), Y.reshape(-1,1), t)
-        c1 = c_pred[:,0].detach().numpy().reshape(50,50).T
-        c2 = c_pred[:,1].detach().numpy().reshape(50,50).T
-        c1_preds.append(c1)
-        c2_preds.append(c2)
-        
-        X_np, Y_np = X.numpy(), Y.numpy()
-        X_torch = torch.tensor(X_np, dtype=torch.float32, requires_grad=True).reshape(-1, 1)
-        Y_torch = torch.tensor(Y_np, dtype=torch.float32, requires_grad=True).reshape(-1, 1)
-        t_torch = torch.full((X_torch.numel(), 1), t_val, dtype=torch.float32, requires_grad=True)
-        
-        c_pred = model(X_torch, Y_torch, t_torch)
-        c1_pred, c2_pred = c_pred[:, 0:1], c_pred[:, 1:2]
-        
-        grad_c1_x = torch.autograd.grad(c1_pred, X_torch, 
-                                        grad_outputs=torch.ones_like(c1_pred),
-                                        create_graph=True)[0]
-        grad_c1_y = torch.autograd.grad(c1_pred, Y_torch,
-                                        grad_outputs=torch.ones_like(c1_pred),
-                                        create_graph=True)[0]
-        grad_c2_x = torch.autograd.grad(c2_pred, X_torch,
-                                        grad_outputs=torch.ones_like(c2_pred),
-                                        create_graph=True)[0]
-        grad_c2_y = torch.autograd.grad(c2_pred, Y_torch,
-                                        grad_outputs=torch.ones_like(c2_pred),
-                                        create_graph=True)[0]
-        
-        J1_x = -D11 * grad_c1_x.detach().numpy() - D12 * grad_c2_x.detach().numpy()
-        J1_y = -D11 * grad_c1_y.detach().numpy() - D12 * grad_c2_y.detach().numpy()
-        J2_x = -D21 * grad_c1_x.detach().numpy() - D22 * grad_c2_x.detach().numpy()
-        J2_y = -D21 * grad_c1_y.detach().numpy() - D22 * grad_c2_y.detach().numpy()
-        
-        J1_preds.append((J1_x.reshape(X_np.shape), J1_y.reshape(X_np.shape)))
-        J2_preds.append((J2_x.reshape(X_np.shape), J2_y.reshape(Y_np.shape)))
-    
-    return X_np, Y_np, c1_preds, c2_preds, J1_preds, J2_preds
-
 def main():
     st.title("PINN Training and Visualization App")
     
-    # Parameter selection
     st.sidebar.header("Model Parameters")
     Ly = st.sidebar.selectbox("Ly (μm)", [30.0, 60.0, 120.0], index=0)
     C_Cu = st.sidebar.selectbox("C_Cu (mol/cc)", [0.0, 1.5e-3, 1.6e-3, 2.5e-3, 3.0e-3], index=2)
@@ -619,7 +642,6 @@ def main():
         'epochs': epochs
     }
     
-    # Training button
     if st.button("Train PINN Model"):
         try:
             with st.spinner("Training model..."):
@@ -645,18 +667,15 @@ def main():
             
             st.success(f"Model trained successfully! Saved to {solution_filename}")
             
-            # Display logs
             with st.expander("Training Logs"):
                 log_file = os.path.join(output_dir, 'training.log')
                 if os.path.exists(log_file):
                     with open(log_file, 'r') as f:
                         st.text(f.read())
             
-            # Display loss plot
             st.subheader("Training Loss")
             st.image(loss_plot_filename)
             
-            # Validate boundary conditions
             st.subheader("Boundary Condition Validation")
             bc_results = validate_boundary_conditions(solution)
             st.metric("Boundary Conditions", "✓" if bc_results['valid'] else "✗", 
@@ -665,15 +684,12 @@ def main():
                 for issue in bc_results['details']:
                     st.write(f"• {issue}")
             
-            # Display 2D profiles
             st.subheader("2D Concentration Profiles (Final Time Step)")
             st.image(profile_plot_filename)
             
-            # Display side boundary gradients
             st.subheader("Side Boundary Gradients (Final Time Step)")
             st.image(gradient_plot_filename)
             
-            # Download individual files
             st.subheader("Download Individual Files")
             files_to_download = [
                 (solution_filename, "Solution (.pkl)", "application/octet-stream"),
@@ -694,7 +710,6 @@ def main():
                 else:
                     st.warning(f"File not found: {file_path}")
             
-            # Create and download ZIP file
             st.subheader("Download All Files as ZIP")
             files_to_zip = [solution_filename, loss_plot_filename, profile_plot_filename, gradient_plot_filename]
             zip_filename = create_zip_file(files_to_zip, output_dir)
@@ -713,7 +728,6 @@ def main():
             logger.error(f"Training pipeline failed: {str(e)}")
             st.error(f"Training pipeline failed: {str(e)}")
     
-    # Instructions for Streamlit Cloud
     st.sidebar.markdown("""
     **Notes for Streamlit Cloud:**
     - Files are saved to `/tmp/pinn_solutions`.
