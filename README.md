@@ -48,7 +48,11 @@ with training datasets for 0 BCs (Transformer-inspired Attention): [![meaningtow
 
  debugging interpolation errors and making it inline with pinn solutions
  
-  [![meaningtowords](https://img.shields.io/badge/debugErrors-streamlit-red)](https://minimization-interpolation-errors.streamlit.app/)
+ 
+
+
+  cloud computing with side bc corrected:
+  [![meaningtowords](https://img.shields.io/badge/cloudComp-streamlit-red)](https://crossdiffusion2dpinn-sidebc-modeling.streamlit.app/)   
 
 Concentration Fields, Flux and Others:
 [![meaningtowords](https://img.shields.io/badge/solutions-streamlit-red)](https://multivariatecrossdiffusion2d-cuni.streamlit.app/)
