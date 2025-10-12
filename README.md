@@ -47,7 +47,8 @@ with training datasets for 0 BCs (Transformer-inspired Attention): [![meaningtow
  [![meaningtowords](https://img.shields.io/badge/broadRangeConcAttnSideBC-streamlit-red)](https://attentiveinterpolator-physicsawaresidebc.streamlit.app/) 
 
  debugging interpolation errors and making it inline with pinn solutions
- 
+ [![meaningtowords](https://img.shields.io/badge/debugerrorcloudComp-streamlit-red)]( https://pinninterpolation-error-debugging.streamlit.app/)   
+
  
 
 
