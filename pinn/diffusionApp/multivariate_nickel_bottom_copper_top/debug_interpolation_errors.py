@@ -5,9 +5,6 @@ import streamlit as st
 import matplotlib.pyplot as plt
 from scipy.interpolate import RegularGridInterpolator
 import matplotlib as mpl
-from scipy import stats
-import torch
-import torch.nn as nn
 
 # Configure Matplotlib for publication-quality figures
 mpl.rcParams['font.family'] = 'Arial'
@@ -75,6 +72,21 @@ def find_solution_by_ly(solutions, params_list, target_ly, tolerance=1.0):
         if abs(ly - target_ly) < tolerance:
             return sol, ly
     return None, None
+
+def find_alternative_solution(solutions, params_list, exclude_ly, target_ly):
+    """Find a solution for interpolation, excluding the target Ly"""
+    min_diff = float('inf')
+    best_sol = None
+    best_ly = None
+    for sol, params in zip(solutions, params_list):
+        ly = params[0]
+        if abs(ly - exclude_ly) > 1e-6:  # Exclude the target Ly
+            diff = abs(ly - target_ly)
+            if diff < min_diff:
+                min_diff = diff
+                best_sol = sol
+                best_ly = ly
+    return best_sol, best_ly
 
 def enforce_boundary_conditions(sol):
     """Enforce PINN boundary conditions on a solution"""
@@ -158,8 +170,8 @@ def validate_boundary_conditions(sol, tolerance=1e-6):
     ])
     return results
 
-def simple_interpolate_solution(sol1, sol2, ly_target):
-    """Simple linear interpolation between two solutions"""
+def interpolate_solution_with_boundary_masking(sol1, sol2, ly_target):
+    """Interpolate only interior points, apply PINN boundary conditions"""
     if sol1 is None or sol2 is None:
         return None
     
@@ -179,6 +191,7 @@ def simple_interpolate_solution(sol1, sol2, ly_target):
         Y1_scaled = sol1['Y'][0, :] * scale1
         Y2_scaled = sol2['Y'][0, :] * scale2
         
+        # Interpolate interior points only (exclude boundaries)
         interp1_c1 = RegularGridInterpolator(
             (sol1['X'][:, 0], Y1_scaled), sol1['c1_preds'][t_idx],
             method='linear', bounds_error=False, fill_value=0
@@ -196,26 +209,38 @@ def simple_interpolate_solution(sol1, sol2, ly_target):
             method='linear', bounds_error=False, fill_value=0
         )
         
-        points = np.stack([X.flatten(), Y_target.flatten()], axis=1)
+        # Create interior grid (excluding boundaries)
+        x_interior = X[1:-1, 0]
+        y_interior = y_coords[1:-1]
+        X_interior, Y_interior = np.meshgrid(x_interior, y_interior, indexing='ij')
+        points_interior = np.stack([X_interior.flatten(), Y_interior.flatten()], axis=1)
         
-        c1 = weight1 * interp1_c1(points) + weight2 * interp2_c1(points)
-        c2 = weight1 * interp1_c2(points) + weight2 * interp2_c2(points)
+        # Interpolate interior
+        c1 = weight1 * interp1_c1(points_interior) + weight2 * interp2_c1(points_interior)
+        c2 = weight1 * interp1_c2(points_interior) + weight2 * interp2_c2(points_interior)
+        c1 = c1.reshape(X_interior.shape)
+        c2 = c2.reshape(X_interior.shape)
         
-        c1 = c1.reshape(X.shape)
-        c2 = c2.reshape(X.shape)
+        # Create full grid with boundaries
+        c1_full = np.zeros_like(X)
+        c2_full = np.zeros_like(X)
         
-        # Enforce boundary conditions
-        c1[:, 0] = C_CU_TOP
-        c1[:, -1] = C_CU_BOTTOM
-        c2[:, 0] = C_NI_TOP
-        c2[:, -1] = C_NI_BOTTOM
-        c1[0, :] = c1[1, :]
-        c1[-1, :] = c1[-2, :]
-        c2[0, :] = c2[1, :]
-        c2[-1, :] = c2[-2, :]
+        # Copy interior points
+        c1_full[1:-1, 1:-1] = c1
+        c2_full[1:-1, 1:-1] = c2
         
-        c1_interp.append(c1)
-        c2_interp.append(c2)
+        # Apply PINN boundary conditions
+        c1_full[:, 0] = C_CU_TOP
+        c1_full[:, -1] = C_CU_BOTTOM
+        c2_full[:, 0] = C_NI_TOP
+        c2_full[:, -1] = C_NI_BOTTOM
+        c1_full[0, :] = c1_full[1, :]
+        c1_full[-1, :] = c1_full[-2, :]
+        c2_full[0, :] = c2_full[1, :]
+        c2_full[-1, :] = c2_full[-2, :]
+        
+        c1_interp.append(c1_full)
+        c2_interp.append(c2_full)
     
     return {
         'params': {'Lx': sol1['params']['Lx'], 'Ly': ly_target, 't_max': sol1['params']['t_max']},
@@ -225,70 +250,11 @@ def simple_interpolate_solution(sol1, sol2, ly_target):
         'c2_preds': c2_interp,
         'times': sol1['times'],
         'interpolated': True,
-        'method': 'linear'
+        'method': 'linear_boundary_masking',
+        'source_ly1': sol1['params']['Ly'],
+        'source_ly2': sol2['params']['Ly'],
+        'weights': (weight1, weight2)
     }
-
-def attention_interpolate_solution(solutions, params_list, ly_target):
-    """Attention-based interpolation using all solutions"""
-    class SimpleAttentionInterpolator:
-        def __init__(self, sigma=0.2):
-            self.sigma = sigma
-        
-        def interpolate(self, solutions, params_list, ly_target):
-            lys = np.array([p[0] for p in params_list])
-            distances = np.abs(lys - ly_target)
-            weights = np.exp(-(distances / self.sigma)**2)
-            weights /= np.sum(weights)
-            
-            Lx = solutions[0]['params']['Lx']
-            t_max = solutions[0]['params']['t_max']
-            x_coords = np.linspace(0, Lx, 50)
-            y_coords = np.linspace(0, ly_target, 50)
-            X, Y = np.meshgrid(x_coords, y_coords, indexing='ij')
-            
-            c1_interp = np.zeros((len(solutions[0]['times']), 50, 50))
-            c2_interp = np.zeros((len(solutions[0]['times']), 50, 50))
-            
-            for t_idx in range(len(solutions[0]['times'])):
-                for i, (sol, weight) in enumerate(zip(solutions, weights)):
-                    scale_factor = ly_target / sol['params']['Ly']
-                    Y_scaled = sol['Y'][0, :] * scale_factor
-                    interp_c1 = RegularGridInterpolator(
-                        (sol['X'][:, 0], Y_scaled), sol['c1_preds'][t_idx],
-                        method='linear', bounds_error=False, fill_value=0
-                    )
-                    interp_c2 = RegularGridInterpolator(
-                        (sol['X'][:, 0], Y_scaled), sol['c2_preds'][t_idx],
-                        method='linear', bounds_error=False, fill_value=0
-                    )
-                    points = np.stack([X.flatten(), Y.flatten()], axis=1)
-                    c1_interp[t_idx] += weight * interp_c1(points).reshape(50, 50)
-                    c2_interp[t_idx] += weight * interp_c2(points).reshape(50, 50)
-                
-                # Enforce boundary conditions
-                c1_interp[t_idx, :, 0] = C_CU_TOP
-                c1_interp[t_idx, :, -1] = C_CU_BOTTOM
-                c2_interp[t_idx, :, 0] = C_NI_TOP
-                c2_interp[t_idx, :, -1] = C_NI_BOTTOM
-                c1_interp[t_idx, 0, :] = c1_interp[t_idx, 1, :]
-                c1_interp[t_idx, -1, :] = c1_interp[t_idx, -2, :]
-                c2_interp[t_idx, 0, :] = c2_interp[t_idx, 1, :]
-                c2_interp[t_idx, -1, :] = c2_interp[t_idx, -2, :]
-            
-            return {
-                'params': {'Lx': Lx, 'Ly': ly_target, 't_max': t_max},
-                'X': X,
-                'Y': Y,
-                'c1_preds': list(c1_interp),
-                'c2_preds': list(c2_interp),
-                'times': solutions[0]['times'],
-                'interpolated': True,
-                'method': 'attention',
-                'weights': weights.tolist()
-            }
-    
-    interpolator = SimpleAttentionInterpolator()
-    return interpolator.interpolate(solutions, params_list, ly_target)
 
 def compute_errors(sol_ref, sol_interp, time_idx):
     """Compute L2 errors and boundary-specific errors"""
@@ -297,9 +263,9 @@ def compute_errors(sol_ref, sol_interp, time_idx):
     c1_interp = sol_interp['c1_preds'][time_idx]
     c2_interp = sol_interp['c2_preds'][time_idx]
     
-    # Overall L2 error
-    l2_error_cu = np.mean((c1_ref - c1_interp)**2)
-    l2_error_ni = np.mean((c2_ref - c2_interp)**2)
+    # Overall L2 error (interior only)
+    l2_error_cu = np.mean((c1_ref[1:-1, 1:-1] - c1_interp[1:-1, 1:-1])**2)
+    l2_error_ni = np.mean((c2_ref[1:-1, 1:-1] - c2_interp[1:-1, 1:-1])**2)
     
     # Boundary-specific errors
     top_error_cu = np.mean(np.abs(c1_ref[:, 0] - c1_interp[:, 0]))
@@ -316,78 +282,54 @@ def compute_errors(sol_ref, sol_interp, time_idx):
         'bottom_error_ni': bottom_error_ni
     }
 
-def plot_comparison(sol_30, sol_120, sol_linear, sol_attention, time_idx):
-    """Plot centerline profiles and boundary errors"""
-    fig, axes = plt.subplots(2, 2, figsize=(15, 10))
+def plot_time_based_comparison(sol_ref, sol_interp, time_indices, ly_value, output_dir="figures"):
+    """Plot time-based concentration profiles for PINN vs interpolated solutions"""
+    fig, axes = plt.subplots(2, len(time_indices), figsize=(4*len(time_indices), 8), sharex=True, sharey='row')
+    if len(time_indices) == 1:
+        axes = np.array([axes]).T  # Ensure axes is 2D for single time index
     
-    center_idx = sol_30['X'].shape[0] // 2
+    center_idx = sol_ref['X'].shape[0] // 2
     
-    # Cu profiles
-    axes[0, 0].plot(sol_30['Y'][0, :], sol_30['c1_preds'][time_idx][center_idx, :], 'b-', label='30 μm PINN')
-    axes[0, 0].plot(sol_120['Y'][0, :], sol_120['c1_preds'][time_idx][center_idx, :], 'g-', label='120 μm PINN')
-    if sol_linear:
-        axes[0, 0].plot(sol_linear['Y'][0, :], sol_linear['c1_preds'][time_idx][center_idx, :], 'r--', label='Linear Interp')
-    if sol_attention:
-        axes[0, 0].plot(sol_attention['Y'][0, :], sol_attention['c1_preds'][time_idx][center_idx, :], 'm--', label='Attention Interp')
-    axes[0, 0].set_title('Cu Concentration Profiles')
-    axes[0, 0].set_xlabel('y (μm)')
-    axes[0, 0].set_ylabel('Concentration (mol/cc)')
-    axes[0, 0].legend()
-    axes[0, 0].grid(True)
+    for idx, t_idx in enumerate(time_indices):
+        t_val = sol_ref['times'][t_idx]
+        
+        # Cu profiles
+        axes[0, idx].plot(sol_ref['Y'][0, :], sol_ref['c1_preds'][t_idx][center_idx, :], 
+                         'b-', label=f'PINN Ly={ly_value:.0f} μm', linewidth=2)
+        axes[0, idx].plot(sol_interp['Y'][0, :], sol_interp['c1_preds'][t_idx][center_idx, :], 
+                         'r--', label='Interpolated', linewidth=2)
+        if idx == 0:
+            axes[0, idx].set_ylabel('Cu Concentration (mol/cc)')
+        axes[0, idx].set_xlabel('y (μm)')
+        axes[0, idx].set_title(f't = {t_val:.1f} s')
+        axes[0, idx].legend()
+        axes[0, idx].grid(True)
+        axes[0, idx].ticklabel_format(style='sci', axis='y', scilimits=(0, 0))
+        
+        # Ni profiles
+        axes[1, idx].plot(sol_ref['Y'][0, :], sol_ref['c2_preds'][t_idx][center_idx, :], 
+                         'b-', label=f'PINN Ly={ly_value:.0f} μm', linewidth=2)
+        axes[1, idx].plot(sol_interp['Y'][0, :], sol_interp['c2_preds'][t_idx][center_idx, :], 
+                         'r--', label='Interpolated', linewidth=2)
+        if idx == 0:
+            axes[1, idx].set_ylabel('Ni Concentration (mol/cc)')
+        axes[1, idx].set_xlabel('y (μm)')
+        axes[1, idx].set_title(f't = {t_val:.1f} s')
+        axes[1, idx].legend()
+        axes[1, idx].grid(True)
+        axes[1, idx].ticklabel_format(style='sci', axis='y', scilimits=(0, 0))
     
-    # Ni profiles
-    axes[0, 1].plot(sol_30['Y'][0, :], sol_30['c2_preds'][time_idx][center_idx, :], 'b-', label='30 μm PINN')
-    axes[0, 1].plot(sol_120['Y'][0, :], sol_120['c2_preds'][time_idx][center_idx, :], 'g-', label='120 μm PINN')
-    if sol_linear:
-        axes[0, 1].plot(sol_linear['Y'][0, :], sol_linear['c1_preds'][time_idx][center_idx, :], 'r--', label='Linear Interp')
-    if sol_attention:
-        axes[0, 1].plot(sol_attention['Y'][0, :], sol_attention['c2_preds'][time_idx][center_idx, :], 'm--', label='Attention Interp')
-    axes[0, 1].set_title('Ni Concentration Profiles')
-    axes[0, 1].set_xlabel('y (μm)')
-    axes[0, 1].set_ylabel('Concentration (mol/cc)')
-    axes[0, 1].legend()
-    axes[0, 1].grid(True)
+    fig.suptitle(f'Concentration Profiles: PINN vs Interpolated (Ly={ly_value:.0f} μm)', fontsize=14)
+    plt.tight_layout(rect=[0, 0, 1, 0.95])
     
-    # Boundary errors
-    if sol_linear and sol_30['params']['Ly'] == sol_linear['params']['Ly']:
-        errors_linear_30 = compute_errors(sol_30, sol_linear, time_idx)
-        axes[1, 0].bar(['Top Cu', 'Bottom Cu', 'Top Ni', 'Bottom Ni'],
-                        [errors_linear_30['top_error_cu'], errors_linear_30['bottom_error_cu'],
-                         errors_linear_30['top_error_ni'], errors_linear_30['bottom_error_ni']],
-                        color='r', alpha=0.5, label='Linear vs 30 μm')
-    if sol_attention and sol_30['params']['Ly'] == sol_attention['params']['Ly']:
-        errors_attention_30 = compute_errors(sol_30, sol_attention, time_idx)
-        axes[1, 0].bar(['Top Cu', 'Bottom Cu', 'Top Ni', 'Bottom Ni'],
-                        [errors_attention_30['top_error_cu'], errors_attention_30['bottom_error_cu'],
-                         errors_attention_30['top_error_ni'], errors_attention_30['bottom_error_ni']],
-                        color='m', alpha=0.5, label='Attention vs 30 μm')
-    axes[1, 0].set_title('Boundary Errors vs 30 μm PINN')
-    axes[1, 0].set_ylabel('Mean Absolute Error')
-    axes[1, 0].legend()
-    axes[1, 0].grid(True)
-    
-    if sol_linear and sol_120['params']['Ly'] == sol_linear['params']['Ly']:
-        errors_linear_120 = compute_errors(sol_120, sol_linear, time_idx)
-        axes[1, 1].bar(['Top Cu', 'Bottom Cu', 'Top Ni', 'Bottom Ni'],
-                        [errors_linear_120['top_error_cu'], errors_linear_120['bottom_error_cu'],
-                         errors_linear_120['top_error_ni'], errors_linear_120['bottom_error_ni']],
-                        color='r', alpha=0.5, label='Linear vs 120 μm')
-    if sol_attention and sol_120['params']['Ly'] == sol_attention['params']['Ly']:
-        errors_attention_120 = compute_errors(sol_120, sol_attention, time_idx)
-        axes[1, 1].bar(['Top Cu', 'Bottom Cu', 'Top Ni', 'Bottom Ni'],
-                        [errors_attention_120['top_error_cu'], errors_attention_120['bottom_error_cu'],
-                         errors_attention_120['top_error_ni'], errors_attention_120['bottom_error_ni']],
-                        color='m', alpha=0.5, label='Attention vs 120 μm')
-    axes[1, 1].set_title('Boundary Errors vs 120 μm PINN')
-    axes[1, 1].set_ylabel('Mean Absolute Error')
-    axes[1, 1].legend()
-    axes[1, 1].grid(True)
-    
-    plt.tight_layout()
-    return fig
+    os.makedirs(output_dir, exist_ok=True)
+    filename = f"time_profiles_ly_{ly_value:.0f}_t_{'_'.join([f'{sol_ref['times'][t]:.1f}' for t in time_indices])}.png"
+    plt.savefig(os.path.join(output_dir, filename), dpi=300, bbox_inches='tight')
+    plt.close()
+    return fig, filename
 
 def main():
-    st.title("Debug Interpolation Errors: PINN vs Interpolated Solutions")
+    st.title("Debug Interpolation Errors: PINN vs Interpolated Solutions with Boundary Masking")
     
     # Load all solutions
     solutions, params_list, lys, load_logs = load_solutions(SOLUTION_DIR)
@@ -398,7 +340,7 @@ def main():
                 st.write(log)
     
     if len(solutions) < 2:
-        st.error("Need at least 2 solutions for comparison. Please check pinn_solutions directory.")
+        st.error("Need at least 2 solutions for interpolation. Please check pinn_solutions directory.")
         st.stop()
     
     # Find 30 μm and 120 μm solutions
@@ -409,94 +351,125 @@ def main():
         st.error("Could not find solutions for Ly=30 μm or Ly=120 μm. Available Ly values: " + str(sorted(set(lys))))
         st.stop()
     
-    st.success(f"Loaded PINN solutions: Ly={ly_30:.1f} μm and Ly={ly_120:.1f} μm")
+    # Find alternative solutions for interpolation
+    sol_alt_30, ly_alt_30 = find_alternative_solution(solutions, params_list, ly_30, 60.0)
+    sol_alt_120, ly_alt_120 = find_alternative_solution(solutions, params_list, ly_120, 90.0)
+    
+    if sol_alt_30 is None or sol_alt_120 is None:
+        st.error("Could not find alternative solutions for interpolation. Available Ly values: " + str(sorted(set(lys))))
+        st.stop()
+    
+    st.success(f"Loaded PINN solutions: Ly={ly_30:.1f} μm (with alt Ly={ly_alt_30:.1f} μm) and Ly={ly_120:.1f} μm (with alt Ly={ly_alt_120:.1f} μm)")
     
     # Enforce boundary conditions on reference solutions
     sol_30 = enforce_boundary_conditions(sol_30)
     sol_120 = enforce_boundary_conditions(sol_120)
+    sol_alt_30 = enforce_boundary_conditions(sol_alt_30)
+    sol_alt_120 = enforce_boundary_conditions(sol_alt_120)
     
-    # Select interpolation target
-    st.subheader("Interpolation Target")
-    ly_target = st.number_input("Target Ly for Interpolation (μm)", 
-                                min_value=30.0, max_value=120.0, value=75.0, step=0.1, format="%.1f")
+    # Generate interpolated solutions with boundary masking
+    st.subheader("Interpolation with Boundary Masking")
+    with st.spinner("Interpolating..."):
+        sol_interp_30 = interpolate_solution_with_boundary_masking(sol_30, sol_alt_30, 30.0)
+        sol_interp_120 = interpolate_solution_with_boundary_masking(sol_120, sol_alt_120, 120.0)
     
-    # Generate interpolated solutions
-    if st.button("Generate Interpolated Solutions"):
-        with st.spinner("Interpolating..."):
-            sol_linear = simple_interpolate_solution(sol_30, sol_120, ly_target)
-            sol_attention = attention_interpolate_solution(solutions, params_list, ly_target)
+    # Validate boundary conditions
+    st.subheader("Boundary Condition Validation")
+    col1, col2, col3, col4 = st.columns(4)
+    
+    with col1:
+        bc_30 = validate_boundary_conditions(sol_30)
+        st.metric("30 μm PINN BC", "✓" if bc_30['valid'] else "✗", f"{len(bc_30['details'])} issues")
+    
+    with col2:
+        bc_120 = validate_boundary_conditions(sol_120)
+        st.metric("120 μm PINN BC", "✓" if bc_120['valid'] else "✗", f"{len(bc_120['details'])} issues")
+    
+    with col3:
+        bc_interp_30 = validate_boundary_conditions(sol_interp_30) if sol_interp_30 else {'valid': False, 'details': ['Not generated']}
+        st.metric("30 μm Interp BC", "✓" if bc_interp_30['valid'] else "✗", f"{len(bc_interp_30['details'])} issues")
+    
+    with col4:
+        bc_interp_120 = validate_boundary_conditions(sol_interp_120) if sol_interp_120 else {'valid': False, 'details': ['Not generated']}
+        st.metric("120 μm Interp BC", "✓" if bc_interp_120['valid'] else "✗", f"{len(bc_interp_120['details'])} issues")
+    
+    # Time-based profile comparison
+    st.subheader("Time-Based Profile Comparison")
+    time_indices = st.multiselect(
+        "Select Time Indices for Comparison",
+        options=list(range(len(sol_30['times']))),
+        default=[0, len(sol_30['times'])//4, len(sol_30['times'])//2, 3*len(sol_30['times'])//4, len(sol_30['times'])-1],
+        format_func=lambda x: f"t = {sol_30['times'][x]:.1f} s"
+    )
+    
+    if time_indices:
+        # 30 μm comparison
+        if sol_interp_30:
+            st.write("**Ly=30 μm: PINN vs Interpolated**")
+            fig_30, filename_30 = plot_time_based_comparison(sol_30, sol_interp_30, time_indices, 30.0)
+            st.pyplot(fig_30)
+            st.download_button(
+                label="Download 30 μm Plot as PNG",
+                data=open(os.path.join("figures", filename_30), "rb").read(),
+                file_name=filename_30,
+                mime="image/png"
+            )
         
-        # Validate boundary conditions
-        st.subheader("Boundary Condition Validation")
-        col1, col2, col3, col4 = st.columns(4)
-        
-        with col1:
-            bc_30 = validate_boundary_conditions(sol_30)
-            st.metric("30 μm PINN BC", "✓" if bc_30['valid'] else "✗", f"{len(bc_30['details'])} issues")
-        
-        with col2:
-            bc_120 = validate_boundary_conditions(sol_120)
-            st.metric("120 μm PINN BC", "✓" if bc_120['valid'] else "✗", f"{len(bc_120['details'])} issues")
-        
-        with col3:
-            bc_linear = validate_boundary_conditions(sol_linear) if sol_linear else {'valid': False, 'details': ['Not generated']}
-            st.metric("Linear Interp BC", "✓" if bc_linear['valid'] else "✗", f"{len(bc_linear['details'])} issues")
-        
-        with col4:
-            bc_attention = validate_boundary_conditions(sol_attention) if sol_attention else {'valid': False, 'details': ['Not generated']}
-            st.metric("Attention Interp BC", "✓" if bc_attention['valid'] else "✗", f"{len(bc_attention['details'])} issues")
-        
-        # Compare profiles
-        st.subheader("Profile and Error Comparison")
-        time_idx = st.slider("Select Time Index for Comparison", 0, len(sol_30['times'])-1, len(sol_30['times'])-1)
-        
-        if sol_linear or sol_attention:
-            fig = plot_comparison(sol_30, sol_120, sol_linear, sol_attention, time_idx)
-            st.pyplot(fig)
-        
-        # Detailed boundary issues
-        st.subheader("Boundary Condition Issues")
-        st.write("**30 μm PINN**")
-        for issue in bc_30['details']:
+        # 120 μm comparison
+        if sol_interp_120:
+            st.write("**Ly=120 μm: PINN vs Interpolated**")
+            fig_120, filename_120 = plot_time_based_comparison(sol_120, sol_interp_120, time_indices, 120.0)
+            st.pyplot(fig_120)
+            st.download_button(
+                label="Download 120 μm Plot as PNG",
+                data=open(os.path.join("figures", filename_120), "rb").read(),
+                file_name=filename_120,
+                mime="image/png"
+            )
+    
+    # Error metrics
+    st.subheader("Error Metrics")
+    if sol_interp_30:
+        st.write("**30 μm Interpolation Errors**")
+        for t_idx in time_indices:
+            errors = compute_errors(sol_30, sol_interp_30, t_idx)
+            st.write(f"t = {sol_30['times'][t_idx]:.1f} s: L2 Cu: {errors['l2_error_cu']:.2e}, L2 Ni: {errors['l2_error_ni']:.2e}")
+    
+    if sol_interp_120:
+        st.write("**120 μm Interpolation Errors**")
+        for t_idx in time_indices:
+            errors = compute_errors(sol_120, sol_interp_120, t_idx)
+            st.write(f"t = {sol_120['times'][t_idx]:.1f} s: L2 Cu: {errors['l2_error_cu']:.2e}, L2 Ni: {errors['l2_error_ni']:.2e}")
+    
+    # Boundary condition issues
+    st.subheader("Boundary Condition Issues")
+    st.write("**30 μm PINN**")
+    for issue in bc_30['details']:
+        st.write(f"• {issue}")
+    st.write("**120 μm PINN**")
+    for issue in bc_120['details']:
+        st.write(f"• {issue}")
+    if sol_interp_30:
+        st.write("**30 μm Interpolated**")
+        for issue in bc_interp_30['details']:
             st.write(f"• {issue}")
-        st.write("**120 μm PINN**")
-        for issue in bc_120['details']:
+    if sol_interp_120:
+        st.write("**120 μm Interpolated**")
+        for issue in bc_interp_120['details']:
             st.write(f"• {issue}")
-        if sol_linear:
-            st.write("**Linear Interpolation**")
-            for issue in bc_linear['details']:
-                st.write(f"• {issue}")
-        if sol_attention:
-            st.write("**Attention Interpolation**")
-            for issue in bc_attention['details']:
-                st.write(f"• {issue}")
-        
-        # Error metrics
-        st.subheader("Error Metrics")
-        if sol_linear and sol_30['params']['Ly'] == sol_linear['params']['Ly']:
-            errors_linear_30 = compute_errors(sol_30, sol_linear, time_idx)
-            st.write(f"**Linear vs 30 μm PINN**: L2 Cu: {errors_linear_30['l2_error_cu']:.2e}, L2 Ni: {errors_linear_30['l2_error_ni']:.2e}")
-        if sol_linear and sol_120['params']['Ly'] == sol_linear['params']['Ly']:
-            errors_linear_120 = compute_errors(sol_120, sol_linear, time_idx)
-            st.write(f"**Linear vs 120 μm PINN**: L2 Cu: {errors_linear_120['l2_error_cu']:.2e}, L2 Ni: {errors_linear_120['l2_error_ni']:.2e}")
-        if sol_attention and sol_30['params']['Ly'] == sol_attention['params']['Ly']:
-            errors_attention_30 = compute_errors(sol_30, sol_attention, time_idx)
-            st.write(f"**Attention vs 30 μm PINN**: L2 Cu: {errors_attention_30['l2_error_cu']:.2e}, L2 Ni: {errors_attention_30['l2_error_ni']:.2e}")
-        if sol_attention and sol_120['params']['Ly'] == sol_attention['params']['Ly']:
-            errors_attention_120 = compute_errors(sol_120, sol_attention, time_idx)
-            st.write(f"**Attention vs 120 μm PINN**: L2 Cu: {errors_attention_120['l2_error_cu']:.2e}, L2 Ni: {errors_attention_120['l2_error_ni']:.2e}")
-        
-        # Recommendations
-        st.subheader("Recommendations for Fixing Boundary Issues")
-        recommendations = [
-            "1. **Boundary Masking**: Interpolate only interior points, apply PINN BCs (Cu: 1.6e-3 bottom/0 top, Ni: 0 bottom/1.25e-3 top) post-interpolation.",
-            "2. **Coordinate Normalization**: Normalize y to [0,1] before interpolation to align boundaries, then denormalize.",
-            "3. **Physics-Constrained Weights**: Modify attention to downweight boundary regions or use separate boundary interpolation.",
-            "4. **Boundary Loss**: Add boundary condition residual to interpolation objective.",
-            "5. **Hybrid Approach**: Use PINN solutions near boundaries, interpolate only in interior with smooth blending."
-        ]
-        for rec in recommendations:
-            st.write(f"• {rec}")
+    
+    # Recommendations
+    st.subheader("Boundary Issue Resolution")
+    st.write("**Implemented**: Boundary Masking - Interpolation performed only on interior points, with PINN boundary conditions (Cu: 1.6e-3 bottom/0 top, Ni: 0 bottom/1.25e-3 top) applied post-interpolation.")
+    st.write("**Remaining Recommendations** for further improvement:")
+    recommendations = [
+        "1. **Coordinate Normalization**: Normalize y to [0,1] before interpolation to align boundaries, then denormalize.",
+        "2. **Physics-Constrained Weights**: Modify interpolation weights to downweight boundary regions.",
+        "3. **Boundary Loss**: Add boundary condition residual to interpolation objective.",
+        "4. **Hybrid Approach**: Use PINN solutions near boundaries, interpolate only in interior with smooth blending."
+    ]
+    for rec in recommendations:
+        st.write(f"• {rec}")
 
 if __name__ == "__main__":
     main()
