@@ -10,7 +10,7 @@ from torch.optim.lr_scheduler import ReduceLROnPlateau
 import zipfile
 import io
 import matplotlib as mpl
-from scipy.interpolate import RegularGridInterpolator
+import logging
 
 # Configure Matplotlib for publication-quality figures
 mpl.rcParams['font.family'] = 'Arial'
@@ -26,6 +26,10 @@ mpl.rcParams['legend.frameon'] = True
 mpl.rcParams['legend.framealpha'] = 0.8
 mpl.rcParams['grid.linestyle'] = '--'
 mpl.rcParams['grid.alpha'] = 0.3
+
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 # Fixed boundary conditions
 C_CU_BOTTOM = 1.6e-3
@@ -126,9 +130,9 @@ def physics_loss(model, x, y, t):
 
 def boundary_loss_bottom(model):
     num = 200
-    x = torch.rand(num, 1) * model.Lx
-    y = torch.zeros(num, 1)
-    t = torch.rand(num, 1) * model.T_max
+    x = torch.rand(num, 1, requires_grad=True) * model.Lx
+    y = torch.zeros(num, 1, requires_grad=True)
+    t = torch.rand(num, 1, requires_grad=True) * model.T_max
     
     c_pred = model(x, y, t)
     return (torch.mean((c_pred[:, 0] - C_CU_TOP)**2) + 
@@ -136,9 +140,9 @@ def boundary_loss_bottom(model):
 
 def boundary_loss_top(model):
     num = 200
-    x = torch.rand(num, 1) * model.Lx
-    y = torch.full((num, 1), model.Ly)
-    t = torch.rand(num, 1) * model.T_max
+    x = torch.rand(num, 1, requires_grad=True) * model.Lx
+    y = torch.full((num, 1), model.Ly, requires_grad=True)
+    t = torch.rand(num, 1, requires_grad=True) * model.T_max
     
     c_pred = model(x, y, t)
     return (torch.mean((c_pred[:, 0] - C_CU_BOTTOM)**2) + 
@@ -151,54 +155,76 @@ def boundary_loss_sides(model):
     t_left = torch.rand(num, 1, requires_grad=True) * model.T_max
     c_left = model(x_left, y_left, t_left)
     
-    x_right = torch.full((num, 1), float(model.Lx), 
-                        dtype=torch.float32, requires_grad=True)
+    x_right = torch.full((num, 1), float(model.Lx), dtype=torch.float32, requires_grad=True)
     y_right = torch.rand(num, 1, requires_grad=True) * model.Ly
     t_right = torch.rand(num, 1, requires_grad=True) * model.T_max
     c_right = model(x_right, y_right, t_right)
     
-    x_left_norm = x_left / model.Lx
-    x_right_norm = x_right / model.Lx
+    # Compute gradients with respect to original x (not normalized)
+    try:
+        grad_cu_x_left = torch.autograd.grad(
+            c_left[:, 0], x_left,
+            grad_outputs=torch.ones_like(c_left[:, 0]),
+            create_graph=True, retain_graph=True
+        )[0]
+        
+        grad_ni_x_left = torch.autograd.grad(
+            c_left[:, 1], x_left,
+            grad_outputs=torch.ones_like(c_left[:, 1]),
+            create_graph=True, retain_graph=True
+        )[0]
+        
+        grad_cu_x_right = torch.autograd.grad(
+            c_right[:, 0], x_right,
+            grad_outputs=torch.ones_like(c_right[:, 0]),
+            create_graph=True, retain_graph=True
+        )[0]
+        
+        grad_ni_x_right = torch.autograd.grad(
+            c_right[:, 1], x_right,
+            grad_outputs=torch.ones_like(c_right[:, 1]),
+            create_graph=True, retain_graph=True
+        )[0]
+        
+        # Log gradient shapes and check for None
+        logger.info(f"grad_cu_x_left shape: {grad_cu_x_left.shape if grad_cu_x_left is not None else 'None'}")
+        logger.info(f"grad_ni_x_left shape: {grad_ni_x_left.shape if grad_ni_x_left is not None else 'None'}")
+        logger.info(f"grad_cu_x_right shape: {grad_cu_x_right.shape if grad_cu_x_right is not None else 'None'}")
+        logger.info(f"grad_ni_x_right shape: {grad_ni_x_right.shape if grad_ni_x_right is not None else 'None'}")
+        
+        # Handle None gradients
+        grad_cu_x_left = grad_cu_x_left if grad_cu_x_left is not None else torch.zeros_like(c_left[:, 0])
+        grad_ni_x_left = grad_ni_x_left if grad_ni_x_left is not None else torch.zeros_like(c_left[:, 1])
+        grad_cu_x_right = grad_cu_x_right if grad_cu_x_right is not None else torch.zeros_like(c_right[:, 0])
+        grad_ni_x_right = grad_ni_x_right if grad_ni_x_right is not None else torch.zeros_like(c_right[:, 1])
+        
+        # Scale gradients by Lx to account for normalization in forward pass
+        grad_cu_x_left = grad_cu_x_left * model.Lx
+        grad_ni_x_left = grad_ni_x_left * model.Lx
+        grad_cu_x_right = grad_cu_x_right * model.Lx
+        grad_ni_x_right = grad_ni_x_right * model.Lx
+        
+        # Clip gradients to prevent numerical instability
+        grad_cu_x_left = torch.clamp(grad_cu_x_left, -1.0, 1.0)
+        grad_ni_x_left = torch.clamp(grad_ni_x_left, -1.0, 1.0)
+        grad_cu_x_right = torch.clamp(grad_cu_x_right, -1.0, 1.0)
+        grad_ni_x_right = torch.clamp(grad_ni_x_right, -1.0, 1.0)
+        
+        return (torch.mean(grad_cu_x_left**2) + 
+                torch.mean(grad_ni_x_left**2) +
+                torch.mean(grad_cu_x_right**2) + 
+                torch.mean(grad_ni_x_right**2))
     
-    grad_cu_x_left = torch.autograd.grad(
-        c_left[:, 0], x_left_norm,
-        grad_outputs=torch.ones_like(c_left[:, 0]),
-        create_graph=True, retain_graph=True
-    )[0]
-    
-    grad_ni_x_left = torch.autograd.grad(
-        c_left[:, 1], x_left_norm,
-        grad_outputs=torch.ones_like(c_left[:, 1]),
-        create_graph=True, retain_graph=True
-    )[0]
-    
-    grad_cu_x_right = torch.autograd.grad(
-        c_right[:, 0], x_right_norm,
-        grad_outputs=torch.ones_like(c_right[:, 0]),
-        create_graph=True, retain_graph=True
-    )[0]
-    
-    grad_ni_x_right = torch.autograd.grad(
-        c_right[:, 1], x_right_norm,
-        grad_outputs=torch.ones_like(c_right[:, 1]),
-        create_graph=True, retain_graph=True
-    )[0]
-    
-    grad_cu_x_left = torch.clamp(grad_cu_x_left, -1.0, 1.0)
-    grad_ni_x_left = torch.clamp(grad_ni_x_left, -1.0, 1.0)
-    grad_cu_x_right = torch.clamp(grad_cu_x_right, -1.0, 1.0)
-    grad_ni_x_right = torch.clamp(grad_ni_x_right, -1.0, 1.0)
-    
-    return (torch.mean(grad_cu_x_left**2) + 
-            torch.mean(grad_ni_x_left**2) +
-            torch.mean(grad_cu_x_right**2) + 
-            torch.mean(grad_ni_x_right**2))
+    except RuntimeError as e:
+        logger.error(f"Gradient computation failed: {str(e)}")
+        st.error(f"Gradient computation failed: {str(e)}")
+        return torch.tensor(0.0, requires_grad=True)
 
 def initial_loss(model):
     num = 500
-    x = torch.rand(num, 1) * model.Lx
-    y = torch.rand(num, 1) * model.Ly
-    t = torch.zeros(num, 1)
+    x = torch.rand(num, 1, requires_grad=True) * model.Lx
+    y = torch.rand(num, 1, requires_grad=True) * model.Ly
+    t = torch.zeros(num, 1, requires_grad=True)
     return torch.mean(model(x, y, t)**2)
 
 def validate_boundary_conditions(solution, tolerance=1e-6):
@@ -299,27 +325,28 @@ def plot_2d_profiles(solution, time_idx, output_dir):
     Ly = solution['params']['Ly']
     t_val = solution['times'][time_idx]
     
-    fig, axes = plt.subplots(1, 2, figsize=(12, 5))
+    plt.figure(figsize=(12, 5))
+    plt.subplot(1, 2, 1)
+    im1 = plt.imshow(solution['c1_preds'][time_idx], origin='lower', 
+                     extent=[0, Lx, 0, Ly], cmap='viridis',
+                     vmin=0, vmax=C_CU_BOTTOM)
+    plt.title(f'Cu Concentration (t={t_val:.1f} s)')
+    plt.xlabel('x (μm)')
+    plt.ylabel('y (μm)')
+    plt.grid(True, alpha=0.3)
+    plt.colorbar(im1, label='Cu Conc. (mol/cc)', format='%.1e')
     
-    im1 = axes[0].imshow(solution['c1_preds'][time_idx], origin='lower', 
-                        extent=[0, Lx, 0, Ly], cmap='viridis',
-                        vmin=0, vmax=C_CU_BOTTOM)
-    axes[0].set_title(f'Cu Concentration (t={t_val:.1f} s)')
-    axes[0].set_xlabel('x (μm)')
-    axes[0].set_ylabel('y (μm)')
-    axes[0].grid(True, alpha=0.3)
-    fig.colorbar(im1, ax=axes[0], label='Cu Conc. (mol/cc)', format='%.1e')
+    plt.subplot(1, 2, 2)
+    im2 = plt.imshow(solution['c2_preds'][time_idx], origin='lower', 
+                     extent=[0, Lx, 0, Ly], cmap='magma',
+                     vmin=0, vmax=C_NI_TOP)
+    plt.title(f'Ni Concentration (t={t_val:.1f} s)')
+    plt.xlabel('x (μm)')
+    plt.ylabel('y (μm)')
+    plt.grid(True, alpha=0.3)
+    plt.colorbar(im2, label='Ni Conc. (mol/cc)', format='%.1e')
     
-    im2 = axes[1].imshow(solution['c2_preds'][time_idx], origin='lower', 
-                        extent=[0, Lx, 0, Ly], cmap='magma',
-                        vmin=0, vmax=C_NI_TOP)
-    axes[1].set_title(f'Ni Concentration (t={t_val:.1f} s)')
-    axes[1].set_xlabel('x (μm)')
-    axes[1].set_ylabel('y (μm)')
-    axes[1].grid(True, alpha=0.3)
-    fig.colorbar(im2, ax=axes[1], label='Ni Conc. (mol/cc)', format='%.1e')
-    
-    fig.suptitle(f'2D Profiles (Ly={Ly:.0f} μm)', fontsize=14)
+    plt.suptitle(f'2D Profiles (Ly={Ly:.0f} μm)', fontsize=14)
     plt.tight_layout(rect=[0, 0, 1, 0.95])
     
     os.makedirs(output_dir, exist_ok=True)
@@ -328,9 +355,69 @@ def plot_2d_profiles(solution, time_idx, output_dir):
     plt.close()
     return plot_filename
 
+def plot_side_gradients(solution, model, time_idx, output_dir):
+    """Plot gradients at side boundaries to validate zero-flux conditions"""
+    Lx = solution['params']['Lx']
+    Ly = solution['params']['Ly']
+    t_val = solution['times'][time_idx]
+    
+    y = torch.linspace(0, Ly, 50, requires_grad=True)
+    t = torch.full((50, 1), t_val, requires_grad=True)
+    
+    # Left boundary (x=0)
+    x_left = torch.zeros(50, 1, requires_grad=True)
+    c_left = model(x_left, y.reshape(-1, 1), t)
+    grad_cu_x_left = torch.autograd.grad(c_left[:, 0], x_left,
+                                        grad_outputs=torch.ones_like(c_left[:, 0]),
+                                        create_graph=True)[0].detach().numpy()
+    grad_ni_x_left = torch.autograd.grad(c_left[:, 1], x_left,
+                                        grad_outputs=torch.ones_like(c_left[:, 1]),
+                                        create_graph=True)[0].detach().numpy()
+    
+    # Right boundary (x=Lx)
+    x_right = torch.full((50, 1), Lx, requires_grad=True)
+    c_right = model(x_right, y.reshape(-1, 1), t)
+    grad_cu_x_right = torch.autograd.grad(c_right[:, 0], x_right,
+                                         grad_outputs=torch.ones_like(c_right[:, 0]),
+                                         create_graph=True)[0].detach().numpy()
+    grad_ni_x_right = torch.autograd.grad(c_right[:, 1], x_right,
+                                         grad_outputs=torch.ones_like(c_right[:, 1]),
+                                         create_graph=True)[0].detach().numpy()
+    
+    plt.figure(figsize=(12, 5))
+    plt.subplot(1, 2, 1)
+    plt.plot(y.numpy(), grad_cu_x_left, label='Cu (x=0)', color='blue')
+    plt.plot(y.numpy(), grad_ni_x_left, label='Ni (x=0)', color='red')
+    plt.axhline(0, color='black', linestyle='--', alpha=0.5)
+    plt.title(f'Gradients at Left Boundary (t={t_val:.1f} s)')
+    plt.xlabel('y (μm)')
+    plt.ylabel('∂c/∂x')
+    plt.grid(True, alpha=0.3)
+    plt.legend()
+    
+    plt.subplot(1, 2, 2)
+    plt.plot(y.numpy(), grad_cu_x_right, label='Cu (x=Lx)', color='blue')
+    plt.plot(y.numpy(), grad_ni_x_right, label='Ni (x=Lx)', color='red')
+    plt.axhline(0, color='black', linestyle='--', alpha=0.5)
+    plt.title(f'Gradients at Right Boundary (t={t_val:.1f} s)')
+    plt.xlabel('y (μm)')
+    plt.ylabel('∂c/∂x')
+    plt.grid(True, alpha=0.3)
+    plt.legend()
+    
+    plt.suptitle(f'Side Boundary Gradients (Ly={Ly:.0f} μm)', fontsize=14)
+    plt.tight_layout(rect=[0, 0, 1, 0.95])
+    
+    os.makedirs(output_dir, exist_ok=True)
+    plot_filename = os.path.join(output_dir, f'gradients_ly_{Ly:.1f}_t_{t_val:.1f}.png')
+    plt.savefig(plot_filename, dpi=300, bbox_inches='tight')
+    plt.close()
+    return plot_filename
+
 @st.cache_resource
 def train_pinn_cached(D11, D12, D21, D22, Lx, Ly, T_max, C_Cu, C_Ni, epochs, lr, output_dir):
     """Cached training function to prevent re-running during downloads"""
+    logger.info(f"Starting training with Ly={Ly}, C_Cu={C_Cu}, C_Ni={C_Ni}, epochs={epochs}, lr={lr}")
     model = DualScaledPINN(D11, D12, D21, D22, Lx, Ly, T_max, C_Cu, C_Ni)
     optimizer = optim.Adam(model.parameters(), lr=lr)
     scheduler = ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=200)
@@ -364,9 +451,14 @@ def train_pinn_cached(D11, D12, D21, D22, Lx, Ly, T_max, C_Cu, C_Ni, epochs, lr,
         loss = (10 * phys_loss + 100 * bot_loss + 100 * top_loss + 
                 100 * side_loss + 100 * init_loss)
         
-        loss.backward(retain_graph=True)
-        torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
-        optimizer.step()
+        try:
+            loss.backward(retain_graph=True)
+            torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+            optimizer.step()
+        except RuntimeError as e:
+            logger.error(f"Backward pass failed at epoch {epoch + 1}: {str(e)}")
+            st.error(f"Training failed at epoch {epoch + 1}: {str(e)}")
+            return None, None
         
         scheduler.step(loss)
         
@@ -382,13 +474,78 @@ def train_pinn_cached(D11, D12, D21, D22, Lx, Ly, T_max, C_Cu, C_Ni, epochs, lr,
             progress.progress((epoch + 1) / epochs)
             status_text.text(
                 f"Epoch {epoch + 1}/{epochs}, Total Loss: {loss.item():.6f}, "
-                f"Sides Loss: {100 * side_loss.item():.6f}"
+                f"Physics: {10 * phys_loss.item():.6f}, Bottom: {100 * bot_loss.item():.6f}, "
+                f"Top: {100 * top_loss.item():.6f}, Sides: {100 * side_loss.item():.6f}, "
+                f"Initial: {100 * init_loss.item():.6f}"
             )
     
     progress.progress(1.0)
     status_text.text("Training completed!")
+    logger.info("Training completed successfully")
     
     return model, loss_history
+
+@st.cache_resource
+def generate_and_save_solution(_model, times, param_set, output_dir):
+    """Generate and save solution, return file path and solution"""
+    if _model is None:
+        logger.error("Model is None, cannot generate solution")
+        return None, None
+    
+    X, Y, c1_preds, c2_preds, J1_preds, J2_preds = evaluate_model(
+        _model, times, param_set['Lx'], param_set['Ly'],
+        param_set['D11'], param_set['D12'], param_set['D21'], param_set['D22']
+    )
+    
+    solution = {
+        'params': param_set,
+        'X': X,
+        'Y': Y,
+        'c1_preds': c1_preds,
+        'c2_preds': c2_preds,
+        'J1_preds': J1_preds,
+        'J2_preds': J2_preds,
+        'times': times,
+        'loss_history': {},  # Will be updated later
+        'orientation_note': 'c1_preds and c2_preds are arrays of shape (50,50) where rows (i) correspond to y-coordinates and columns (j) correspond to x-coordinates due to transpose.'
+    }
+    
+    os.makedirs(output_dir, exist_ok=True)
+    solution_filename = os.path.join(output_dir, 
+        f"solution_ly_{param_set['Ly']:.1f}_ccu_{param_set['C_Cu']:.1e}_cni_{param_set['C_Ni']:.1e}_d11_{param_set['D11']:.6f}_d12_{param_set['D12']:.6f}_d21_{param_set['D21']:.6f}_d22_{param_set['D22']:.6f}_lx_{param_set['Lx']:.1f}_tmax_{param_set['t_max']:.1f}.pkl")
+    
+    try:
+        with open(solution_filename, 'wb') as f:
+            pickle.dump(solution, f)
+        logger.info(f"Saved solution to {solution_filename}")
+    except Exception as e:
+        logger.error(f"Failed to save solution: {str(e)}")
+        st.error(f"Failed to save solution: {str(e)}")
+        return None, None
+    
+    return solution_filename, solution
+
+@st.cache_resource
+def create_zip_file(_files, output_dir):
+    """Create a ZIP file containing all generated files, return file path"""
+    zip_buffer = io.BytesIO()
+    try:
+        with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zip_file:
+            for file_path in _files:
+                if os.path.exists(file_path):
+                    zip_file.write(file_path, os.path.basename(file_path))
+                else:
+                    logger.warning(f"File not found for zipping: {file_path}")
+    
+        zip_filename = os.path.join(output_dir, 'pinn_solutions.zip')
+        with open(zip_filename, 'wb') as f:
+            f.write(zip_buffer.getvalue())
+        logger.info(f"Created ZIP file: {zip_filename}")
+        return zip_filename
+    except Exception as e:
+        logger.error(f"Failed to create ZIP file: {str(e)}")
+        st.error(f"Failed to create ZIP file: {str(e)}")
+        return None
 
 def evaluate_model(model, times, Lx, Ly, D11, D12, D21, D22):
     x = torch.linspace(0, Lx, 50)
@@ -435,49 +592,6 @@ def evaluate_model(model, times, Lx, Ly, D11, D12, D21, D22):
     
     return X_np, Y_np, c1_preds, c2_preds, J1_preds, J2_preds
 
-@st.cache_resource
-def generate_and_save_solution(_model, times, param_set, output_dir):
-    """Generate and save solution, return file path"""
-    X, Y, c1_preds, c2_preds, J1_preds, J2_preds = evaluate_model(
-        _model, times, param_set['Lx'], param_set['Ly'],
-        param_set['D11'], param_set['D12'], param_set['D21'], param_set['D22']
-    )
-    
-    solution = {
-        'params': param_set,
-        'X': X,
-        'Y': Y,
-        'c1_preds': c1_preds,
-        'c2_preds': c2_preds,
-        'J1_preds': J1_preds,
-        'J2_preds': J2_preds,
-        'times': times,
-        'orientation_note': 'c1_preds and c2_preds are arrays of shape (50,50) where rows (i) correspond to y-coordinates and columns (j) correspond to x-coordinates due to transpose.'
-    }
-    
-    os.makedirs(output_dir, exist_ok=True)
-    solution_filename = os.path.join(output_dir, 
-        f"solution_ly_{param_set['Ly']:.1f}_ccu_{param_set['C_Cu']:.1e}_cni_{param_set['C_Ni']:.1e}_d11_{param_set['D11']:.6f}_d12_{param_set['D12']:.6f}_d21_{param_set['D21']:.6f}_d22_{param_set['D22']:.6f}_lx_{param_set['Lx']:.1f}_tmax_{param_set['t_max']:.1f}.pkl")
-    
-    with open(solution_filename, 'wb') as f:
-        pickle.dump(solution, f)
-    
-    return solution_filename, solution
-
-@st.cache_resource
-def create_zip_file(_files, output_dir):
-    """Create a ZIP file containing all generated files, return file path"""
-    zip_buffer = io.BytesIO()
-    with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zip_file:
-        for file_path in _files:
-            zip_file.write(file_path, os.path.basename(file_path))
-    
-    zip_filename = os.path.join(output_dir, 'pinn_solutions.zip')
-    with open(zip_filename, 'wb') as f:
-        f.write(zip_buffer.getvalue())
-    
-    return zip_filename
-
 def main():
     st.title("PINN Training and Visualization App")
     
@@ -496,7 +610,7 @@ def main():
     Lx = 60.0
     t_max = 200.0
     
-    output_dir = "/tmp/pinn_solutions"  # Suitable for Streamlit Cloud
+    output_dir = "/tmp/pinn_solutions"
     
     param_set = {
         'D11': D11, 'D12': D12, 'D21': D21, 'D22': D22,
@@ -513,12 +627,30 @@ def main():
                     D11, D12, D21, D22, Lx, Ly, t_max, C_Cu, C_Ni, epochs, lr, output_dir
                 )
             
+            if model is None or loss_history is None:
+                st.error("Training failed, model or loss history is None")
+                return
+            
             times = np.linspace(0, t_max, 50)
             solution_filename, solution = generate_and_save_solution(model, times, param_set, output_dir)
+            
+            if solution_filename is None or solution is None:
+                st.error("Failed to generate solution")
+                return
+            
+            solution['loss_history'] = loss_history
             loss_plot_filename = plot_losses(loss_history, Ly, C_Cu, C_Ni, output_dir)
             profile_plot_filename = plot_2d_profiles(solution, -1, output_dir)
+            gradient_plot_filename = plot_side_gradients(solution, model, -1, output_dir)
             
             st.success(f"Model trained successfully! Saved to {solution_filename}")
+            
+            # Display logs
+            with st.expander("Training Logs"):
+                log_file = os.path.join(output_dir, 'training.log')
+                if os.path.exists(log_file):
+                    with open(log_file, 'r') as f:
+                        st.text(f.read())
             
             # Display loss plot
             st.subheader("Training Loss")
@@ -537,46 +669,49 @@ def main():
             st.subheader("2D Concentration Profiles (Final Time Step)")
             st.image(profile_plot_filename)
             
+            # Display side boundary gradients
+            st.subheader("Side Boundary Gradients (Final Time Step)")
+            st.image(gradient_plot_filename)
+            
             # Download individual files
             st.subheader("Download Individual Files")
-            with open(solution_filename, 'rb') as f:
-                st.download_button(
-                    label="Download Solution (.pkl)",
-                    data=f,
-                    file_name=os.path.basename(solution_filename),
-                    mime="application/octet-stream"
-                )
+            files_to_download = [
+                (solution_filename, "Solution (.pkl)", "application/octet-stream"),
+                (loss_plot_filename, "Loss Plot (.png)", "image/png"),
+                (profile_plot_filename, "2D Profile Plot (.png)", "image/png"),
+                (gradient_plot_filename, "Gradient Plot (.png)", "image/png")
+            ]
             
-            with open(loss_plot_filename, 'rb') as f:
-                st.download_button(
-                    label="Download Loss Plot (.png)",
-                    data=f,
-                    file_name=os.path.basename(loss_plot_filename),
-                    mime="image/png"
-                )
-            
-            with open(profile_plot_filename, 'rb') as f:
-                st.download_button(
-                    label="Download 2D Profile Plot (.png)",
-                    data=f,
-                    file_name=os.path.basename(profile_plot_filename),
-                    mime="image/png"
-                )
+            for file_path, label, mime in files_to_download:
+                if os.path.exists(file_path):
+                    with open(file_path, 'rb') as f:
+                        st.download_button(
+                            label=label,
+                            data=f,
+                            file_name=os.path.basename(file_path),
+                            mime=mime
+                        )
+                else:
+                    st.warning(f"File not found: {file_path}")
             
             # Create and download ZIP file
             st.subheader("Download All Files as ZIP")
-            files_to_zip = [solution_filename, loss_plot_filename, profile_plot_filename]
+            files_to_zip = [solution_filename, loss_plot_filename, profile_plot_filename, gradient_plot_filename]
             zip_filename = create_zip_file(files_to_zip, output_dir)
-            with open(zip_filename, 'rb') as f:
-                st.download_button(
-                    label="Download All Files (.zip)",
-                    data=f,
-                    file_name="pinn_solutions.zip",
-                    mime="application/zip"
-                )
+            if zip_filename and os.path.exists(zip_filename):
+                with open(zip_filename, 'rb') as f:
+                    st.download_button(
+                        label="Download All Files (.zip)",
+                        data=f,
+                        file_name="pinn_solutions.zip",
+                        mime="application/zip"
+                    )
+            else:
+                st.error("Failed to create ZIP file")
         
         except Exception as e:
-            st.error(f"Training failed: {str(e)}")
+            logger.error(f"Training pipeline failed: {str(e)}")
+            st.error(f"Training pipeline failed: {str(e)}")
     
     # Instructions for Streamlit Cloud
     st.sidebar.markdown("""
@@ -585,6 +720,7 @@ def main():
     - Use the 'Train PINN Model' button to start training.
     - Download individual `.pkl` and `.png` files or all as a ZIP.
     - Cached training prevents crashes during downloads.
+    - Check logs for debugging information.
     """)
 
 if __name__ == "__main__":
