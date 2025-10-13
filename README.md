@@ -27,6 +27,12 @@ Optimized visualization of concentration fields
 Visualization of the training history 
 [![Visualization via Streamlit](https://static.streamlit.io/badges/streamlit_badge_black_white.svg)](https://diffusionpinntraining-history.streamlit.app/)
 
+
+Cloud based training
+[![meaningtowords](https://img.shields.io/badge/trainingCuNi-streamlit-red)](https://crossdiffusionpinn-ni-cu.streamlit.app/)
+
+
+
 ------------------------------------------------------------------
 
 *Ni UBM Bottom and Cu Pillar Top ( Cross Diffusion -Case I)*
