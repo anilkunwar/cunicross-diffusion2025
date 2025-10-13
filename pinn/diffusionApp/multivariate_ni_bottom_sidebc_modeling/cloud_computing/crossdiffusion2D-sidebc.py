@@ -491,7 +491,7 @@ def evaluate_model(_model, times, Lx, Ly, D11, D12, D21, D22):
     c1_preds, c2_preds, J1_preds, J2_preds = [], [], [], []
     for t_val in times:
         t = torch.full((X.numel(), 1), t_val, requires_grad=False)
-        c_pred = _model(X.reshape(-1,1), Y.reshape(-1,1 t)
+        c_pred = _model(X.reshape(-1,1), Y.reshape(-1,1), t)  # FIXED: Added missing comma
         try:
             c1 = c_pred[:,0].detach().numpy().reshape(50,50).T
             c2 = c_pred[:,1].detach().numpy().reshape(50,50).T
