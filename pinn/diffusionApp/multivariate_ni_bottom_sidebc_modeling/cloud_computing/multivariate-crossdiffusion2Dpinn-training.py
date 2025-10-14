@@ -709,8 +709,8 @@ def main():
 
     # Predefined boundary condition cases
     bc_cases = {
-        "Self-Diffusion Ni (Cu substrate)": {'phenomenon': 'self_diff_ni', 'C_Cu_top': 2.85e-3, 'C_Cu_bottom': 2.85e-3, 'C_Ni_top': 0.0, 'C_Ni_bottom': 0.0},
-        "Self-Diffusion Cu (Ni substrate)": {'phenomenon': 'self_diff_cu', 'C_Cu_top': 0.0, 'C_Cu_bottom': 0.0, 'C_Ni_top': 1.3e-4, 'C_Ni_bottom': 1.3e-4},
+        "Self-Diffusion Cu (Cu substrate)": {'phenomenon': 'self_diff_cu', 'C_Cu_top': 2.85e-3, 'C_Cu_bottom': 2.85e-3, 'C_Ni_top': 0.0, 'C_Ni_bottom': 0.0},
+        "Self-Diffusion Ni (Ni substrate)": {'phenomenon': 'self_diff_ni', 'C_Cu_top': 0.0, 'C_Cu_bottom': 0.0, 'C_Ni_top': 1.3e-4, 'C_Ni_bottom': 1.3e-4},
         "Cross-Diffusion (Original)": {'phenomenon': 'cross_diff', 'C_Cu_top': 2.85e-3, 'C_Cu_bottom': 0.0, 'C_Ni_top': 0.0, 'C_Ni_bottom': 1.3e-4}
     }
 
@@ -719,10 +719,10 @@ def main():
     Ly = st.selectbox("Domain Height (Ly, μm)", Ly_values, index=Ly_values.index(90))
     
     preset = st.selectbox("Select Preset Boundary Conditions", 
-                          ["Custom"] + list(bc_cases.keys()), 
+                          ["Custom (Discrete Steps)", "Custom (Free Input)"] + list(bc_cases.keys()), 
                           index=0)
     
-    if preset != "Custom" and preset in bc_cases:
+    if preset in bc_cases:
         selected_case = bc_cases[preset]
         st.session_state.C_Cu_top = selected_case['C_Cu_top']
         st.session_state.C_Cu_bottom = selected_case['C_Cu_bottom']
@@ -732,26 +732,51 @@ def main():
     else:
         phenomenon = "custom"
 
+    # Define discrete concentration steps
+    cu_steps = np.arange(0.0, 3.0e-3 + 0.3e-3, 0.3e-3).tolist()
+    ni_steps = np.arange(0.0, 1.5e-4 + 0.15e-4, 0.15e-4).tolist()
+
     st.write("**Boundary Conditions (mol/cc)**")
     col1, col2 = st.columns(2)
-    with col1:
-        C_Cu_top = st.number_input("Cu Top (y=Ly)", 
-                                   min_value=0.0, max_value=3.0e-3, 
-                                   value=st.session_state.C_Cu_top, 
-                                   step=0.1e-3, format="%.2e")
-        C_Cu_bottom = st.number_input("Cu Bottom (y=0)", 
-                                      min_value=0.0, max_value=3.0e-3, 
-                                      value=st.session_state.C_Cu_bottom, 
-                                      step=0.1e-3, format="%.2e")
-    with col2:
-        C_Ni_top = st.number_input("Ni Top (y=Ly)", 
-                                   min_value=0.0, max_value=1.5e-4, 
-                                   value=st.session_state.C_Ni_top, 
-                                   step=0.1e-4, format="%.2e")
-        C_Ni_bottom = st.number_input("Ni Bottom (y=0)", 
-                                      min_value=0.0, max_value=1.5e-4, 
-                                      value=st.session_state.C_Ni_bottom, 
-                                      step=0.1e-4, format="%.2e")
+    
+    if preset == "Custom (Discrete Steps)":
+        with col1:
+            C_Cu_top = st.selectbox("Cu Top (y=Ly)", 
+                                    cu_steps, 
+                                    index=cu_steps.index(st.session_state.C_Cu_top) if st.session_state.C_Cu_top in cu_steps else 0,
+                                    format_func=lambda x: f"{x:.2e}")
+            C_Cu_bottom = st.selectbox("Cu Bottom (y=0)", 
+                                       cu_steps, 
+                                       index=cu_steps.index(st.session_state.C_Cu_bottom) if st.session_state.C_Cu_bottom in cu_steps else 0,
+                                       format_func=lambda x: f"{x:.2e}")
+        with col2:
+            C_Ni_top = st.selectbox("Ni Top (y=Ly)", 
+                                    ni_steps, 
+                                    index=ni_steps.index(st.session_state.C_Ni_top) if st.session_state.C_Ni_top in ni_steps else 0,
+                                    format_func=lambda x: f"{x:.2e}")
+            C_Ni_bottom = st.selectbox("Ni Bottom (y=0)", 
+                                       ni_steps, 
+                                       index=ni_steps.index(st.session_state.C_Ni_bottom) if st.session_state.C_Ni_bottom in ni_steps else 0,
+                                       format_func=lambda x: f"{x:.2e}")
+    else:
+        with col1:
+            C_Cu_top = st.number_input("Cu Top (y=Ly)", 
+                                       min_value=0.0, max_value=3.0e-3, 
+                                       value=st.session_state.C_Cu_top, 
+                                       step=0.1e-3, format="%.2e")
+            C_Cu_bottom = st.number_input("Cu Bottom (y=0)", 
+                                          min_value=0.0, max_value=3.0e-3, 
+                                          value=st.session_state.C_Cu_bottom, 
+                                          step=0.1e-3, format="%.2e")
+        with col2:
+            C_Ni_top = st.number_input("Ni Top (y=Ly)", 
+                                       min_value=0.0, max_value=1.5e-4, 
+                                       value=st.session_state.C_Ni_top, 
+                                       step=0.1e-4, format="%.2e")
+            C_Ni_bottom = st.number_input("Ni Bottom (y=0)", 
+                                          min_value=0.0, max_value=1.5e-4, 
+                                          value=st.session_state.C_Ni_bottom, 
+                                          step=0.1e-4, format="%.2e")
     
     # Update session state
     st.session_state.C_Cu_top = C_Cu_top
