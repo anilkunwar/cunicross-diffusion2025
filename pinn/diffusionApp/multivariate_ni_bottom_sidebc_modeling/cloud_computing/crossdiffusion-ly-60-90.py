@@ -798,56 +798,67 @@ def main():
     # Create hash key for caching
     current_hash = get_cache_key(Ly, C_Cu, C_Ni, epochs, lr)
     
-    # Check if cached model and results exist
-    cached_model_result = train_model._cache.get(current_hash)
-    has_cached_model = cached_model_result is not None and all(cached_model_result)
-    cached_solution_result = train_and_generate_solution._cache.get(current_hash)
-    has_cached_solution = cached_solution_result is not None and all(cached_solution_result)
-    
-    # Only train when the button is clicked
-    if st.button("Train PINN Model"):
-        try:
-            with st.spinner("Training model (this may take a few minutes)..."):
-                # Train model
-                model, loss_history = train_model(
-                    D11, D12, D21, D22, Lx, Ly, t_max, C_Cu, C_Ni, epochs, lr, OUTPUT_DIR, current_hash
-                )
-                
-                if model is None or loss_history is None:
-                    st.error("Model training failed!")
-                    return
-                
-                # Generate solution and files
-                solution, file_info = train_and_generate_solution(
-                    model, loss_history, D11, D12, D21, D22, Lx, Ly, t_max, C_Cu, C_Ni, epochs, current_hash
-                )
-                
-                if solution is None:
-                    st.error("Solution generation failed!")
-                    return
-                
-                store_solution_in_session(current_hash, solution, file_info, model)
-                st.success("Model trained and results generated successfully!")
-        
-        except Exception as e:
-            logger.error(f"Training pipeline failed: {str(e)}")
-            st.error(f"Training pipeline failed: {str(e)}")
-            return
-    
-    # Display cached results or prompt to train
+    # Check if results are already in session state
     if st.session_state.training_complete and st.session_state.current_hash == current_hash:
         solution = st.session_state.solution_data
         file_info = st.session_state.file_data
         st.info("Displaying cached results for current parameters.")
-    elif has_cached_model and has_cached_solution:
-        # Load cached model and results into session state
-        model, loss_history = cached_model_result
-        solution, file_info = cached_solution_result
-        store_solution_in_session(current_hash, solution, file_info, model)
-        st.info("Loaded cached results for current parameters.")
     else:
-        st.warning("No results available for current parameters. Click 'Train PINN Model' to generate results.")
-        return
+        # Check for cached solution results
+        cached_solution_result = train_and_generate_solution._cache.get(current_hash)
+        has_cached_solution = cached_solution_result is not None and all(cached_solution_result)
+        
+        if has_cached_solution:
+            # Load cached solution into session state
+            solution, file_info = cached_solution_result
+            # Re-run train_model to get the model and loss history
+            try:
+                model, loss_history = train_model(
+                    D11, D12, D21, D22, Lx, Ly, t_max, C_Cu, C_Ni, epochs, lr, OUTPUT_DIR, current_hash
+                )
+                if model is None or loss_history is None:
+                    st.error("Failed to load cached model!")
+                    return
+                store_solution_in_session(current_hash, solution, file_info, model)
+                st.info("Loaded cached results for current parameters.")
+            except Exception as e:
+                logger.error(f"Failed to load cached model: {str(e)}")
+                st.error(f"Failed to load cached model: {str(e)}")
+                return
+        else:
+            st.warning("No results available for current parameters. Click 'Train PINN Model' to generate results.")
+            
+            # Only train when the button is clicked
+            if st.button("Train PINN Model"):
+                try:
+                    with st.spinner("Training model (this may take a few minutes)..."):
+                        # Train model
+                        model, loss_history = train_model(
+                            D11, D12, D21, D22, Lx, Ly, t_max, C_Cu, C_Ni, epochs, lr, OUTPUT_DIR, current_hash
+                        )
+                        
+                        if model is None or loss_history is None:
+                            st.error("Model training failed!")
+                            return
+                        
+                        # Generate solution and files
+                        solution, file_info = train_and_generate_solution(
+                            model, loss_history, D11, D12, D21, D22, Lx, Ly, t_max, C_Cu, C_Ni, epochs, current_hash
+                        )
+                        
+                        if solution is None:
+                            st.error("Solution generation failed!")
+                            return
+                        
+                        store_solution_in_session(current_hash, solution, file_info, model)
+                        st.success("Model trained and results generated successfully!")
+                
+                except Exception as e:
+                    logger.error(f"Training pipeline failed: {str(e)}")
+                    st.error(f"Training pipeline failed: {str(e)}")
+                    return
+            else:
+                return
     
     # Display results
     with st.expander("Training Logs", expanded=False):
