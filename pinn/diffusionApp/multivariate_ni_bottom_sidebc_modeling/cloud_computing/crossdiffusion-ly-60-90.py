@@ -495,8 +495,8 @@ def evaluate_model(_model, times, Lx, Ly, D11, D12, D21, D22, _hash):
         t = torch.full((X.numel(), 1), t_val, requires_grad=False)
         c_pred = _model(X.reshape(-1,1), Y.reshape(-1,1), t)
         try:
-            c1 = c_pred[:,0].detach().numpy().reshape(50,50).T
-            c2 = c_pred[:,1].detach().numpy().reshape(50,50).T
+            c1 = c_pred[:,0].detach().numpy().reshape(50,50).T  # [y,x] for matplotlib
+            c2 = c_pred[:,1].detach().numpy().reshape(50,50).T  # [y,x] for matplotlib
         except RuntimeError as e:
             logger.error(f"Failed to convert concentration predictions to NumPy: {str(e)}")
             raise e
@@ -566,7 +566,7 @@ def generate_and_save_solution(_model, times, param_set, output_dir, _hash):
         'J2_preds': J2_preds,
         'times': times,
         'loss_history': {},
-        'orientation_note': 'c1_preds and c2_preds are arrays of shape (50,50) where rows (i) correspond to y-coordinates and columns (j) correspond to x-coordinates due to transpose.'
+        'orientation_note': 'c1_preds and c2_preds are arrays of shape (50,50) where rows (i) correspond to y-coordinates and columns (j) correspond to x-coordinates due to transpose for matplotlib.'
     }
     
     solution_filename = os.path.join(output_dir, 
@@ -584,38 +584,41 @@ def generate_and_save_solution(_model, times, param_set, output_dir, _hash):
     return solution_filename, solution
 
 @st.cache_resource
-def generate_vts_files(solution, output_dir, _hash):
+def generate_consistent_vts_files(solution, output_dir, _hash):
     os.makedirs(output_dir, exist_ok=True)
     Lx = solution['params']['Lx']
     Ly = solution['params']['Ly']
     times = solution['times']
-    c1_preds = solution['c1_preds']
-    c2_preds = solution['c2_preds']
     
     vts_files = []
-    nx, ny = 50, 50  # Grid dimensions
+    nx, ny = 50, 50
+    
     for t_idx, t_val in enumerate(times):
+        # Reconstruct [x,y] ordering from the stored [y,x] data
+        c1_xy = solution['c1_preds'][t_idx].T  # Transpose back to [x,y]
+        c2_xy = solution['c2_preds'][t_idx].T  # Transpose back to [x,y]
+        
         # Create structured grid
         x = np.linspace(0, Lx, nx)
         y = np.linspace(0, Ly, ny)
-        z = np.zeros((nx, ny))  # 2D grid, z=0
+        z = np.zeros((nx, ny))
         grid = pv.StructuredGrid()
-        X, Y = np.meshgrid(x, y, indexing='ij')
+        X, Y = np.meshgrid(x, y, indexing='ij')  # 'ij' indexing for [x,y]
         points = np.stack([X.ravel(), Y.ravel(), z.ravel()], axis=1)
         grid.points = points
         grid.dimensions = (nx, ny, 1)
         
-        # Add concentration data
-        grid.point_data['Cu_Concentration'] = c1_preds[t_idx].ravel()
-        grid.point_data['Ni_Concentration'] = c2_preds[t_idx].ravel()
+        # Add concentration data in [x,y] order
+        grid.point_data['Cu_Concentration'] = c1_xy.ravel()
+        grid.point_data['Ni_Concentration'] = c2_xy.ravel()
         
-        # Save VTS file
         vts_filename = os.path.join(output_dir, 
             f'concentration_ly_{solution["params"]["Ly"]:.1f}_t_{t_val:.1f}_ccu_{solution["params"]["C_Cu"]:.1e}_cni_{solution["params"]["C_Ni"]:.1e}.vts')
+        
         try:
             grid.save(vts_filename)
             vts_files.append(vts_filename)
-            logger.info(f"Saved VTS file to {vts_filename}")
+            logger.info(f"Saved consistent VTS file to {vts_filename}")
         except Exception as e:
             logger.error(f"Failed to save VTS file for t={t_val:.1f}: {str(e)}")
             st.error(f"Failed to save VTS file for t={t_val:.1f}: {str(e)}")
@@ -714,7 +717,7 @@ def main():
             loss_plot_filename = plot_losses(loss_history, Ly, C_Cu, C_Ni, output_dir, hash_key)
             profile_plot_filename = plot_2d_profiles(solution, -1, output_dir, hash_key)
             gradient_plot_filename = plot_side_gradients(model, solution, -1, output_dir, hash_key)
-            vts_files = generate_vts_files(solution, output_dir, hash_key)
+            vts_files = generate_consistent_vts_files(solution, output_dir, hash_key)
             
             st.success(f"Model trained successfully! Saved to {solution_filename}")
             
@@ -802,6 +805,7 @@ def main():
     - All operations are cached to prevent crashes and redundant file generation.
     - Check logs for debugging information.
     - VTS files can be visualized in ParaView.
+    - Visualizations are consistent: x (horizontal), y (vertical) in both Matplotlib and ParaView.
     """)
 
 if __name__ == "__main__":
