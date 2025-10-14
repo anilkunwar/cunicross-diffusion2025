@@ -64,7 +64,9 @@ with training datasets for 0 BCs (Transformer-inspired Attention): [![meaningtow
    pinn solutions with experimental diffusion lengths Ly
  [![meaningtowords](https://img.shields.io/badge/experimentalLy-streamlit-red)](https://crossdiffusion-ly-60-90.streamlit.app/) 
 
+50 micrometers
 
+[![meaningtowords](https://img.shields.io/badge/experimentalLy50-streamlit-red)](https://cross-diffusion2dpinn-shorter-joint.streamlit.app/) 
 
 
 
