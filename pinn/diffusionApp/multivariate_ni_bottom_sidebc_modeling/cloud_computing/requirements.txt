@@ -4,3 +4,4 @@ scipy
 torch
 matplotlib
 seaborn
+pyvista
