@@ -342,7 +342,7 @@ def plot_2d_profiles(solution, time_idx, output_dir, _hash):
     return plot_filename
 
 @st.cache_resource
-def plot_side_gradients(solution, model, time_idx, output_dir, _hash):
+def plot_side_gradients(_model, solution, time_idx, output_dir, _hash):
     Lx = solution['params']['Lx']
     Ly = solution['params']['Ly']
     t_val = solution['times'][time_idx]
@@ -351,7 +351,7 @@ def plot_side_gradients(solution, model, time_idx, output_dir, _hash):
     t = torch.full((50, 1), t_val, requires_grad=True)
     
     x_left = torch.zeros(50, 1, requires_grad=True)
-    c_left = model(x_left, y.reshape(-1, 1), t)
+    c_left = _model(x_left, y.reshape(-1, 1), t)
     try:
         grad_cu_x_left = torch.autograd.grad(c_left[:, 0], x_left,
                                             grad_outputs=torch.ones_like(c_left[:, 0]),
@@ -367,7 +367,7 @@ def plot_side_gradients(solution, model, time_idx, output_dir, _hash):
         grad_ni_x_left_np = np.zeros(50)
     
     x_right = torch.full((50, 1), Lx, requires_grad=True)
-    c_right = model(x_right, y.reshape(-1, 1), t)
+    c_right = _model(x_right, y.reshape(-1, 1), t)
     try:
         grad_cu_x_right = torch.autograd.grad(c_right[:, 0], x_right,
                                              grad_outputs=torch.ones_like(c_right[:, 0]),
@@ -713,7 +713,7 @@ def main():
             solution['loss_history'] = loss_history
             loss_plot_filename = plot_losses(loss_history, Ly, C_Cu, C_Ni, output_dir, hash_key)
             profile_plot_filename = plot_2d_profiles(solution, -1, output_dir, hash_key)
-            gradient_plot_filename = plot_side_gradients(solution, model, -1, output_dir, hash_key)
+            gradient_plot_filename = plot_side_gradients(model, solution, -1, output_dir, hash_key)
             vts_files = generate_vts_files(solution, output_dir, hash_key)
             
             st.success(f"Model trained successfully! Saved to {solution_filename}")
