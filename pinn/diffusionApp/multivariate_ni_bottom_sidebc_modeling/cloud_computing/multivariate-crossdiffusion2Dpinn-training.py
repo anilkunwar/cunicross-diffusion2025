@@ -598,7 +598,7 @@ def generate_vtu_time_series(solution, output_dir, _hash):
     
     return vtu_filename
 
-@st.cache_data(ttl=3600, show2_spinner=False)
+@st.cache_data(ttl=3600, show_spinner=False)
 def create_zip_file(_files, output_dir, _hash, phenomenon, C_Cu_top, C_Cu_bottom, C_Ni_top, C_Ni_bottom, Ly):
     os.makedirs(output_dir, exist_ok=True)
     zip_buffer = io.BytesIO()
