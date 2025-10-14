@@ -41,8 +41,6 @@ lr = 1e-3
 
 # Varying parameters
 Ly_values = list(range(30, 121, 10))  # 30 to 120 μm, step 10
-C_Cu_top_values = [0.0, 0.5e-3, 1.0e-3, 1.5e-3, 2.0e-3, 2.5e-3, 2.85e-3, 3.0e-3]
-C_Ni_bottom_values = [0.0, 0.5e-4, 1.0e-4, 1.3e-4, 1.5e-4]
 
 # Set random seeds
 torch.manual_seed(42)
@@ -142,20 +140,22 @@ def physics_loss(model, x, y, t):
 
 def boundary_loss_bottom(model, C_Cu_bottom, C_Ni_bottom):
     num = 200
-    x = torch.rand(num, 1, requires_grad=True) * model.Lx
-    y = torch.zeros(num, 1, requires_grad=True)
-    t = torch.rand(num, 1, requires_grad=True) * model.T_max
-    
+    x = torch.rand(num, 1, dtype=torch.float32, requires_grad=True) * model.Lx
+    y = torch.zeros(num, 1, dtype=torch.float32, requires_grad=True)
+    t = torch.rand(num, 1, dtype=torch.float32, requires_grad=True) * model.T_max
+    C_Cu_bottom = torch.tensor(C_Cu_bottom, dtype=torch.float32, device=x.device)
+    C_Ni_bottom = torch.tensor(C_Ni_bottom, dtype=torch.float32, device=x.device)
     c_pred = model(x, y, t)
     return (torch.mean((c_pred[:, 0] - C_Cu_bottom)**2) + 
             torch.mean((c_pred[:, 1] - C_Ni_bottom)**2))
 
 def boundary_loss_top(model, C_Cu_top, C_Ni_top):
     num = 200
-    x = torch.rand(num, 1, requires_grad=True) * model.Lx
-    y = torch.full((num, 1), model.Ly, requires_grad=True)
-    t = torch.rand(num, 1, requires_grad=True) * model.T_max
-    
+    x = torch.rand(num, 1, dtype=torch.float32, requires_grad=True) * model.Lx
+    y = torch.full((num, 1), model.Ly, dtype=torch.float32, requires_grad=True)
+    t = torch.rand(num, 1, dtype=torch.float32, requires_grad=True) * model.T_max
+    C_Cu_top = torch.tensor(C_Cu_top, dtype=torch.float32, device=x.device)
+    C_Ni_top = torch.tensor(C_Ni_top, dtype=torch.float32, device=x.device)
     c_pred = model(x, y, t)
     return (torch.mean((c_pred[:, 0] - C_Cu_top)**2) + 
             torch.mean((c_pred[:, 1] - C_Ni_top)**2))
@@ -163,13 +163,13 @@ def boundary_loss_top(model, C_Cu_top, C_Ni_top):
 def boundary_loss_sides(model):
     num = 200
     x_left = torch.zeros(num, 1, dtype=torch.float32, requires_grad=True)
-    y_left = torch.rand(num, 1, requires_grad=True) * model.Ly
-    t_left = torch.rand(num, 1, requires_grad=True) * model.T_max
+    y_left = torch.rand(num, 1, dtype=torch.float32, requires_grad=True) * model.Ly
+    t_left = torch.rand(num, 1, dtype=torch.float32, requires_grad=True) * model.T_max
     c_left = model(x_left, y_left, t_left)
     
-    x_right = torch.full((num, 1), float(model.Lx), dtype=torch.float32, requires_grad=True)
-    y_right = torch.rand(num, 1, requires_grad=True) * model.Ly
-    t_right = torch.rand(num, 1, requires_grad=True) * model.T_max
+    x_right = torch.full((num, 1), model.Lx, dtype=torch.float32, requires_grad=True)
+    y_right = torch.rand(num, 1, dtype=torch.float32, requires_grad=True) * model.Ly
+    t_right = torch.rand(num, 1, dtype=torch.float32, requires_grad=True) * model.T_max
     c_right = model(x_right, y_right, t_right)
     
     try:
@@ -210,13 +210,13 @@ def boundary_loss_sides(model):
     except RuntimeError as e:
         logger.error(f"Gradient computation failed in boundary_loss_sides: {str(e)}")
         st.error(f"Gradient computation failed: {str(e)}")
-        return torch.tensor(1e-6, requires_grad=True)
+        return torch.tensor(1e-6, dtype=torch.float32, requires_grad=True)
 
 def initial_loss(model):
     num = 500
-    x = torch.rand(num, 1, requires_grad=True) * model.Lx
-    y = torch.rand(num, 1, requires_grad=True) * model.Ly
-    t = torch.zeros(num, 1, requires_grad=True)
+    x = torch.rand(num, 1, dtype=torch.float32, requires_grad=True) * model.Lx
+    y = torch.rand(num, 1, dtype=torch.float32, requires_grad=True) * model.Ly
+    t = torch.zeros(num, 1, dtype=torch.float32, requires_grad=True)
     return torch.mean(model(x, y, t)**2)
 
 def validate_boundary_conditions(solution, C_Cu_top, C_Cu_bottom, C_Ni_top, C_Ni_bottom, tolerance=1e-6):
@@ -279,7 +279,7 @@ def validate_boundary_conditions(solution, C_Cu_top, C_Cu_bottom, C_Ni_top, C_Ni
     return results
 
 @st.cache_data(ttl=3600, show_spinner=False)
-def plot_losses(loss_history, output_dir, _hash):
+def plot_losses(loss_history, output_dir, Ly, phenomenon, C_Cu_top, C_Cu_bottom, C_Ni_top, C_Ni_bottom, _hash):
     epochs = np.array(loss_history['epochs'])
     total_loss = np.array(loss_history['total'])
     physics_loss = np.array(loss_history['physics'])
@@ -299,27 +299,28 @@ def plot_losses(loss_history, output_dir, _hash):
     plt.yscale('log')
     plt.xlabel('Epoch')
     plt.ylabel('Loss')
-    plt.title(f'Training Loss for Ly = {Ly:.1f} μm')
+    plt.title(f'Training Loss for Ly = {Ly:.1f} μm, {phenomenon}')
     plt.grid(True, which="both", ls="--", alpha=0.7)
     plt.legend(loc='upper right')
     plt.tight_layout()
     
     os.makedirs(output_dir, exist_ok=True)
-    plot_filename = os.path.join(output_dir, f'loss_plot_ly_{Ly:.1f}.png')
+    plot_filename = os.path.join(output_dir, 
+        f'loss_plot_{phenomenon}_ly_{Ly:.1f}_ccutop_{C_Cu_top:.2e}_ccubot_{C_Cu_bottom:.2e}_nitop_{C_Ni_top:.2e}_nibot_{C_Ni_bottom:.2e}.png')
     plt.savefig(plot_filename, dpi=300, bbox_inches='tight')
     plt.close()
     logger.info(f"Saved loss plot to {plot_filename}")
     return plot_filename
 
 @st.cache_data(ttl=3600, show_spinner=False)
-def plot_2d_profiles(solution, time_idx, output_dir, _hash):
+def plot_2d_profiles(solution, time_idx, output_dir, Ly, phenomenon, C_Cu_top, C_Cu_bottom, C_Ni_top, C_Ni_bottom, _hash):
     t_val = solution['times'][time_idx]
     
     plt.figure(figsize=(12, 5))
     plt.subplot(1, 2, 1)
     im1 = plt.imshow(solution['c1_preds'][time_idx], origin='lower', 
                      extent=[0, Lx, 0, Ly], cmap='viridis',
-                     vmin=0, vmax=max(C_Cu_top_values))
+                     vmin=0, vmax=3.0e-3)
     plt.title(f'Cu Concentration (t={t_val:.1f} s)')
     plt.xlabel('x (μm)')
     plt.ylabel('y (μm)')
@@ -329,18 +330,19 @@ def plot_2d_profiles(solution, time_idx, output_dir, _hash):
     plt.subplot(1, 2, 2)
     im2 = plt.imshow(solution['c2_preds'][time_idx], origin='lower', 
                      extent=[0, Lx, 0, Ly], cmap='magma',
-                     vmin=0, vmax=max(C_Ni_bottom_values))
+                     vmin=0, vmax=1.5e-4)
     plt.title(f'Ni Concentration (t={t_val:.1f} s)')
     plt.xlabel('x (μm)')
     plt.ylabel('y (μm)')
     plt.grid(True, alpha=0.3)
     plt.colorbar(im2, label='Ni Conc. (mol/cc)', format='%.1e')
     
-    plt.suptitle(f'2D Profiles (Ly={Ly:.0f} μm)', fontsize=14)
+    plt.suptitle(f'2D Profiles (Ly={Ly:.0f} μm, {phenomenon})', fontsize=14)
     plt.tight_layout(rect=[0, 0, 1, 0.95])
     
     os.makedirs(output_dir, exist_ok=True)
-    plot_filename = os.path.join(output_dir, f'profile_ly_{Ly:.1f}_t_{t_val:.1f}.png')
+    plot_filename = os.path.join(output_dir, 
+        f'profile_{phenomenon}_ly_{Ly:.1f}_t_{t_val:.1f}_ccutop_{C_Cu_top:.2e}_ccubot_{C_Cu_bottom:.2e}_nitop_{C_Ni_top:.2e}_nibot_{C_Ni_bottom:.2e}.png')
     plt.savefig(plot_filename, dpi=300, bbox_inches='tight')
     plt.close()
     logger.info(f"Saved profile plot to {plot_filename}")
@@ -353,9 +355,9 @@ def train_model(D11, D12, D21, D22, Lx, Ly, T_max, C_Cu_top, C_Ni_top, C_Cu_bott
     model = DualScaledPINN(D11, D12, D21, D22, Lx, Ly, T_max, C_Cu_top, C_Ni_top)
     optimizer = optim.Adam(model.parameters(), lr=lr)
     
-    x_pde = torch.rand(1000, 1, requires_grad=True) * Lx
-    y_pde = torch.rand(1000, 1, requires_grad=True) * Ly
-    t_pde = torch.rand(1000, 1, requires_grad=True) * T_max
+    x_pde = torch.rand(1000, 1, dtype=torch.float32, requires_grad=True) * Lx
+    y_pde = torch.rand(1000, 1, dtype=torch.float32, requires_grad=True) * Ly
+    t_pde = torch.rand(1000, 1, dtype=torch.float32, requires_grad=True) * T_max
     
     loss_history = {
         'epochs': [],
@@ -416,13 +418,13 @@ def train_model(D11, D12, D21, D22, Lx, Ly, T_max, C_Cu_top, C_Ni_top, C_Cu_bott
 
 @st.cache_data(ttl=3600, show_spinner=False)
 def evaluate_model(_model, times, Lx, Ly, D11, D12, D21, D22, _hash):
-    x = torch.linspace(0, Lx, 50, requires_grad=False)
-    y = torch.linspace(0, Ly, 50, requires_grad=False)
+    x = torch.linspace(0, Lx, 50, dtype=torch.float32, requires_grad=False)
+    y = torch.linspace(0, Ly, 50, dtype=torch.float32, requires_grad=False)
     X, Y = torch.meshgrid(x, y, indexing='ij')
     
     c1_preds, c2_preds = [], []
     for t_val in times:
-        t = torch.full((X.numel(), 1), t_val, requires_grad=False)
+        t = torch.full((X.numel(), 1), t_val, dtype=torch.float32, requires_grad=False)
         c_pred = _model(X.reshape(-1,1), Y.reshape(-1,1), t)
         try:
             c1 = c_pred[:,0].detach().numpy().reshape(50,50).T  # [y,x] for matplotlib
@@ -492,7 +494,7 @@ def generate_and_save_solution(_model, times, param_set, output_dir, _hash):
     return solution_filename, model_filename, solution
 
 @st.cache_data(ttl=3600, show_spinner=False)
-def generate_vts_time_series(solution, output_dir, _hash):
+def generate_vts_time_series(solution, output_dir, Ly, phenomenon, C_Cu_top, C_Cu_bottom, C_Ni_top, C_Ni_bottom, _hash):
     os.makedirs(output_dir, exist_ok=True)
     Lx = solution['params']['Lx']
     Ly = solution['params']['Ly']
@@ -518,7 +520,7 @@ def generate_vts_time_series(solution, output_dir, _hash):
         grid.point_data['Ni_Concentration'] = c2_xy.ravel()
         
         vts_filename = os.path.join(output_dir, 
-            f'concentration_ly_{Ly:.1f}_t_{t_val:.1f}.vts')
+            f'concentration_{phenomenon}_ly_{Ly:.1f}_t_{t_val:.1f}_ccutop_{C_Cu_top:.2e}_ccubot_{C_Cu_bottom:.2e}_nitop_{C_Ni_top:.2e}_nibot_{C_Ni_bottom:.2e}.vts')
         
         try:
             grid.save(vts_filename)
@@ -529,7 +531,7 @@ def generate_vts_time_series(solution, output_dir, _hash):
             st.error(f"Failed to save VTS file for t={t_val:.1f}: {str(e)}")
     
     pvd_filename = os.path.join(output_dir, 
-        f'concentration_time_series_ly_{Ly:.1f}.pvd')
+        f'concentration_time_series_{phenomenon}_ly_{Ly:.1f}_ccutop_{C_Cu_top:.2e}_ccubot_{C_Cu_bottom:.2e}_nitop_{C_Ni_top:.2e}_nibot_{C_Ni_bottom:.2e}.pvd')
     
     try:
         pvd_content = ['<?xml version="1.0"?>']
@@ -555,7 +557,7 @@ def generate_vts_time_series(solution, output_dir, _hash):
     return vts_files, pvd_filename
 
 @st.cache_data(ttl=3600, show_spinner=False)
-def generate_vtu_time_series(solution, output_dir, _hash):
+def generate_vtu_time_series(solution, output_dir, Ly, phenomenon, C_Cu_top, C_Cu_bottom, C_Ni_top, C_Ni_bottom, _hash):
     os.makedirs(output_dir, exist_ok=True)
     Lx = solution['params']['Lx']
     Ly = solution['params']['Ly']
@@ -586,7 +588,7 @@ def generate_vtu_time_series(solution, output_dir, _hash):
         grid.point_data[f'Ni_Concentration_t{t_val:.1f}'] = c2_xy.ravel()
     
     vtu_filename = os.path.join(output_dir, 
-        f'concentration_time_series_ly_{Ly:.1f}.vtu')
+        f'concentration_time_series_{phenomenon}_ly_{Ly:.1f}_ccutop_{C_Cu_top:.2e}_ccubot_{C_Cu_bottom:.2e}_nitop_{C_Ni_top:.2e}_nibot_{C_Ni_bottom:.2e}.vtu')
     
     try:
         grid.save(vtu_filename)
@@ -646,10 +648,22 @@ def train_and_generate_solution(_model, loss_history, output_dir, _hash_key, par
     
     solution['loss_history'] = loss_history
     
-    loss_plot_filename = plot_losses(loss_history, output_dir, _hash_key)
-    profile_plot_filename = plot_2d_profiles(solution, -1, output_dir, _hash_key)
-    vts_files, pvd_file = generate_vts_time_series(solution, output_dir, _hash_key)
-    vtu_file = generate_vtu_time_series(solution, output_dir, _hash_key)
+    loss_plot_filename = plot_losses(
+        loss_history, output_dir, param_set['Ly'], param_set['phenomenon'],
+        param_set['C_Cu_top'], param_set['C_Cu_bottom'], param_set['C_Ni_top'], param_set['C_Ni_bottom'], _hash_key
+    )
+    profile_plot_filename = plot_2d_profiles(
+        solution, -1, output_dir, param_set['Ly'], param_set['phenomenon'],
+        param_set['C_Cu_top'], param_set['C_Cu_bottom'], param_set['C_Ni_top'], param_set['C_Ni_bottom'], _hash_key
+    )
+    vts_files, pvd_file = generate_vts_time_series(
+        solution, output_dir, param_set['Ly'], param_set['phenomenon'],
+        param_set['C_Cu_top'], param_set['C_Cu_bottom'], param_set['C_Ni_top'], param_set['C_Ni_bottom'], _hash_key
+    )
+    vtu_file = generate_vtu_time_series(
+        solution, output_dir, param_set['Ly'], param_set['phenomenon'],
+        param_set['C_Cu_top'], param_set['C_Cu_bottom'], param_set['C_Ni_top'], param_set['C_Ni_bottom'], _hash_key
+    )
     
     return solution, {
         'solution_file': solution_filename,
@@ -672,6 +686,14 @@ def initialize_session_state():
         st.session_state.model = {}
     if 'current_hash' not in st.session_state:
         st.session_state.current_hash = {}
+    if 'C_Cu_top' not in st.session_state:
+        st.session_state.C_Cu_top = 2.85e-3
+    if 'C_Cu_bottom' not in st.session_state:
+        st.session_state.C_Cu_bottom = 0.0
+    if 'C_Ni_top' not in st.session_state:
+        st.session_state.C_Ni_top = 0.0
+    if 'C_Ni_bottom' not in st.session_state:
+        st.session_state.C_Ni_bottom = 1.3e-4
 
 def store_solution_in_session(_hash_key, solution, file_info, model):
     st.session_state.training_complete[_hash_key] = True
@@ -681,41 +703,62 @@ def store_solution_in_session(_hash_key, solution, file_info, model):
     st.session_state.current_hash[_hash_key] = _hash_key
 
 def main():
-    st.title("2D PINN Simulation: Cu-Ni Diffusion with Variable Boundary Conditions and Domain Heights")
+    st.title("2D PINN Simulation: Cu-Ni Diffusion with Custom Boundary Conditions")
 
     initialize_session_state()
 
-    # Define boundary condition cases
-    bc_cases = [
-        {'phenomenon': 'self_diff_ni', 'C_Cu_top': 2.85e-3, 'C_Cu_bottom': 2.85e-3, 'C_Ni_top': 0.0, 'C_Ni_bottom': 0.0},
-        {'phenomenon': 'self_diff_cu', 'C_Cu_top': 0.0, 'C_Cu_bottom': 0.0, 'C_Ni_top': 1.3e-4, 'C_Ni_bottom': 1.3e-4},
-        {'phenomenon': 'cross_diff', 'C_Cu_top': 2.85e-3, 'C_Cu_bottom': 0.0, 'C_Ni_top': 0.0, 'C_Ni_bottom': 1.3e-4}
-    ]
-    for cu_top in C_Cu_top_values:
-        for ni_bot in C_Ni_bottom_values:
-            bc_cases.append({
-                'phenomenon': 'cross_diff_variable', 
-                'C_Cu_top': cu_top, 
-                'C_Cu_bottom': 0.0, 
-                'C_Ni_top': 0.0, 
-                'C_Ni_bottom': ni_bot
-            })
+    # Predefined boundary condition cases
+    bc_cases = {
+        "Self-Diffusion Ni (Cu substrate)": {'phenomenon': 'self_diff_ni', 'C_Cu_top': 2.85e-3, 'C_Cu_bottom': 2.85e-3, 'C_Ni_top': 0.0, 'C_Ni_bottom': 0.0},
+        "Self-Diffusion Cu (Ni substrate)": {'phenomenon': 'self_diff_cu', 'C_Cu_top': 0.0, 'C_Cu_bottom': 0.0, 'C_Ni_top': 1.3e-4, 'C_Ni_bottom': 1.3e-4},
+        "Cross-Diffusion (Original)": {'phenomenon': 'cross_diff', 'C_Cu_top': 2.85e-3, 'C_Cu_bottom': 0.0, 'C_Ni_top': 0.0, 'C_Ni_bottom': 1.3e-4}
+    }
 
-    # User inputs
-    Ly = st.selectbox("Select Domain Height (Ly, μm)", Ly_values, index=Ly_values.index(90))
-    bc_case = st.selectbox("Select Boundary Condition Case", 
-                           [f"{case['phenomenon']}_ccutop_{case['C_Cu_top']:.2e}_ccubot_{case['C_Cu_bottom']:.2e}_nitop_{case['C_Ni_top']:.2e}_nibot_{case['C_Ni_bottom']:.2e}" 
-                            for case in bc_cases])
+    # GUI for boundary conditions and domain height
+    st.subheader("Simulation Parameters")
+    Ly = st.selectbox("Domain Height (Ly, μm)", Ly_values, index=Ly_values.index(90))
     
-    selected_case = bc_cases[[case['phenomenon'] + f"_ccutop_{case['C_Cu_top']:.2e}_ccubot_{case['C_Cu_bottom']:.2e}_nitop_{case['C_Ni_top']:.2e}_nibot_{case['C_Ni_bottom']:.2e}" 
-                              for case in bc_cases].index(bc_case)]
+    preset = st.selectbox("Select Preset Boundary Conditions", 
+                          ["Custom"] + list(bc_cases.keys()), 
+                          index=0)
     
-    phenomenon = selected_case['phenomenon']
-    C_Cu_top = selected_case['C_Cu_top']
-    C_Cu_bottom = selected_case['C_Cu_bottom']
-    C_Ni_top = selected_case['C_Ni_top']
-    C_Ni_bottom = selected_case['C_Ni_bottom']
+    if preset != "Custom" and preset in bc_cases:
+        selected_case = bc_cases[preset]
+        st.session_state.C_Cu_top = selected_case['C_Cu_top']
+        st.session_state.C_Cu_bottom = selected_case['C_Cu_bottom']
+        st.session_state.C_Ni_top = selected_case['C_Ni_top']
+        st.session_state.C_Ni_bottom = selected_case['C_Ni_bottom']
+        phenomenon = selected_case['phenomenon']
+    else:
+        phenomenon = "custom"
+
+    st.write("**Boundary Conditions (mol/cc)**")
+    col1, col2 = st.columns(2)
+    with col1:
+        C_Cu_top = st.number_input("Cu Top (y=Ly)", 
+                                   min_value=0.0, max_value=3.0e-3, 
+                                   value=st.session_state.C_Cu_top, 
+                                   step=0.1e-3, format="%.2e")
+        C_Cu_bottom = st.number_input("Cu Bottom (y=0)", 
+                                      min_value=0.0, max_value=3.0e-3, 
+                                      value=st.session_state.C_Cu_bottom, 
+                                      step=0.1e-3, format="%.2e")
+    with col2:
+        C_Ni_top = st.number_input("Ni Top (y=Ly)", 
+                                   min_value=0.0, max_value=1.5e-4, 
+                                   value=st.session_state.C_Ni_top, 
+                                   step=0.1e-4, format="%.2e")
+        C_Ni_bottom = st.number_input("Ni Bottom (y=0)", 
+                                      min_value=0.0, max_value=1.5e-4, 
+                                      value=st.session_state.C_Ni_bottom, 
+                                      step=0.1e-4, format="%.2e")
     
+    # Update session state
+    st.session_state.C_Cu_top = C_Cu_top
+    st.session_state.C_Cu_bottom = C_Cu_bottom
+    st.session_state.C_Ni_top = C_Ni_top
+    st.session_state.C_Ni_bottom = C_Ni_bottom
+
     current_hash = get_cache_key(Ly, C_Cu_top, C_Cu_bottom, C_Ni_top, C_Ni_bottom, epochs, lr)
 
     # Check for cached results
@@ -882,8 +925,10 @@ def main():
                 if file_info.get('vtu_file'):
                     files_to_zip.append(file_info['vtu_file'])
                 
-                zip_filename = create_zip_file(files_to_zip, OUTPUT_DIR, current_hash, 
-                                              phenomenon, C_Cu_top, C_Cu_bottom, C_Ni_top, C_Ni_bottom, Ly)
+                zip_filename = create_zip_file(
+                    files_to_zip, OUTPUT_DIR, current_hash, phenomenon,
+                    C_Cu_top, C_Cu_bottom, C_Ni_top, C_Ni_bottom, Ly
+                )
                 
                 if zip_filename and os.path.exists(zip_filename):
                     zip_data = get_file_bytes(zip_filename)
