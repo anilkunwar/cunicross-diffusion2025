@@ -55,7 +55,10 @@ with training datasets for 0 BCs (Transformer-inspired Attention): [![meaningtow
  debugging interpolation errors and making it inline with pinn solutions
  [![meaningtowords](https://img.shields.io/badge/debugerrorcloudComp-streamlit-red)]( https://pinninterpolation-error-debugging.streamlit.app/)   
 
- 
+pinn solutions with experimental diffusion lengths Ly
+ [![meaningtowords](https://img.shields.io/badge/experimentalLy-streamlit-red)](https://crossdiffusion-ly-60-90.streamlit.app/) 
+
+
 
 
   cloud computing with side bc corrected:
