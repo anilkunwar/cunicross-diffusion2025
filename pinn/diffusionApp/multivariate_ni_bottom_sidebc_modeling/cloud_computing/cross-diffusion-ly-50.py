@@ -555,9 +555,17 @@ def generate_vtu_time_series(solution, output_dir, _hash):
     X, Y = np.meshgrid(x, y, indexing='ij')
     points = np.stack([X.ravel(), Y.ravel(), z.ravel()], axis=1)
     
-    grid = pv.StructuredGrid()
-    grid.points = points
-    grid.dimensions = (nx, ny, 1)
+    # Define cells (quads for a 2D grid)
+    cells = []
+    cell_types = []
+    for j in range(ny - 1):
+        for i in range(nx - 1):
+            idx = i + j * nx
+            cell = [4, idx, idx + 1, idx + nx + 1, idx + nx]  # Quad: bottom-left, bottom-right, top-right, top-left
+            cells.extend(cell)
+            cell_types.append(pv.CellType.QUAD)
+    
+    grid = pv.UnstructuredGrid(cells, cell_types, points)
     
     for t_idx, t_val in enumerate(times):
         c1_xy = solution['c1_preds'][t_idx].T  # [x,y] for VTK
