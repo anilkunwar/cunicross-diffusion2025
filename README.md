@@ -97,11 +97,11 @@ Concentration Fields, Flux and Others:
 
 50 micrometers
 
-[![meaningtowords](https://img.shields.io/badge/selfdiffusionLy50-streamlit-red)](https://cu-selfdiffusion2dpinn-ly-50.streamlit.app/) 
+[![meaningtowords](https://img.shields.io/badge/cuselfdiffusionLy50-streamlit-red)](https://cu-selfdiffusion2dpinn-ly-50.streamlit.app/) 
 
 90 micrometers
 
-[![meaningtowords](https://img.shields.io/badge/selfdiffusionLy90-streamlit-red)](https://cu-selfdiffusion2dpinn-ly-90.streamlit.app/) 
+[![meaningtowords](https://img.shields.io/badge/cuselfdiffusionLy90-streamlit-red)](https://cu-selfdiffusion2dpinn-ly-90.streamlit.app/) 
 
 
 
@@ -128,6 +128,13 @@ with training datasets for zero values for diriclet BCs: [![meaningtowords](http
 Concentration Fields, Flux and Others:
 [![meaningtowords](https://img.shields.io/badge/solutions-streamlit-red)](https://multivariatecrossdiffusion2d-ni.streamlit.app/)
 
+50 micrometers
+
+[![meaningtowords](https://img.shields.io/badge/niselfdiffusionLy50-streamlit-red)](https://ni-selfdiffusion2dpinn-ly-50.streamlit.app/) 
+
+90 micrometers
+
+[![meaningtowords](https://img.shields.io/badge/niselfdiffusionLy90-streamlit-red)](https://ni-selfdiffusion2dpinn-ly-90.streamlit.app/) 
 
 
 
