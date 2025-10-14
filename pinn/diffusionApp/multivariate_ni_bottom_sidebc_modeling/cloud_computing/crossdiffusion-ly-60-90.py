@@ -420,7 +420,7 @@ def plot_side_gradients(_model, solution, time_idx, output_dir, _hash):
     return plot_filename
 
 @st.cache_resource(ttl=3600, show_spinner=False)
-def train_pinn_cached(D11, D12, D21, D22, Lx, Ly, T_max, C_Cu, C_Ni, epochs, lr, output_dir, _hash):
+def train_model(D11, D12, D21, D22, Lx, Ly, T_max, C_Cu, C_Ni, epochs, lr, output_dir, _hash):
     os.makedirs(output_dir, exist_ok=True)
     logger.info(f"Starting training with Ly={Ly}, C_Cu={C_Cu}, C_Ni={C_Ni}, epochs={epochs}, lr={lr}")
     model = DualScaledPINN(D11, D12, D21, D22, Lx, Ly, T_max, C_Cu, C_Ni)
@@ -693,17 +693,12 @@ def get_file_bytes(file_path):
     return None
 
 @st.cache_data(ttl=3600, show_spinner=False)
-def train_and_generate_solution(_hash_key, D11, D12, D21, D22, Lx, Ly, T_max, C_Cu, C_Ni, epochs, lr):
+def train_and_generate_solution(_model, loss_history, D11, D12, D21, D22, Lx, Ly, T_max, C_Cu, C_Ni, epochs, _hash_key):
     output_dir = OUTPUT_DIR
     os.makedirs(output_dir, exist_ok=True)
     
-    # Train model
-    model, loss_history = train_pinn_cached(
-        D11, D12, D21, D22, Lx, Ly, T_max, C_Cu, C_Ni, epochs, lr, output_dir, _hash_key
-    )
-    
-    if model is None or loss_history is None:
-        return None, None, None
+    if _model is None or loss_history is None:
+        return None, None
     
     # Generate solution
     times = np.linspace(0, T_max, 50)
@@ -715,18 +710,18 @@ def train_and_generate_solution(_hash_key, D11, D12, D21, D22, Lx, Ly, T_max, C_
     }
     
     solution_filename, solution = generate_and_save_solution(
-        model, times, param_set, output_dir, _hash_key
+        _model, times, param_set, output_dir, _hash_key
     )
     
     if solution is None:
-        return None, None, None
+        return None, None
     
     solution['loss_history'] = loss_history
     
     # Generate plots
     loss_plot_filename = plot_losses(loss_history, Ly, C_Cu, C_Ni, output_dir, _hash_key)
     profile_plot_filename = plot_2d_profiles(solution, -1, output_dir, _hash_key)
-    gradient_plot_filename = plot_side_gradients(model, solution, -1, output_dir, _hash_key)
+    gradient_plot_filename = plot_side_gradients(_model, solution, -1, output_dir, _hash_key)
     
     # Generate VTS files with time series
     vts_files, pvd_file, solution_filename = generate_vts_time_series(solution, output_dir, _hash_key)
@@ -738,7 +733,7 @@ def train_and_generate_solution(_hash_key, D11, D12, D21, D22, Lx, Ly, T_max, C_
         'gradient_plot': gradient_plot_filename,
         'vts_files': vts_files,
         'pvd_file': pvd_file
-    }, model
+    }
 
 def initialize_session_state():
     if 'training_complete' not in st.session_state:
@@ -803,151 +798,173 @@ def main():
     # Create hash key for caching
     current_hash = get_cache_key(Ly, C_Cu, C_Ni, epochs, lr)
     
-    # Check if we need to retrain
-    needs_retraining = (
-        not st.session_state.training_complete or 
-        st.session_state.get('current_hash') != current_hash
-    )
+    # Check if cached model and results exist
+    cached_model_result = train_model._cache.get(current_hash)
+    has_cached_model = cached_model_result is not None and all(cached_model_result)
+    cached_solution_result = train_and_generate_solution._cache.get(current_hash)
+    has_cached_solution = cached_solution_result is not None and all(cached_solution_result)
     
-    if st.button("Train PINN Model") or needs_retraining:
+    # Only train when the button is clicked
+    if st.button("Train PINN Model"):
         try:
             with st.spinner("Training model (this may take a few minutes)..."):
-                solution, file_info, model = train_and_generate_solution(
-                    current_hash, D11, D12, D21, D22, Lx, Ly, t_max, C_Cu, C_Ni, epochs, lr
+                # Train model
+                model, loss_history = train_model(
+                    D11, D12, D21, D22, Lx, Ly, t_max, C_Cu, C_Ni, epochs, lr, OUTPUT_DIR, current_hash
                 )
-            
-            if solution is None:
-                st.error("Training failed!")
-                return
-            
-            store_solution_in_session(current_hash, solution, file_info, model)
-            st.success("Model trained successfully!")
+                
+                if model is None or loss_history is None:
+                    st.error("Model training failed!")
+                    return
+                
+                # Generate solution and files
+                solution, file_info = train_and_generate_solution(
+                    model, loss_history, D11, D12, D21, D22, Lx, Ly, t_max, C_Cu, C_Ni, epochs, current_hash
+                )
+                
+                if solution is None:
+                    st.error("Solution generation failed!")
+                    return
+                
+                store_solution_in_session(current_hash, solution, file_info, model)
+                st.success("Model trained and results generated successfully!")
         
         except Exception as e:
             logger.error(f"Training pipeline failed: {str(e)}")
             st.error(f"Training pipeline failed: {str(e)}")
             return
     
-    # Only show results if training is complete
-    if st.session_state.training_complete and st.session_state.solution_data is not None:
+    # Display cached results or prompt to train
+    if st.session_state.training_complete and st.session_state.current_hash == current_hash:
         solution = st.session_state.solution_data
         file_info = st.session_state.file_data
-        
-        # Display results
-        with st.expander("Training Logs", expanded=False):
-            log_file = os.path.join(OUTPUT_DIR, 'training.log')
-            if os.path.exists(log_file):
-                with open(log_file, 'r') as f:
-                    st.text(f.read())
-        
-        st.subheader("Training Loss")
-        st.image(file_info['loss_plot'])
-        
-        st.subheader("Boundary Condition Validation")
-        bc_results = validate_boundary_conditions(solution)
-        st.metric("Boundary Conditions", "✓" if bc_results['valid'] else "✗", 
-                 f"{len(bc_results['details'])} issues")
-        with st.expander("Boundary Condition Details"):
-            for issue in bc_results['details']:
-                st.write(f"• {issue}")
-        
-        st.subheader("2D Concentration Profiles (Final Time Step)")
-        st.image(file_info['profile_plot'])
-        
-        st.subheader("Side Boundary Gradients (Final Time Step)")
-        st.image(file_info['gradient_plot'])
-        
-        # Download section - use cached file data
-        st.subheader("Download Files")
-        
-        # Solution file
-        solution_filename = file_info.get('solution_file')
-        if solution_filename and os.path.exists(solution_filename):
-            solution_data = get_file_bytes(solution_filename)
-            if solution_data:
+        st.info("Displaying cached results for current parameters.")
+    elif has_cached_model and has_cached_solution:
+        # Load cached model and results into session state
+        model, loss_history = cached_model_result
+        solution, file_info = cached_solution_result
+        store_solution_in_session(current_hash, solution, file_info, model)
+        st.info("Loaded cached results for current parameters.")
+    else:
+        st.warning("No results available for current parameters. Click 'Train PINN Model' to generate results.")
+        return
+    
+    # Display results
+    with st.expander("Training Logs", expanded=False):
+        log_file = os.path.join(OUTPUT_DIR, 'training.log')
+        if os.path.exists(log_file):
+            with open(log_file, 'r') as f:
+                st.text(f.read())
+    
+    st.subheader("Training Loss")
+    st.image(file_info['loss_plot'])
+    
+    st.subheader("Boundary Condition Validation")
+    bc_results = validate_boundary_conditions(solution)
+    st.metric("Boundary Conditions", "✓" if bc_results['valid'] else "✗", 
+              f"{len(bc_results['details'])} issues")
+    with st.expander("Boundary Condition Details"):
+        for issue in bc_results['details']:
+            st.write(f"• {issue}")
+    
+    st.subheader("2D Concentration Profiles (Final Time Step)")
+    st.image(file_info['profile_plot'])
+    
+    st.subheader("Side Boundary Gradients (Final Time Step)")
+    st.image(file_info['gradient_plot'])
+    
+    # Download section - use cached file data
+    st.subheader("Download Files")
+    
+    # Solution file
+    solution_filename = file_info.get('solution_file')
+    if solution_filename and os.path.exists(solution_filename):
+        solution_data = get_file_bytes(solution_filename)
+        if solution_data:
+            st.download_button(
+                label="Download Solution (.pkl)",
+                data=solution_data,
+                file_name=os.path.basename(solution_filename),
+                mime="application/octet-stream"
+            )
+    
+    # Plot files
+    for file_type, file_path in [
+        ("Loss Plot", file_info['loss_plot']),
+        ("2D Profile Plot", file_info['profile_plot']),
+        ("Gradient Plot", file_info['gradient_plot'])
+    ]:
+        if os.path.exists(file_path):
+            file_data = get_file_bytes(file_path)
+            if file_data:
                 st.download_button(
-                    label="Download Solution (.pkl)",
-                    data=solution_data,
-                    file_name=os.path.basename(solution_filename),
-                    mime="application/octet-stream"
+                    label=f"Download {file_type} (.png)",
+                    data=file_data,
+                    file_name=os.path.basename(file_path),
+                    mime="image/png"
                 )
-        
-        # Plot files
-        for file_type, file_path in [
-            ("Loss Plot", file_info['loss_plot']),
-            ("2D Profile Plot", file_info['profile_plot']),
-            ("Gradient Plot", file_info['gradient_plot'])
-        ]:
-            if os.path.exists(file_path):
-                file_data = get_file_bytes(file_path)
-                if file_data:
-                    st.download_button(
-                        label=f"Download {file_type} (.png)",
-                        data=file_data,
-                        file_name=os.path.basename(file_path),
-                        mime="image/png"
-                    )
-        
-        # VTS files
-        st.subheader("Download Time Series Files")
-        if file_info.get('pvd_file') and os.path.exists(file_info['pvd_file']):
-            pvd_data = get_file_bytes(file_info['pvd_file'])
-            if pvd_data:
+    
+    # VTS files
+    st.subheader("Download Time Series Files")
+    if file_info.get('pvd_file') and os.path.exists(file_info['pvd_file']):
+        pvd_data = get_file_bytes(file_info['pvd_file'])
+        if pvd_data:
+            st.download_button(
+                label="Download Complete Time Series (.pvd + .vts)",
+                data=pvd_data,
+                file_name=os.path.basename(file_info['pvd_file']),
+                mime="application/xml",
+                help="Download the PVD collection file. Keep all .vts files in the same folder when opening in ParaView."
+            )
+    
+    # Individual VTS files
+    st.subheader("Download Individual Time Steps")
+    for t_val, vts_file in file_info.get('vts_files', []):
+        if os.path.exists(vts_file):
+            vts_data = get_file_bytes(vts_file)
+            if vts_data:
                 st.download_button(
-                    label="Download Complete Time Series (.pvd + .vts)",
-                    data=pvd_data,
-                    file_name=os.path.basename(file_info['pvd_file']),
-                    mime="application/xml",
-                    help="Download the PVD collection file. Keep all .vts files in the same folder when opening in ParaView."
+                    label=f"Download Time = {t_val:.1f} s (.vts)",
+                    data=vts_data,
+                    file_name=os.path.basename(vts_file),
+                    mime="application/xml"
                 )
-        
-        # Individual VTS files
-        st.subheader("Download Individual Time Steps")
-        for t_val, vts_file in file_info.get('vts_files', []):
-            if os.path.exists(vts_file):
-                vts_data = get_file_bytes(vts_file)
-                if vts_data:
+    
+    # ZIP file
+    st.subheader("Download All Files as ZIP")
+    if st.button("Generate ZIP File"):
+        with st.spinner("Creating ZIP file..."):
+            files_to_zip = [
+                file_info['loss_plot'], 
+                file_info['profile_plot'], 
+                file_info['gradient_plot']
+            ]
+            if solution_filename:
+                files_to_zip.append(solution_filename)
+            
+            for _, vts_file in file_info.get('vts_files', []):
+                files_to_zip.append(vts_file)
+            if file_info.get('pvd_file'):
+                files_to_zip.append(file_info['pvd_file'])
+            
+            zip_filename = create_zip_file(files_to_zip, OUTPUT_DIR, (Ly, C_Cu, C_Ni))
+            
+            if zip_filename and os.path.exists(zip_filename):
+                zip_data = get_file_bytes(zip_filename)
+                if zip_data:
                     st.download_button(
-                        label=f"Download Time = {t_val:.1f} s (.vts)",
-                        data=vts_data,
-                        file_name=os.path.basename(vts_file),
-                        mime="application/xml"
+                        label="Download All Files (.zip)",
+                        data=zip_data,
+                        file_name=os.path.basename(zip_filename),
+                        mime="application/zip"
                     )
-        
-        # ZIP file
-        st.subheader("Download All Files as ZIP")
-        if st.button("Generate ZIP File"):
-            with st.spinner("Creating ZIP file..."):
-                files_to_zip = [
-                    file_info['loss_plot'], 
-                    file_info['profile_plot'], 
-                    file_info['gradient_plot']
-                ]
-                if solution_filename:
-                    files_to_zip.append(solution_filename)
-                
-                for _, vts_file in file_info.get('vts_files', []):
-                    files_to_zip.append(vts_file)
-                if file_info.get('pvd_file'):
-                    files_to_zip.append(file_info['pvd_file'])
-                
-                zip_filename = create_zip_file(files_to_zip, OUTPUT_DIR, (Ly, C_Cu, C_Ni))
-                
-                if zip_filename and os.path.exists(zip_filename):
-                    zip_data = get_file_bytes(zip_filename)
-                    if zip_data:
-                        st.download_button(
-                            label="Download All Files (.zip)",
-                            data=zip_data,
-                            file_name=os.path.basename(zip_filename),
-                            mime="application/zip"
-                        )
     
     st.sidebar.markdown("""
     **Notes for Streamlit Cloud:**
     - Files are saved to `/tmp/pinn_solutions`.
     - Training results are cached in session state to prevent re-runs on downloads.
-    - Use the 'Train PINN Model' button to start training.
+    - Training only starts when you click 'Train PINN Model'.
+    - Cached results load automatically if parameters match previous runs.
     - Enter C_Cu (0 to 3.0e-3) and C_Ni (0 to 1.8e-3) as numbers (e.g., 1.6e-3).
     - Download individual `.pkl`, `.png`, `.vts`, or `.pvd` files, or all as a ZIP.
     - All operations are cached to prevent crashes and redundant file generation.
