@@ -23,8 +23,6 @@ mpl.rcParams['font.size'] = 12
 mpl.rcParams['axes.linewidth'] = 1.5
 mpl.rcParams['xtick.major.width'] = 1.5
 mpl.rcParams['ytick.major.width'] = 1.5
-mpl.rcParams['axes.titlesize'] = 14
-mpl.rcParams['axes.labelsize'] = 12
 mpl.rcParams['figure.dpi'] = 300
 
 # Configure logging
@@ -557,7 +555,7 @@ def generate_vtu_time_series(solution, output_dir, _hash):
     X, Y = np.meshgrid(x, y, indexing='ij')
     points = np.stack([X.ravel(), Y.ravel(), z.ravel()], axis=1)
     
-    grid = pv.UnstructuredGrid()
+    grid = pv.StructuredGrid()
     grid.points = points
     grid.dimensions = (nx, ny, 1)
     
