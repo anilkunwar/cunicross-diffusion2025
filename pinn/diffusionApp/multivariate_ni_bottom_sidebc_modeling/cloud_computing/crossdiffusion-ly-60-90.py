@@ -495,8 +495,8 @@ def evaluate_model(_model, times, Lx, Ly, D11, D12, D21, D22, _hash):
         t = torch.full((X.numel(), 1), t_val, requires_grad=False)
         c_pred = _model(X.reshape(-1,1), Y.reshape(-1,1), t)
         try:
-            c1 = c_pred[:,0].detach().numpy().reshape(50,50).T
-            c2 = c_pred[:,1].detach().numpy().reshape(50,50).T
+            c1 = c_pred[:,0].detach().numpy().reshape(50,50).T  # [y,x] for matplotlib
+            c2 = c_pred[:,1].detach().numpy().reshape(50,50).T  # [y,x] for matplotlib
         except RuntimeError as e:
             logger.error(f"Failed to convert concentration predictions to NumPy: {str(e)}")
             raise e
@@ -566,7 +566,7 @@ def generate_and_save_solution(_model, times, param_set, output_dir, _hash):
         'J2_preds': J2_preds,
         'times': times,
         'loss_history': {},
-        'orientation_note': 'c1_preds and c2_preds are arrays of shape (50,50) where rows (i) correspond to y-coordinates and columns (j) correspond to x-coordinates due to transpose.'
+        'orientation_note': 'c1_preds and c2_preds are arrays of shape (50,50) where rows (i) correspond to y-coordinates and columns (j) correspond to x-coordinates due to transpose for matplotlib.'
     }
     
     solution_filename = os.path.join(output_dir, 
@@ -584,21 +584,25 @@ def generate_and_save_solution(_model, times, param_set, output_dir, _hash):
     return solution_filename, solution
 
 @st.cache_resource
-def generate_vts_files(solution, output_dir, _hash):
+def generate_vts_time_series(solution, output_dir, _hash):
     os.makedirs(output_dir, exist_ok=True)
     Lx = solution['params']['Lx']
     Ly = solution['params']['Ly']
     times = solution['times']
-    c1_preds = solution['c1_preds']
-    c2_preds = solution['c2_preds']
     
     vts_files = []
     nx, ny = 50, 50  # Grid dimensions
+    
+    # Create individual VTS files for each timestep
     for t_idx, t_val in enumerate(times):
+        # Reconstruct [x,y] ordering from the stored [y,x] data
+        c1_xy = solution['c1_preds'][t_idx].T  # Transpose back to [x,y]
+        c2_xy = solution['c2_preds'][t_idx].T  # Transpose back to [x,y]
+        
         # Create structured grid
         x = np.linspace(0, Lx, nx)
         y = np.linspace(0, Ly, ny)
-        z = np.zeros((nx, ny))  # 2D grid, z=0
+        z = np.zeros((nx, ny))
         grid = pv.StructuredGrid()
         X, Y = np.meshgrid(x, y, indexing='ij')
         points = np.stack([X.ravel(), Y.ravel(), z.ravel()], axis=1)
@@ -606,21 +610,48 @@ def generate_vts_files(solution, output_dir, _hash):
         grid.dimensions = (nx, ny, 1)
         
         # Add concentration data
-        grid.point_data['Cu_Concentration'] = c1_preds[t_idx].ravel()
-        grid.point_data['Ni_Concentration'] = c2_preds[t_idx].ravel()
+        grid.point_data['Cu_Concentration'] = c1_xy.ravel()
+        grid.point_data['Ni_Concentration'] = c2_xy.ravel()
         
-        # Save VTS file
+        # Save individual VTS file
         vts_filename = os.path.join(output_dir, 
             f'concentration_ly_{solution["params"]["Ly"]:.1f}_t_{t_val:.1f}_ccu_{solution["params"]["C_Cu"]:.1e}_cni_{solution["params"]["C_Ni"]:.1e}.vts')
+        
         try:
             grid.save(vts_filename)
-            vts_files.append(vts_filename)
+            vts_files.append((t_val, vts_filename))
             logger.info(f"Saved VTS file to {vts_filename}")
         except Exception as e:
             logger.error(f"Failed to save VTS file for t={t_val:.1f}: {str(e)}")
             st.error(f"Failed to save VTS file for t={t_val:.1f}: {str(e)}")
     
-    return vts_files
+    # Create PVD collection file
+    pvd_filename = os.path.join(output_dir, 
+        f'concentration_time_series_ly_{solution["params"]["Ly"]:.1f}_ccu_{solution["params"]["C_Cu"]:.1e}_cni_{solution["params"]["C_Ni"]:.1e}.pvd')
+    
+    try:
+        # Create PVD file manually
+        pvd_content = ['<?xml version="1.0"?>']
+        pvd_content.append('<VTKFile type="Collection" version="0.1">')
+        pvd_content.append('  <Collection>')
+        
+        for t_val, vts_file in vts_files:
+            relative_path = os.path.basename(vts_file)
+            pvd_content.append(f'    <DataSet timestep="{t_val}" group="" part="0" file="{relative_path}"/>')
+        
+        pvd_content.append('  </Collection>')
+        pvd_content.append('</VTKFile>')
+        
+        with open(pvd_filename, 'w') as f:
+            f.write('\n'.join(pvd_content))
+        
+        logger.info(f"Saved PVD collection file to {pvd_filename}")
+        return vts_files, pvd_filename
+        
+    except Exception as e:
+        logger.error(f"Failed to create PVD file: {str(e)}")
+        st.error(f"Failed to create PVD file: {str(e)}")
+        return vts_files, None
 
 @st.cache_resource
 def create_zip_file(_files, output_dir, _hash):
@@ -714,7 +745,7 @@ def main():
             loss_plot_filename = plot_losses(loss_history, Ly, C_Cu, C_Ni, output_dir, hash_key)
             profile_plot_filename = plot_2d_profiles(solution, -1, output_dir, hash_key)
             gradient_plot_filename = plot_side_gradients(model, solution, -1, output_dir, hash_key)
-            vts_files = generate_vts_files(solution, output_dir, hash_key)
+            vts_files, pvd_file = generate_vts_time_series(solution, output_dir, hash_key)
             
             st.success(f"Model trained successfully! Saved to {solution_filename}")
             
@@ -761,13 +792,23 @@ def main():
                 else:
                     st.warning(f"File not found: {file_path}")
             
-            st.subheader("Download VTS Files")
-            for vts_file in vts_files:
+            st.subheader("Download Time Series Files")
+            if pvd_file and os.path.exists(pvd_file):
+                with open(pvd_file, 'rb') as f:
+                    st.download_button(
+                        label="Download Complete Time Series (.pvd + .vts)",
+                        data=f,
+                        file_name=os.path.basename(pvd_file),
+                        mime="application/xml",
+                        help="Download the PVD collection file. Keep all .vts files in the same folder when opening in ParaView."
+                    )
+            
+            st.subheader("Download Individual Time Steps")
+            for t_val, vts_file in vts_files:
                 if os.path.exists(vts_file):
                     with open(vts_file, 'rb') as f:
-                        t_val = float(os.path.basename(vts_file).split('_t_')[1].split('_')[0])
                         st.download_button(
-                            label=f"Concentration Profile t={t_val:.1f} s (.vts)",
+                            label=f"Time = {t_val:.1f} s (.vts)",
                             data=f,
                             file_name=os.path.basename(vts_file),
                             mime="application/xml"
@@ -776,7 +817,12 @@ def main():
                     st.warning(f"VTS file not found: {vts_file}")
             
             st.subheader("Download All Files as ZIP")
-            files_to_zip = [solution_filename, loss_plot_filename, profile_plot_filename, gradient_plot_filename] + vts_files
+            files_to_zip = [solution_filename, loss_plot_filename, profile_plot_filename, gradient_plot_filename]
+            for _, vts_file in vts_files:
+                files_to_zip.append(vts_file)
+            if pvd_file:
+                files_to_zip.append(pvd_file)
+            
             zip_filename = create_zip_file(files_to_zip, output_dir, hash_key)
             if zip_filename and os.path.exists(zip_filename):
                 with open(zip_filename, 'rb') as f:
@@ -798,10 +844,11 @@ def main():
     - Files are saved to `/tmp/pinn_solutions`.
     - Use the 'Train PINN Model' button to start training.
     - Enter C_Cu (0 to 3.0e-3) and C_Ni (0 to 1.8e-3) as numbers (e.g., 1.6e-3).
-    - Download individual `.pkl`, `.png`, or `.vts` files, or all as a ZIP.
+    - Download individual `.pkl`, `.png`, `.vts`, or `.pvd` files, or all as a ZIP.
     - All operations are cached to prevent crashes and redundant file generation.
     - Check logs for debugging information.
-    - VTS files can be visualized in ParaView.
+    - Open `.pvd` file in ParaView with all `.vts` files in the same folder to visualize time series.
+    - Visualizations are consistent: x (horizontal), y (vertical) in both Matplotlib and ParaView.
     """)
 
 if __name__ == "__main__":
