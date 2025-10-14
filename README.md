@@ -138,6 +138,20 @@ Concentration Fields, Flux and Others:
 
 
 
+
+-----------------------------------------------------------------
+Multivariate crossdiffusion 2D pinn
+ ------------------------------------------------------------------
+30 < Ly < 120 , varying Cs_Cu and Cs_Ni
+
+Training
+[![meaningtowords](https://img.shields.io/badge/multivarpinn-streamlit-red)](https://multivariate-crossdiffusion2dpinn-training.streamlit.app/) 
+
+
+
+ ---------------------------------------------------------
+
+
 # How to perform the proper rendering of interactive visualization?
 
 a. Tracking the boundary conditions at the appropriate geometry location:
