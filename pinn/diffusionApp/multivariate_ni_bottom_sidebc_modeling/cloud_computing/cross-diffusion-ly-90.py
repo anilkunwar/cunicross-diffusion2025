@@ -674,7 +674,7 @@ def store_solution_in_session(_hash_key, solution, file_info, model):
 
 def main():
     #st.title("PINN Simulation: Cu-Ni Diffusion")
-    2D PINN Simulation: Cu-Ni Cross-Diffusion for Liquid Solder Height = 90 micrometers
+    st.title("2D PINN Simulation: Cu-Ni Cross-Diffusion for Liquid Solder Height = 90 micrometers")
     
     initialize_session_state()
     current_hash = get_cache_key(Ly, C_CU_TOP, C_NI_TOP, epochs, lr)
