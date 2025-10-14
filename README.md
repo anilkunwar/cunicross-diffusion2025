@@ -68,7 +68,8 @@ with training datasets for 0 BCs (Transformer-inspired Attention): [![meaningtow
 
 [![meaningtowords](https://img.shields.io/badge/experimentalLy50-streamlit-red)](https://cross-diffusion2dpinn-shorter-joint.streamlit.app/) 
 
-
+90 micrometers
+[![meaningtowords](https://img.shields.io/badge/experimentalLy50-streamlit-red)](https://cross-diffusion2dpinn-longer-joint.streamlit.app/) 
 
 Concentration Fields, Flux and Others:
 [![meaningtowords](https://img.shields.io/badge/solutions-streamlit-red)](https://multivariatecrossdiffusion2d-cuni.streamlit.app/)
