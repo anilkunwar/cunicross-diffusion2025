@@ -678,46 +678,28 @@ def main():
     initialize_session_state()
     current_hash = get_cache_key(Ly, C_CU_TOP, C_NI_TOP, epochs, lr)
     
+    # Check for cached results
     if st.session_state.training_complete and st.session_state.current_hash == current_hash:
         solution = st.session_state.solution_data
         file_info = st.session_state.file_data
         model = st.session_state.model
         st.info("Displaying cached results.")
     else:
-        if st.button("Run Simulation"):
-            try:
-                with st.spinner("Running simulation..."):
-                    model, loss_history = train_model(
-                        D11, D12, D21, D22, Lx, Ly, T_max, C_CU_TOP, C_NI_TOP, epochs, lr, OUTPUT_DIR, current_hash
-                    )
-                    
-                    if model is None or loss_history is None:
-                        st.error("Simulation failed!")
-                        return
-                    
-                    solution, file_info = train_and_generate_solution(
-                        model, loss_history, OUTPUT_DIR, current_hash
-                    )
-                    
-                    if solution is None:
-                        st.error("Solution generation failed!")
-                        return
-                    
-                    store_solution_in_session(current_hash, solution, file_info, model)
-                    st.success("Simulation completed successfully!")
-            
-            except Exception as e:
-                logger.error(f"Simulation failed: {str(e)}")
-                st.error(f"Simulation failed: {str(e)}")
-                return
-        else:
-            try:
+        solution = None
+        file_info = {}
+        model = None
+        st.warning("No results available. Click 'Run Simulation' to generate results.")
+    
+    # Run simulation only when button is clicked
+    if st.button("Run Simulation"):
+        try:
+            with st.spinner("Running simulation..."):
                 model, loss_history = train_model(
                     D11, D12, D21, D22, Lx, Ly, T_max, C_CU_TOP, C_NI_TOP, epochs, lr, OUTPUT_DIR, current_hash
                 )
                 
                 if model is None or loss_history is None:
-                    st.warning("No results available. Click 'Run Simulation' to generate results.")
+                    st.error("Simulation failed!")
                     return
                 
                 solution, file_info = train_and_generate_solution(
@@ -725,125 +707,127 @@ def main():
                 )
                 
                 if solution is None:
-                    st.warning("No results available. Click 'Run Simulation' to generate results.")
+                    st.error("Solution generation failed!")
                     return
                 
                 store_solution_in_session(current_hash, solution, file_info, model)
-                st.info("Loaded cached results.")
-            
-            except Exception as e:
-                logger.error(f"Failed to load cached results: {str(e)}")
-                st.warning("No results available. Click 'Run Simulation' to generate results.")
-                return
+                st.success("Simulation completed successfully!")
+        
+        except Exception as e:
+            logger.error(f"Simulation failed: {str(e)}")
+            st.error(f"Simulation failed: {str(e)}")
+            return
     
-    with st.expander("Training Logs", expanded=False):
-        log_file = os.path.join(OUTPUT_DIR, 'training.log')
-        if os.path.exists(log_file):
-            with open(log_file, 'r') as f:
-                st.text(f.read())
-    
-    st.subheader("Training Loss")
-    st.image(file_info['loss_plot'])
-    
-    st.subheader("Boundary Condition Validation")
-    bc_results = validate_boundary_conditions(solution)
-    st.metric("Boundary Conditions", "✓" if bc_results['valid'] else "✗", 
-              f"{len(bc_results['details'])} issues")
-    with st.expander("Boundary Condition Details"):
-        for issue in bc_results['details']:
-            st.write(f"• {issue}")
-    
-    st.subheader("2D Concentration Profiles (Final Time Step)")
-    st.image(file_info['profile_plot'])
-    
-    st.subheader("Download Files")
-    solution_filename = file_info.get('solution_file')
-    if solution_filename and os.path.exists(solution_filename):
-        solution_data = get_file_bytes(solution_filename)
-        if solution_data:
-            st.download_button(
-                label="Download Solution (.pkl)",
-                data=solution_data,
-                file_name=os.path.basename(solution_filename),
-                mime="application/octet-stream"
-            )
-    
-    for file_type, file_path in [
-        ("Loss Plot", file_info['loss_plot']),
-        ("2D Profile Plot", file_info['profile_plot'])
-    ]:
-        if os.path.exists(file_path):
-            file_data = get_file_bytes(file_path)
-            if file_data:
+    # Display results only if available
+    if solution and file_info:
+        with st.expander("Training Logs", expanded=False):
+            log_file = os.path.join(OUTPUT_DIR, 'training.log')
+            if os.path.exists(log_file):
+                with open(log_file, 'r') as f:
+                    st.text(f.read())
+        
+        st.subheader("Training Loss")
+        st.image(file_info['loss_plot'])
+        
+        st.subheader("Boundary Condition Validation")
+        bc_results = validate_boundary_conditions(solution)
+        st.metric("Boundary Conditions", "✓" if bc_results['valid'] else "✗", 
+                f"{len(bc_results['details'])} issues")
+        with st.expander("Boundary Condition Details"):
+            for issue in bc_results['details']:
+                st.write(f"• {issue}")
+        
+        st.subheader("2D Concentration Profiles (Final Time Step)")
+        st.image(file_info['profile_plot'])
+        
+        st.subheader("Download Files")
+        solution_filename = file_info.get('solution_file')
+        if solution_filename and os.path.exists(solution_filename):
+            solution_data = get_file_bytes(solution_filename)
+            if solution_data:
                 st.download_button(
-                    label=f"Download {file_type} (.png)",
-                    data=file_data,
-                    file_name=os.path.basename(file_path),
-                    mime="image/png"
+                    label="Download Solution (.pkl)",
+                    data=solution_data,
+                    file_name=os.path.basename(solution_filename),
+                    mime="application/octet-stream"
                 )
-    
-    st.subheader("Download Time Series Files")
-    if file_info.get('pvd_file') and os.path.exists(file_info['pvd_file']):
-        pvd_data = get_file_bytes(file_info['pvd_file'])
-        if pvd_data:
-            st.download_button(
-                label="Download VTS Time Series (.pvd + .vts)",
-                data=pvd_data,
-                file_name=os.path.basename(file_info['pvd_file']),
-                mime="application/xml",
-                help="Download the PVD collection file. Keep all .vts files in the same folder."
-            )
-    
-    if file_info.get('vtu_file') and os.path.exists(file_info['vtu_file']):
-        vtu_data = get_file_bytes(file_info['vtu_file'])
-        if vtu_data:
-            st.download_button(
-                label="Download VTU Time Series (.vtu)",
-                data=vtu_data,
-                file_name=os.path.basename(file_info['vtu_file']),
-                mime="application/xml",
-                help="Single VTU file with all timesteps."
-            )
-    
-    st.subheader("Download Individual Time Steps")
-    for t_val, vts_file in file_info.get('vts_files', []):
-        if os.path.exists(vts_file):
-            vts_data = get_file_bytes(vts_file)
-            if vts_data:
-                st.download_button(
-                    label=f"Download Time = {t_val:.1f} s (.vts)",
-                    data=vts_data,
-                    file_name=os.path.basename(vts_file),
-                    mime="application/xml"
-                )
-    
-    st.subheader("Download All Files as ZIP")
-    if st.button("Generate ZIP File"):
-        with st.spinner("Creating ZIP file..."):
-            files_to_zip = [
-                file_info['loss_plot'], 
-                file_info['profile_plot']
-            ]
-            if solution_filename:
-                files_to_zip.append(solution_filename)
-            for _, vts_file in file_info.get('vts_files', []):
-                files_to_zip.append(vts_file)
-            if file_info.get('pvd_file'):
-                files_to_zip.append(file_info['pvd_file'])
-            if file_info.get('vtu_file'):
-                files_to_zip.append(file_info['vtu_file'])
-            
-            zip_filename = create_zip_file(files_to_zip, OUTPUT_DIR, (Ly,))
-            
-            if zip_filename and os.path.exists(zip_filename):
-                zip_data = get_file_bytes(zip_filename)
-                if zip_data:
+        
+        for file_type, file_path in [
+            ("Loss Plot", file_info['loss_plot']),
+            ("2D Profile Plot", file_info['profile_plot'])
+        ]:
+            if os.path.exists(file_path):
+                file_data = get_file_bytes(file_path)
+                if file_data:
                     st.download_button(
-                        label="Download All Files (.zip)",
-                        data=zip_data,
-                        file_name=os.path.basename(zip_filename),
-                        mime="application/zip"
+                        label=f"Download {file_type} (.png)",
+                        data=file_data,
+                        file_name=os.path.basename(file_path),
+                        mime="image/png"
                     )
+        
+        st.subheader("Download Time Series Files")
+        if file_info.get('pvd_file') and os.path.exists(file_info['pvd_file']):
+            pvd_data = get_file_bytes(file_info['pvd_file'])
+            if pvd_data:
+                st.download_button(
+                    label="Download VTS Time Series (.pvd + .vts)",
+                    data=pvd_data,
+                    file_name=os.path.basename(file_info['pvd_file']),
+                    mime="application/xml",
+                    help="Download the PVD collection file. Keep all .vts files in the same folder."
+                )
+        
+        if file_info.get('vtu_file') and os.path.exists(file_info['vtu_file']):
+            vtu_data = get_file_bytes(file_info['vtu_file'])
+            if vtu_data:
+                st.download_button(
+                    label="Download VTU Time Series (.vtu)",
+                    data=vtu_data,
+                    file_name=os.path.basename(file_info['vtu_file']),
+                    mime="application/xml",
+                    help="Single VTU file with all timesteps."
+                )
+        
+        st.subheader("Download Individual Time Steps")
+        for t_val, vts_file in file_info.get('vts_files', []):
+            if os.path.exists(vts_file):
+                vts_data = get_file_bytes(vts_file)
+                if vts_data:
+                    st.download_button(
+                        label=f"Download Time = {t_val:.1f} s (.vts)",
+                        data=vts_data,
+                        file_name=os.path.basename(vts_file),
+                        mime="application/xml"
+                    )
+        
+        st.subheader("Download All Files as ZIP")
+        if st.button("Generate ZIP File"):
+            with st.spinner("Creating ZIP file..."):
+                files_to_zip = [
+                    file_info['loss_plot'], 
+                    file_info['profile_plot']
+                ]
+                if solution_filename:
+                    files_to_zip.append(solution_filename)
+                for _, vts_file in file_info.get('vts_files', []):
+                    files_to_zip.append(vts_file)
+                if file_info.get('pvd_file'):
+                    files_to_zip.append(file_info['pvd_file'])
+                if file_info.get('vtu_file'):
+                    files_to_zip.append(file_info['vtu_file'])
+                
+                zip_filename = create_zip_file(files_to_zip, OUTPUT_DIR, (Ly,))
+                
+                if zip_filename and os.path.exists(zip_filename):
+                    zip_data = get_file_bytes(zip_filename)
+                    if zip_data:
+                        st.download_button(
+                            label="Download All Files (.zip)",
+                            data=zip_data,
+                            file_name=os.path.basename(zip_filename),
+                            mime="application/zip"
+                        )
 
 if __name__ == "__main__":
     main()
