@@ -31,7 +31,8 @@ logger = logging.getLogger(__name__)
 
 # Fixed parameters
 C_CU_TOP = 2.85e-3    # Top boundary (y=Ly): Cu-rich
-C_CU_BOTTOM = 2.85e-3     # Bottom (y=0): Cu-rich
+C_CU_BOTTOM = 0.0     # Bottom (y=0): Cu-poor
+#C_CU_BOTTOM = 2.85e-3     # Bottom (y=0): Cu-rich
 C_NI_TOP = 0.0     #  Top (y=Ly): Ni-poor
 C_NI_BOTTOM = 0.0      # Bottom (y=0): Ni-poor
 Ly = 90.0             # Domain height (μm)
