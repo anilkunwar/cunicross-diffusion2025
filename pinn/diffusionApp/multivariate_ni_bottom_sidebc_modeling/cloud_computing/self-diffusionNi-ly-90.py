@@ -599,7 +599,7 @@ def create_zip_file(_files, output_dir, _hash):
                 else:
                     logger.warning(f"File not found for zipping: {file_path}")
         
-        zip_filename = os.path.join(output_dir, f'pinn_solutions_ly_{Ly:.1f}.zip')
+        zip_filename = os.path.join(output_dir, f'pinn_solutions_ni_selfdiffusion_ly_{Ly:.1f}.zip')
         with open(zip_filename, 'wb') as f:
             f.write(zip_buffer.getvalue())
         logger.info(f"Created ZIP file: {zip_filename}")
