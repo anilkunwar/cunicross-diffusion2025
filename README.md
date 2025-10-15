@@ -77,7 +77,7 @@ Concentration Fields, Flux and Others:
 
 ------------------------------------------------------------------
 
-*Cu Pillar Bottom and Cu Pillar Top ( SelfDiffusion - Symmetry)*
+*Cu Pillar Bottom and Cu Pillar Top ( SelfDiffusion - Symmetry)/ Cu Substrate on Top (C_Cu=S_sat) with Preset BC on bottom for Cu (C_Cu = 0)*
 
 ------------------------------------------------------------------
 
@@ -107,7 +107,7 @@ Concentration Fields, Flux and Others:
 
 ------------------------------------------------------------------
 
-*Ni UBM Bottom and Ni UBM Top (  SelfDiffusion - Symmetry)*
+*Ni UBM Bottom and Ni UBM Top (  SelfDiffusion - Symmetry)/ Ni UBM Bottom (C_Ni = C_sat) with Preset BC on top for Ni (C_Ni = 0)*
 
 ------------------------------------------------------------------
 
