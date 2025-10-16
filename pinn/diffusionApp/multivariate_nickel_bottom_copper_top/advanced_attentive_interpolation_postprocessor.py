@@ -264,26 +264,6 @@ def enforce_boundary_conditions(solution):
     
     return solution
 
-def compute_fluxes(solution, time_index):
-    """Compute concentration gradients (fluxes) in x and y directions"""
-    x_coords = solution['X'][:, 0]
-    y_coords = solution['Y'][0, :]
-    c1 = solution['c1_preds'][time_index]  # Cu concentration
-    c2 = solution['c2_preds'][time_index]  # Ni concentration
-    dx = x_coords[1] - x_coords[0]
-    dy = y_coords[1] - y_coords[0]
-    
-    # Compute gradients using np.gradient
-    grad_c1_x, grad_c1_y = np.gradient(c1, dx, dy, axis=(1, 0))
-    grad_c2_x, grad_c2_y = np.gradient(c2, dx, dy, axis=(1, 0))
-    
-    return {
-        'cu_flux_x': grad_c1_x,
-        'cu_flux_y': grad_c1_y,
-        'ni_flux_x': grad_c2_x,
-        'ni_flux_y': grad_c2_y
-    }
-
 def plot_boundary_profiles(solution, time_index, output_dir="figures"):
     """Plot concentration profiles along all boundaries for debugging"""
     x_coords = solution['X'][:, 0]
@@ -318,7 +298,7 @@ def plot_boundary_profiles(solution, time_index, output_dir="figures"):
     
     # Left boundary (x=0)
     axes[1,0].plot(y_coords, c1[0, :], 'b-', linewidth=2, label='Cu')
-    axes[1,0].plot(y_coords, c2[0, :] , 'r-', linewidth=2, label='Ni')
+    axes[1,0].plot(y_coords, c2[0, :], 'r-', linewidth=2, label='Ni')
     axes[1,0].set_xlabel('y (μm)')
     axes[1,0].set_ylabel('Concentration (mol/cc)')
     axes[1,0].set_title('Left Boundary (x=0)\nShould show zero flux (flat)')
@@ -801,6 +781,7 @@ def main():
             for log in load_logs:
                 st.write(log)
 
+    # Check if solutions were loaded
     if not solutions:
         st.error("No valid solution files found in pinn_solutions directory. Please check the directory and file contents.")
         return
@@ -1130,6 +1111,7 @@ def main():
             mime="application/pdf"
         )
 
+    # Advanced Visualizations
     st.subheader("Advanced Visualizations")
     adv_vis_type = st.selectbox("Select Visualization Type", options=['Sunburst Chart', 'Radar Chart', 'Polar Chart'], index=0)
     
