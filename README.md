@@ -52,6 +52,9 @@ with training datasets for zero values for BCs (Gaussian-based Attention): [![me
 with training datasets for 0 BCs (Transformer-inspired Attention): [![meaningtowords](https://img.shields.io/badge/broadRangeConcAttn-streamlit-red)](https://concentrationprofile-cuni-mpattentioninterpolator.streamlit.app/)
  [![meaningtowords](https://img.shields.io/badge/broadRangeConcAttnSideBC-streamlit-red)](https://attentiveinterpolator-physicsawaresidebc.streamlit.app/) 
 
+ [![meaningtowords](https://img.shields.io/badge/advBroadRangeConcAttnSideBC-streamlit-red)](https://advanced-attentive-concentration-interpolator.streamlit.app/) 
+ 
+
  debugging interpolation errors and making it inline with pinn solutions
  [![meaningtowords](https://img.shields.io/badge/debugerrorcloudComp-streamlit-red)]( https://pinninterpolation-error-debugging.streamlit.app/)   
 
