@@ -28,7 +28,11 @@ mpl.rcParams['legend.framealpha'] = 0.8
 mpl.rcParams['grid.linestyle'] = '--'
 mpl.rcParams['grid.alpha'] = 0.3
 
-SOLUTION_DIR = os.path.join(os.path.dirname(__file__), "pinn_solutions")
+# Define SOLUTION_DIR with a fallback for Streamlit Cloud
+try:
+    SOLUTION_DIR = os.path.join(os.path.dirname(__file__), "pinn_solutions")
+except NameError:
+    SOLUTION_DIR = "pinn_solutions"
 
 # Available colormaps for selection
 COLORMAPS = [
@@ -65,7 +69,7 @@ def compute_boundary_modes(solutions, time_index=-1):
     if not solutions:
         return {}
     
-    # Extract boundary values from all solutions at the specified time index
+    # Initialize lists for boundary values
     top_cu_values = []
     top_ni_values = []
     bottom_cu_values = []
@@ -277,12 +281,239 @@ def compute_fluxes(solution, time_index):
     grad_c1_x, grad_c1_y = np.gradient(c1, dx, dy, axis=(1, 0))
     grad_c2_x, grad_c2_y = np.gradient(c2, dx, dy, axis=(1, 0))
     
+    # Compute flux magnitudes
+    cu_flux_magnitude = np.sqrt(grad_c1_x**2 + grad_c1_y**2)
+    ni_flux_magnitude = np.sqrt(grad_c2_x**2 + grad_c2_y**2)
+    
     return {
-        'cu_flux_x': grad_c1_x,  # dC_Cu/dx
-        'cu_flux_y': grad_c1_y,  # dC_Cu/dy
-        'ni_flux_x': grad_c2_x,  # dC_Ni/dx
-        'ni_flux_y': grad_c2_y   # dC_Ni/dy
+        'cu_flux_x': grad_c1_x,
+        'cu_flux_y': grad_c1_y,
+        'ni_flux_x': grad_c2_x,
+        'ni_flux_y': grad_c2_y,
+        'cu_flux_magnitude': cu_flux_magnitude,
+        'ni_flux_magnitude': ni_flux_magnitude
     }
+
+def get_centerline_data(solution, time_indices):
+    """Extract c_Cu, c_Ni, and flux magnitudes at centerline (Lx/2, Ly/2)"""
+    x_coords = solution['X'][:, 0]
+    y_coords = solution['Y'][0, :]
+    center_x_idx = np.argmin(np.abs(x_coords - solution['params']['Lx'] / 2))
+    center_y_idx = np.argmin(np.abs(y_coords - solution['params']['Ly'] / 2))
+    
+    data = []
+    for t_idx in time_indices:
+        c1 = solution['c1_preds'][t_idx]
+        c2 = solution['c2_preds'][t_idx]
+        fluxes = compute_fluxes(solution, t_idx)
+        
+        data.append({
+            'time': solution['times'][t_idx],
+            'c_cu': c1[center_x_idx, center_y_idx],
+            'c_ni': c2[center_x_idx, center_y_idx],
+            'cu_flux_magnitude': fluxes['cu_flux_magnitude'][center_x_idx, center_y_idx],
+            'ni_flux_magnitude': fluxes['ni_flux_magnitude'][center_x_idx, center_y_idx]
+        })
+    
+    return pd.DataFrame(data)
+
+def plot_sunburst_chart(solution, time_index, output_dir="figures", cmap="Viridis"):
+    """Create a Plotly sunburst chart showing Cu, Ni concentrations and flux magnitudes by boundary region"""
+    x_coords = solution['X'][:, 0]
+    y_coords = solution['Y'][0, :]
+    t_val = solution['times'][time_index]
+    Ly = solution['params']['Ly']
+    c1 = solution['c1_preds'][time_index]  # Cu concentration
+    c2 = solution['c2_preds'][time_index]  # Ni concentration
+    fluxes = compute_fluxes(solution, time_index)
+    
+    # Prepare data for sunburst chart
+    labels = []
+    parents = []
+    values = []
+    boundaries = ['Top', 'Bottom', 'Left', 'Right']
+    metrics = ['Cu Conc.', 'Ni Conc.', 'Cu Flux Mag.', 'Ni Flux Mag.']
+    
+    for boundary in boundaries:
+        labels.append(boundary)
+        parents.append("")
+        values.append(0)  # Parent nodes don't need values in sunburst
+        
+        for metric in metrics:
+            labels.append(f"{boundary} {metric}")
+            parents.append(boundary)
+            if boundary == 'Top':
+                data = c1[:, -1] if metric == 'Cu Conc.' else c2[:, -1] if metric == 'Ni Conc.' else \
+                       fluxes['cu_flux_magnitude'][:, -1] if metric == 'Cu Flux Mag.' else fluxes['ni_flux_magnitude'][:, -1]
+            elif boundary == 'Bottom':
+                data = c1[:, 0] if metric == 'Cu Conc.' else c2[:, 0] if metric == 'Ni Conc.' else \
+                       fluxes['cu_flux_magnitude'][:, 0] if metric == 'Cu Flux Mag.' else fluxes['ni_flux_magnitude'][:, 0]
+            elif boundary == 'Left':
+                data = c1[0, :] if metric == 'Cu Conc.' else c2[0, :] if metric == 'Ni Conc.' else \
+                       fluxes['cu_flux_magnitude'][0, :] if metric == 'Cu Flux Mag.' else fluxes['ni_flux_magnitude'][0, :]
+            else:  # Right
+                data = c1[-1, :] if metric == 'Cu Conc.' else c2[-1, :] if metric == 'Ni Conc.' else \
+                       fluxes['cu_flux_magnitude'][-1, :] if metric == 'Cu Flux Mag.' else fluxes['ni_flux_magnitude'][-1, :]
+            values.append(float(np.mean(data)))
+    
+    # Create sunburst chart
+    fig = go.Figure(go.Sunburst(
+        labels=labels,
+        parents=parents,
+        values=values,
+        branchvalues="total",
+        textinfo="label+value+percent parent",
+        hovertemplate="%{label}: %{value:.2e}",
+        marker=dict(colors=values, colorscale=cmap)
+    ))
+    
+    fig.update_layout(
+        title=f"Concentrations and Flux Magnitudes by Boundary (t = {t_val:.1f} s, Ly = {Ly:.1f} μm)",
+        margin=dict(t=50, l=25, r=25, b=25)
+    )
+    
+    # Save figure
+    os.makedirs(output_dir, exist_ok=True)
+    base_filename = f"sunburst_t_{t_val:.1f}_ly_{Ly:.1f}"
+    fig.write_html(os.path.join(output_dir, f"{base_filename}.html"))
+    fig.write_image(os.path.join(output_dir, f"{base_filename}.png"), scale=2)
+    
+    return fig, base_filename
+
+def plot_radar_chart(solution, time_indices, output_dir="figures"):
+    """Create a Plotly radar chart for centerline concentrations and flux magnitudes across timesteps"""
+    center_x_idx = np.argmin(np.abs(solution['X'][:, 0] - solution['params']['Lx'] / 2))
+    center_y_idx = np.argmin(np.abs(solution['Y'][0, :] - solution['params']['Ly'] / 2))
+    Ly = solution['params']['Ly']
+    times = solution['times']
+    
+    fig = go.Figure()
+    metrics = ['Cu Conc.', 'Ni Conc.', 'Cu Flux Mag.', 'Ni Flux Mag.']
+    
+    for t_idx in time_indices:
+        c1 = solution['c1_preds'][t_idx]
+        c2 = solution['c2_preds'][t_idx]
+        fluxes = compute_fluxes(solution, t_idx)
+        
+        values = [
+            c1[center_x_idx, center_y_idx],  # Cu concentration
+            c2[center_x_idx, center_y_idx],  # Ni concentration
+            fluxes['cu_flux_magnitude'][center_x_idx, center_y_idx],  # Cu flux magnitude
+            fluxes['ni_flux_magnitude'][center_x_idx, center_y_idx]   # Ni flux magnitude
+        ]
+        
+        fig.add_trace(go.Scatterpolar(
+            r=values + [values[0]],  # Close the loop
+            theta=metrics + [metrics[0]],
+            name=f"t = {times[t_idx]:.1f} s",
+            mode='lines+markers',
+            line=dict(width=2)
+        ))
+    
+    fig.update_layout(
+        title=f"Centerline Metrics at (Lx/2, Ly/2) (Ly = {Ly:.1f} μm)",
+        polar=dict(
+            radialaxis=dict(visible=True, tickformat='.2e'),
+            angularaxis=dict(rotation=90, direction="clockwise")
+        ),
+        showlegend=True,
+        legend=dict(orientation="h", yanchor="bottom", y=-0.2, xanchor="center", x=0.5)
+    )
+    
+    # Save figure
+    os.makedirs(output_dir, exist_ok=True)
+    base_filename = f"radar_ly_{Ly:.1f}"
+    fig.write_html(os.path.join(output_dir, f"{base_filename}.html"))
+    fig.write_image(os.path.join(output_dir, f"{base_filename}.png"), scale=2)
+    
+    return fig, base_filename
+
+def plot_polar_chart(solution, time_index, output_dir="figures"):
+    """Create a Plotly polar chart for concentrations and flux magnitudes along domain boundaries"""
+    x_coords = solution['X'][:, 0]
+    y_coords = solution['Y'][0, :]
+    t_val = solution['times'][time_index]
+    Ly = solution['params']['Ly']
+    c1 = solution['c1_preds'][time_index]
+    c2 = solution['c2_preds'][time_index]
+    fluxes = compute_fluxes(solution, time_index)
+    
+    # Sample along a circular path (approximated along domain edges)
+    theta = np.linspace(0, 360, len(x_coords) * 4)
+    r_cu_conc = []
+    r_ni_conc = []
+    r_cu_flux = []
+    r_ni_flux = []
+    
+    # Traverse boundaries: top -> right -> bottom -> left
+    for i in range(len(x_coords)):
+        r_cu_conc.append(c1[i, -1])
+        r_ni_conc.append(c2[i, -1])
+        r_cu_flux.append(fluxes['cu_flux_magnitude'][i, -1])
+        r_ni_flux.append(fluxes['ni_flux_magnitude'][i, -1])
+    for i in range(len(y_coords)):
+        r_cu_conc.append(c1[-1, i])
+        r_ni_conc.append(c2[-1, i])
+        r_cu_flux.append(fluxes['cu_flux_magnitude'][-1, i])
+        r_ni_flux.append(fluxes['ni_flux_magnitude'][-1, i])
+    for i in range(len(x_coords)-1, -1, -1):
+        r_cu_conc.append(c1[i, 0])
+        r_ni_conc.append(c2[i, 0])
+        r_cu_flux.append(fluxes['cu_flux_magnitude'][i, 0])
+        r_ni_flux.append(fluxes['ni_flux_magnitude'][i, 0])
+    for i in range(len(y_coords)-1, -1, -1):
+        r_cu_conc.append(c1[0, i])
+        r_ni_conc.append(c2[0, i])
+        r_cu_flux.append(fluxes['cu_flux_magnitude'][0, i])
+        r_ni_flux.append(fluxes['ni_flux_magnitude'][0, i])
+    
+    fig = go.Figure()
+    fig.add_trace(go.Scatterpolar(
+        r=r_cu_conc + [r_cu_conc[0]],
+        theta=theta.tolist() + [theta[0]],
+        name='Cu Conc.',
+        mode='lines',
+        line=dict(color='blue', width=2)
+    ))
+    fig.add_trace(go.Scatterpolar(
+        r=r_ni_conc + [r_ni_conc[0]],
+        theta=theta.tolist() + [theta[0]],
+        name='Ni Conc.',
+        mode='lines',
+        line=dict(color='red', width=2)
+    ))
+    fig.add_trace(go.Scatterpolar(
+        r=r_cu_flux + [r_cu_flux[0]],
+        theta=theta.tolist() + [theta[0]],
+        name='Cu Flux Mag.',
+        mode='lines',
+        line=dict(color='cyan', width=2)
+    ))
+    fig.add_trace(go.Scatterpolar(
+        r=r_ni_flux + [r_ni_flux[0]],
+        theta=theta.tolist() + [theta[0]],
+        name='Ni Flux Mag.',
+        mode='lines',
+        line=dict(color='magenta', width=2)
+    ))
+    
+    fig.update_layout(
+        title=f"Metrics Along Domain Boundary (t = {t_val:.1f} s, Ly = {Ly:.1f} μm)",
+        polar=dict(
+            radialaxis=dict(visible=True, tickformat='.2e'),
+            angularaxis=dict(rotation=90, direction="clockwise")
+        ),
+        showlegend=True,
+        legend=dict(orientation="h", yanchor="bottom", y=-0.2, xanchor="center", x=0.5)
+    )
+    
+    # Save figure
+    os.makedirs(output_dir, exist_ok=True)
+    base_filename = f"polar_t_{t_val:.1f}_ly_{Ly:.1f}"
+    fig.write_html(os.path.join(output_dir, f"{base_filename}.html"))
+    fig.write_image(os.path.join(output_dir, f"{base_filename}.png"), scale=2)
+    
+    return fig, base_filename
 
 def plot_boundary_profiles(solution, time_index, output_dir="figures"):
     """Plot concentration profiles along all boundaries for debugging"""
@@ -343,188 +574,416 @@ def plot_boundary_profiles(solution, time_index, output_dir="figures"):
     
     os.makedirs(output_dir, exist_ok=True)
     base_filename = f"boundary_profiles_t_{t_val:.1f}_ly_{Ly:.1f}"
-    fig.canvas.draw()
     plt.savefig(os.path.join(output_dir, f"{base_filename}.png"), dpi=300, bbox_inches='tight')
     plt.savefig(os.path.join(output_dir, f"{base_filename}.pdf"), bbox_inches='tight')
     plt.close(fig)
     return fig, base_filename
 
-def plot_sunburst_chart(solution, time_index, output_dir="figures"):
-    """Create a Plotly sunburst chart showing Cu and Ni concentrations by boundary region."""
+@st.cache_data
+def load_solutions(solution_dir):
+    """Load solutions from pickle files in the solution directory"""
+    solutions = []
+    params_list = []
+    load_logs = []
+    lys = []
+    for fname in os.listdir(solution_dir):
+        if fname.endswith(".pkl"):
+            try:
+                with open(os.path.join(solution_dir, fname), "rb") as f:
+                    sol = pickle.load(f)
+                required_keys = ['params', 'X', 'Y', 'c1_preds', 'c2_preds', 'times']
+                if all(key in sol for key in required_keys):
+                    if (np.any(np.isnan(sol['c1_preds'])) or np.any(np.isnan(sol['c2_preds'])) or
+                            np.all(sol['c1_preds'] == 0) or np.all(sol['c2_preds'] == 0)):
+                        load_logs.append(f"{fname}: Skipped - Invalid data (NaNs or all zeros).")
+                        continue
+                    
+                    # Enforce boundary conditions
+                    sol = enforce_boundary_conditions(sol)
+                    
+                    # Validate boundary conditions
+                    bc_validation = validate_boundary_conditions(sol)
+                    bc_status = "✓" if all([bc_validation['top_bc_cu'], bc_validation['top_bc_ni'],
+                                           bc_validation['bottom_bc_cu'], bc_validation['bottom_bc_ni'],
+                                           bc_validation['left_flux_cu'], bc_validation['left_flux_ni'],
+                                           bc_validation['right_flux_cu'], bc_validation['right_flux_ni'],
+                                           bc_validation['initial_condition']]) else "✗"
+                    
+                    c1_min, c1_max = np.min(sol['c1_preds'][0]), np.max(sol['c1_preds'][0])
+                    c2_min, c2_max = np.min(sol['c2_preds'][0]), np.max(sol['c2_preds'][0])
+                    solutions.append(sol)
+                    param_tuple = (sol['params']['Ly'],)
+                    params_list.append(param_tuple)
+                    lys.append(sol['params']['Ly'])
+                    load_logs.append(
+                        f"{fname}: {bc_status} Loaded. Cu: {c1_min:.2e} to {c1_max:.2e}, Ni: {c2_min:.2e} to {c2_max:.2e}, "
+                        f"Ly={param_tuple[0]:.1f}"
+                    )
+                    if not all([bc_validation['top_bc_cu'], bc_validation['top_bc_ni'],
+                               bc_validation['bottom_bc_cu'], bc_validation['bottom_bc_ni'],
+                               bc_validation['left_flux_cu'], bc_validation['left_flux_ni'],
+                               bc_validation['right_flux_cu'], bc_validation['right_flux_ni'],
+                               bc_validation['initial_condition']]):
+                        load_logs.append(f"     BC violations: {', '.join(bc_validation['details'])}")
+                else:
+                    missing_keys = [key for key in required_keys if key not in sol]
+                    load_logs.append(f"{fname}: Skipped - Missing keys: {missing_keys}")
+            except Exception as e:
+                load_logs.append(f"{fname}: Skipped - Failed to load: {str(e)}")
+    if len(solutions) < 1:
+        load_logs.append("Error: No valid solutions loaded. Interpolation will fail.")
+    else:
+        load_logs.append(f"Loaded {len(solutions)} solutions.")
+    return solutions, params_list, lys, load_logs
+
+class MultiParamAttentionInterpolator(nn.Module):
+    def __init__(self, sigma=0.2, num_heads=4, d_head=8):
+        super().__init__()
+        self.sigma = sigma
+        self.num_heads = num_heads
+        self.d_head = d_head
+        self.W_q = nn.Linear(1, self.num_heads * self.d_head)  # Query projection
+        self.W_k = nn.Linear(1, self.num_heads * self.d_head)  # Key projection
+
+    def forward(self, solutions, params_list, ly_target):
+        if not solutions or not params_list:
+            raise ValueError("No solutions or parameters available for interpolation.")
+
+        # Extract and normalize Ly parameter
+        lys = np.array([p[0] for p in params_list])
+        ly_norm = (lys - 30.0) / (120.0 - 30.0)
+        target_ly_norm = (ly_target - 30.0) / (120.0 - 30.0)
+
+        # Combine normalized parameters into tensors
+        params_tensor = torch.tensor(ly_norm, dtype=torch.float32).reshape(-1, 1)
+        target_params_tensor = torch.tensor([target_ly_norm], dtype=torch.float32).reshape(1, 1)
+
+        # Project to query/key space
+        queries = self.W_q(target_params_tensor)
+        keys = self.W_k(params_tensor)
+
+        # Reshape for multi-head attention
+        queries = queries.view(1, self.num_heads, self.d_head)
+        keys = keys.view(len(params_list), self.num_heads, self.d_head)
+
+        # Scaled dot-product attention
+        attn_logits = torch.einsum('nhd,mhd->nmh', keys, queries) / np.sqrt(self.d_head)
+        attn_weights = torch.softmax(attn_logits, dim=0)
+        attn_weights = attn_weights.mean(dim=2).squeeze(1)
+
+        # Spatial weights
+        scaled_distances = torch.sqrt(
+            ((torch.tensor(ly_norm) - target_ly_norm) / self.sigma)**2
+        )
+        spatial_weights = torch.exp(-scaled_distances**2 / 2)
+        spatial_weights /= spatial_weights.sum()
+
+        # Combine attention and spatial weights
+        combined_weights = attn_weights * spatial_weights
+        combined_weights /= combined_weights.sum()
+
+        return self._physics_aware_interpolation(solutions, combined_weights.detach().numpy(), ly_target)
+
+    def _physics_aware_interpolation(self, solutions, weights, ly_target):
+        Lx = solutions[0]['params']['Lx']
+        t_max = solutions[0]['params']['t_max']
+        x_coords = np.linspace(0, Lx, 50)
+        y_coords = np.linspace(0, ly_target, 50)
+        times = np.linspace(0, t_max, 50)
+        X, Y = np.meshgrid(x_coords, y_coords, indexing='ij')
+        c1_interp = np.zeros((len(times), 50, 50))
+        c2_interp = np.zeros((len(times), 50, 50))
+
+        for t_idx in range(len(times)):
+            for sol, weight in zip(solutions, weights):
+                scale_factor = ly_target / sol['params']['Ly']
+                Y_scaled = sol['Y'][0, :] * scale_factor
+                interp_c1 = RegularGridInterpolator(
+                    (sol['X'][:, 0], Y_scaled), sol['c1_preds'][t_idx],
+                    method='linear', bounds_error=False, fill_value=0
+                )
+                interp_c2 = RegularGridInterpolator(
+                    (sol['X'][:, 0], Y_scaled), sol['c2_preds'][t_idx],
+                    method='linear', bounds_error=False, fill_value=0
+                )
+                points = np.stack([X.flatten(), Y.flatten()], axis=1)
+                c1_interp[t_idx] += weight * interp_c1(points).reshape(50, 50)
+                c2_interp[t_idx] += weight * interp_c2(points).reshape(50, 50)
+
+        # Enforce boundary conditions
+        for t_idx in range(len(times)):
+            c1_interp[t_idx, :, -1] = C_CU_TOP
+            c2_interp[t_idx, :, -1] = C_NI_TOP
+            c1_interp[t_idx, :, 0] = C_CU_BOTTOM
+            c2_interp[t_idx, :, 0] = C_NI_BOTTOM
+            c1_interp[t_idx, 0, :] = c1_interp[t_idx, 1, :]
+            c2_interp[t_idx, 0, :] = c2_interp[t_idx, 1, :]
+            c1_interp[t_idx, -1, :] = c1_interp[t_idx, -2, :]
+            c2_interp[t_idx, -1, :] = c2_interp[t_idx, -2, :]
+
+        c1_interp[0] = np.zeros_like(c1_interp[0])
+        c2_interp[0] = np.zeros_like(c2_interp[0])
+
+        param_set = solutions[0]['params'].copy()
+        param_set['Ly'] = ly_target
+        param_set['C_Cu'] = C_CU_BOTTOM
+        param_set['C_Ni'] = C_NI_TOP
+
+        interpolated_solution = {
+            'params': param_set,
+            'X': X,
+            'Y': Y,
+            'c1_preds': list(c1_interp),
+            'c2_preds': list(c2_interp),
+            'times': times,
+            'interpolated': True,
+            'attention_weights': weights.tolist()
+        }
+
+        return enforce_boundary_conditions(interpolated_solution)
+
+@st.cache_data
+def load_and_interpolate_solution(solutions, params_list, ly_target, tolerance_ly=0.1):
+    """Load an exact solution or interpolate for the target Ly"""
+    for sol, params in zip(solutions, params_list):
+        ly = params[0]
+        if abs(ly - ly_target) < tolerance_ly:
+            sol['interpolated'] = False
+            return enforce_boundary_conditions(sol)
+    if not solutions:
+        raise ValueError("No solutions available for interpolation.")
+    interpolator = MultiParamAttentionInterpolator(sigma=0.2)
+    return interpolator(solutions, params_list, ly_target)
+
+def plot_2d_concentration(solution, time_index, output_dir="figures", cmap_cu='viridis', cmap_ni='magma', vmin_cu=None, vmax_cu=None, vmin_ni=None, vmax_ni=None):
+    """Plot 2D concentration heatmaps for Cu and Ni"""
     x_coords = solution['X'][:, 0]
     y_coords = solution['Y'][0, :]
     t_val = solution['times'][time_index]
+    Lx = solution['params']['Lx']
     Ly = solution['params']['Ly']
-    c1 = solution['c1_preds'][time_index]  # Cu concentration
-    c2 = solution['c2_preds'][time_index]  # Ni concentration
+    c1 = solution['c1_preds'][time_index]
+    c2 = solution['c2_preds'][time_index]
 
-    # Prepare data for sunburst chart
-    labels = []
-    parents = []
-    values = []
-    boundaries = ['Top', 'Bottom', 'Left', 'Right']
-    species = ['Cu', 'Ni']
+    cu_min = vmin_cu if vmin_cu is not None else 0
+    cu_max = vmax_cu if vmax_cu is not None else np.max(c1)
+    ni_min = vmin_ni if vmin_ni is not None else 0
+    ni_max = vmax_ni if vmax_ni is not None else np.max(c2)
 
-    for boundary in boundaries:
-        labels.append(boundary)
-        parents.append("")
-        values.append(0)  # Parent nodes don't need values in sunburst
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(10, 4), constrained_layout=True)
 
-        for spec in species:
-            labels.append(f"{boundary} {spec}")
-            parents.append(boundary)
-            if boundary == 'Top':
-                conc = c1[:, -1] if spec == 'Cu' else c2[:, -1]
-            elif boundary == 'Bottom':
-                conc = c1[:, 0] if spec == 'Cu' else c2[:, 0]
-            elif boundary == 'Left':
-                conc = c1[0, :] if spec == 'Cu' else c2[0, :]
-            else:  # Right
-                conc = c1[-1, :] if spec == 'Cu' else c2[-1, :]
-            values.append(float(np.mean(conc)))
+    im1 = ax1.imshow(c1, origin='lower', extent=[0, Lx, 0, Ly], cmap=cmap_cu, vmin=cu_min, vmax=cu_max)
+    ax1.set_xlabel('x (μm)')
+    ax1.set_ylabel('y (μm)')
+    ax1.set_title(f'Cu Concentration, t = {t_val:.1f} s')
+    ax1.grid(True)
+    fig.colorbar(im1, ax=ax1, label='Cu Conc. (mol/cc)', format='%.1e')
 
-    # Create sunburst chart
-    fig = go.Figure(go.Sunburst(
-        labels=labels,
-        parents=parents,
-        values=values,
-        branchvalues="total",
-        textinfo="label+value+percent parent",
-        hovertemplate="%{label}: %{value:.2e} mol/cc",
-        marker=dict(colors=values, colorscale='Viridis')
-    ))
+    im2 = ax2.imshow(c2, origin='lower', extent=[0, Lx, 0, Ly], cmap=cmap_ni, vmin=ni_min, vmax=ni_max)
+    ax2.set_xlabel('x (μm)')
+    ax2.set_ylabel('y (μm)')
+    ax2.set_title(f'Ni Concentration, t = {t_val:.1f} s')
+    ax2.grid(True)
+    fig.colorbar(im2, ax=ax2, label='Ni Conc. (mol/cc)', format='%.1e')
 
-    fig.update_layout(
-        title=f"Concentration by Boundary (t = {t_val:.1f} s, Ly = {Ly:.1f} μm)",
-        margin=dict(t=50, l=25, r=25, b=25)
-    )
+    param_text = f"$L_y$ = {Ly:.1f} μm"
+    if solution.get('interpolated', False):
+        param_text += " (Interpolated)"
+    fig.suptitle(f'Concentration Profiles\n{param_text}', fontsize=14)
 
-    # Save figure
     os.makedirs(output_dir, exist_ok=True)
-    base_filename = f"sunburst_t_{t_val:.1f}_ly_{Ly:.1f}"
-    fig.write_html(os.path.join(output_dir, f"{base_filename}.html"))
-    fig.write_image(os.path.join(output_dir, f"{base_filename}.png"), scale=2)
-
+    base_filename = f"conc_2d_t_{t_val:.1f}_ly_{Ly:.1f}"
+    plt.savefig(os.path.join(output_dir, f"{base_filename}.png"), dpi=300, bbox_inches='tight')
+    plt.savefig(os.path.join(output_dir, f"{base_filename}.pdf"), bbox_inches='tight')
+    plt.close(fig)
     return fig, base_filename
 
-def plot_radar_chart(solution, time_indices, output_dir="figures"):
-    """Create a Plotly radar chart comparing mean concentrations at boundaries for multiple times."""
+def plot_centerline_curves(solution, time_indices, sidebar_metric='mean_cu', output_dir="figures",
+                          label_size=12, title_size=14, tick_label_size=10, legend_loc='upper right',
+                          curve_colormap='viridis', axis_linewidth=1.5, tick_major_width=1.5,
+                          tick_major_length=4.0, fig_width=8.0, fig_height=6.0, curve_linewidth=1.0,
+                          grid_alpha=0.3, grid_linestyle='--', legend_frameon=True, legend_framealpha=0.8):
+    """Plot concentration curves along the centerline"""
+    x_coords = solution['X'][:, 0]
+    y_coords = solution['Y'][0, :]
+    Lx = solution['params']['Lx']
+    Ly = solution['params']['Ly']
+    center_idx = np.argmin(np.abs(x_coords - Lx / 2))
     times = solution['times']
-    Ly = solution['params']['Ly']
-    boundaries = ['Top Cu', 'Top Ni', 'Bottom Cu', 'Bottom Ni', 'Left Cu', 'Left Ni', 'Right Cu', 'Right Ni']
 
-    fig = go.Figure()
+    if sidebar_metric == 'loss' and 'loss' in solution:
+        sidebar_data = solution['loss'][:len(times)]
+        sidebar_label = 'Loss'
+    elif sidebar_metric == 'mean_cu':
+        sidebar_data = [np.mean(c1) for c1 in solution['c1_preds']]
+        sidebar_label = 'Mean Cu Conc. (mol/cc)'
+    else:
+        sidebar_data = [np.mean(c2) for c2 in solution['c2_preds']]
+        sidebar_label = 'Mean Ni Conc. (mol/cc)'
 
-    for t_idx in time_indices:
-        c1 = solution['c1_preds'][t_idx]
-        c2 = solution['c2_preds'][t_idx]
+    fig = plt.figure(figsize=(fig_width, fig_height), constrained_layout=True)
+    gs = fig.add_gridspec(1, 4, width_ratios=[1, 1, 0.05, 0.5])
+    ax1 = fig.add_subplot(gs[0])
+    ax2 = fig.add_subplot(gs[1])
+    ax3 = fig.add_subplot(gs[3])
+
+    colors = plt.cm.get_cmap(curve_colormap)(np.linspace(0, 1, len(time_indices)))
+    for idx, t_idx in enumerate(time_indices):
         t_val = times[t_idx]
+        c1 = solution['c1_preds'][t_idx][:, center_idx]
+        c2 = solution['c2_preds'][t_idx][:, center_idx]
+        ax1.plot(y_coords, c1, label=f't = {t_val:.1f} s', color=colors[idx], linewidth=curve_linewidth)
+        ax2.plot(y_coords, c2, label=f't = {t_val:.1f} s', color=colors[idx], linewidth=curve_linewidth)
 
-        # Compute mean concentrations for each boundary
-        values = [
-            float(np.mean(c1[:, -1])),  # Top Cu
-            float(np.mean(c2[:, -1])),  # Top Ni
-            float(np.mean(c1[:, 0])),   # Bottom Cu
-            float(np.mean(c2[:, 0])),   # Bottom Ni
-            float(np.mean(c1[0, :])),   # Left Cu
-            float(np.mean(c2[0, :])),   # Left Ni
-            float(np.mean(c1[-1, :])),  # Right Cu
-            float(np.mean(c2[-1, :]))   # Right Ni
-        ]
+    for ax in [ax1, ax2, ax3]:
+        for spine in ax.spines.values():
+            spine.set_linewidth(axis_linewidth)
+        ax.tick_params(axis='both', which='major', width=tick_major_width, length=tick_major_length, labelsize=tick_label_size)
+        ax.grid(True, linestyle=grid_linestyle, alpha=grid_alpha)
 
-        # Add trace for this time point
-        fig.add_trace(go.Scatterpolar(
-            r=values + [values[0]],  # Close the loop
-            theta=boundaries + [boundaries[0]],
-            name=f"t = {t_val:.1f} s",
-            mode='lines+markers',
-            line=dict(width=2)
-        ))
+    legend_positions = {
+        'upper right': {'loc': 'upper right', 'bbox': None},
+        'upper left': {'loc': 'upper left', 'bbox': None},
+        'lower right': {'loc': 'lower right', 'bbox': None},
+        'lower left': {'loc': 'lower left', 'bbox': None},
+        'center': {'loc': 'center', 'bbox': None},
+        'best': {'loc': 'best', 'bbox': None},
+        'right': {'loc': 'center left', 'bbox': (1.05, 0.5)},
+        'left': {'loc': 'center right', 'bbox': (-0.05, 0.5)},
+        'above': {'loc': 'lower center', 'bbox': (0.5, 1.05)},
+        'below': {'loc': 'upper center', 'bbox': (0.5, -0.05)}
+    }
+    legend_params = legend_positions.get(legend_loc, {'loc': 'upper right', 'bbox': None})
 
-    fig.update_layout(
-        title=f"Boundary Concentrations (Ly = {Ly:.1f} μm)",
-        polar=dict(
-            radialaxis=dict(visible=True, tickformat='.2e'),
-            angularaxis=dict(rotation=90, direction="clockwise")
-        ),
-        showlegend=True,
-        legend=dict(orientation="h", yanchor="bottom", y=-0.2, xanchor="center", x=0.5)
-    )
+    ax1.set_xlabel('y (μm)', fontsize=label_size)
+    ax1.set_ylabel('Cu Conc. (mol/cc)', fontsize=label_size)
+    ax1.set_title(f'Cu at x = {Lx/2:.1f} μm', fontsize=title_size)
+    ax1.legend(fontsize=8, loc=legend_params['loc'], bbox_to_anchor=legend_params['bbox'], frameon=legend_frameon, framealpha=legend_framealpha)
+    ax1.ticklabel_format(style='sci', axis='y', scilimits=(0, 0))
 
-    # Save figure
+    ax2.set_xlabel('y (μm)', fontsize=label_size)
+    ax2.set_ylabel('Ni Conc. (mol/cc)', fontsize=label_size)
+    ax2.set_title(f'Ni at x = {Lx/2:.1f} μm', fontsize=title_size)
+    ax2.legend(fontsize=8, loc=legend_params['loc'], bbox_to_anchor=legend_params['bbox'], frameon=legend_frameon, framealpha=legend_framealpha)
+    ax2.ticklabel_format(style='sci', axis='y', scilimits=(0, 0))
+
+    ax3.plot(sidebar_data, times, 'k-', linewidth=curve_linewidth)
+    ax3.set_xlabel(sidebar_label, fontsize=label_size)
+    ax3.set_ylabel('Time (s)', fontsize=label_size)
+    ax3.set_title('Metric vs. Time', fontsize=title_size)
+    ax3.ticklabel_format(style='sci', axis='x', scilimits=(0, 0))
+
+    param_text = f"$L_y$ = {Ly:.1f} μm"
+    if solution.get('interpolated', False):
+        param_text += " (Interpolated)"
+    fig.suptitle(f'Centerline Concentration Profiles\n{param_text}', fontsize=title_size)
+
     os.makedirs(output_dir, exist_ok=True)
-    base_filename = f"radar_ly_{Ly:.1f}"
-    fig.write_html(os.path.join(output_dir, f"{base_filename}.html"))
-    fig.write_image(os.path.join(output_dir, f"{base_filename}.png"), scale=2)
-
+    base_filename = f"conc_centerline_ly_{Ly:.1f}"
+    plt.savefig(os.path.join(output_dir, f"{base_filename}.png"), dpi=300, bbox_inches='tight')
+    plt.savefig(os.path.join(output_dir, f"{base_filename}.pdf"), bbox_inches='tight')
+    plt.close(fig)
     return fig, base_filename
 
-def plot_polar_chart(solution, time_index, output_dir="figures"):
-    """Create a Plotly polar chart showing concentration along a circular path in the domain."""
-    x_coords = solution['X'][:, 0]
-    y_coords = solution['Y'][0, :]
-    t_val = solution['times'][time_index]
-    Ly = solution['params']['Ly']
-    c1 = solution['c1_preds'][time_index]  # Cu concentration
-    c2 = solution['c2_preds'][time_index]  # Ni concentration
+def plot_parameter_sweep(solutions, params_list, selected_params, time_index, sidebar_metric='mean_cu', output_dir="figures",
+                        label_size=12, title_size=14, tick_label_size=10, legend_loc='upper right',
+                        curve_colormap='tab10', axis_linewidth=1.5, tick_major_width=1.5,
+                        tick_major_length=4.0, fig_width=8.0, fig_height=6.0, curve_linewidth=1.0,
+                        grid_alpha=0.3, grid_linestyle='--', legend_frameon=True, legend_framealpha=0.8):
+    """Plot concentration curves for parameter sweep"""
+    Lx = solutions[0]['params']['Lx']
+    center_idx = np.argmin(np.abs(solutions[0]['X'][:, 0] - Lx / 2))
+    t_val = solutions[0]['times'][time_index]
 
-    # Sample concentrations along a circular path (approximated along domain edges)
-    theta = np.linspace(0, 360, len(x_coords) * 4)  # Angular coordinates
-    r_cu = []
-    r_ni = []
+    sidebar_data = []
+    sidebar_labels = []
+    for sol, params in zip(solutions, params_list):
+        if params in selected_params:
+            if sidebar_metric == 'loss' and 'loss' in sol:
+                sidebar_data.append(sol['loss'][time_index])
+            elif sidebar_metric == 'mean_cu':
+                sidebar_data.append(np.mean(sol['c1_preds'][time_index]))
+            else:
+                sidebar_data.append(np.mean(sol['c2_preds'][time_index]))
+            ly = params[0]
+            label = f'$L_y$={ly:.1f}'
+            if sol.get('interpolated', False):
+                label += " (Interpolated)"
+            sidebar_labels.append(label)
 
-    # Traverse domain boundaries in a loop: top -> right -> bottom -> left
-    for i in range(len(x_coords)):
-        r_cu.append(c1[i, -1])  # Top
-        r_ni.append(c2[i, -1])
-    for i in range(len(y_coords)):
-        r_cu.append(c1[-1, i])  # Right
-        r_ni.append(c2[-1, i])
-    for i in range(len(x_coords)-1, -1, -1):
-        r_cu.append(c1[i, 0])  # Bottom
-        r_ni.append(c2[i, 0])
-    for i in range(len(y_coords)-1, -1, -1):
-        r_cu.append(c1[0, i])  # Left
-        r_ni.append(c2[0, i])
+    fig = plt.figure(figsize=(fig_width, fig_height), constrained_layout=True)
+    gs = fig.add_gridspec(1, 4, width_ratios=[1, 1, 0.05, 0.5])
+    ax1 = fig.add_subplot(gs[0])
+    ax2 = fig.add_subplot(gs[1])
+    ax3 = fig.add_subplot(gs[3])
 
-    fig = go.Figure()
-    fig.add_trace(go.Scatterpolar(
-        r=r_cu + [r_cu[0]],  # Close the loop
-        theta=theta.tolist() + [theta[0]],
-        name='Cu',
-        mode='lines',
-        line=dict(color='blue', width=2)
-    ))
-    fig.add_trace(go.Scatterpolar(
-        r=r_ni + [r_ni[0]],  # Close the loop
-        theta=theta.tolist() + [theta[0]],
-        name='Ni',
-        mode='lines',
-        line=dict(color='red', width=2)
-    ))
+    colors = plt.cm.get_cmap(curve_colormap)(np.linspace(0, 1, len(selected_params)))
+    for idx, (sol, params) in enumerate(zip(solutions, params_list)):
+        if params in selected_params:
+            ly = params[0]
+            y_coords = sol['Y'][0, :]
+            c1 = sol['c1_preds'][time_index][:, center_idx]
+            c2 = sol['c2_preds'][time_index][:, center_idx]
+            label = f'$L_y$={ly:.1f}'
+            if sol.get('interpolated', False):
+                label += " (Interpolated)"
+            ax1.plot(y_coords, c1, label=label, color=colors[idx], linewidth=curve_linewidth)
+            ax2.plot(y_coords, c2, label=label, color=colors[idx], linewidth=curve_linewidth)
 
-    fig.update_layout(
-        title=f"Concentration Along Domain Boundary (t = {t_val:.1f} s, Ly = {Ly:.1f} μm)",
-        polar=dict(
-            radialaxis=dict(visible=True, tickformat='.2e'),
-            angularaxis=dict(rotation=90, direction="clockwise")
-        ),
-        showlegend=True,
-        legend=dict(orientation="h", yanchor="bottom", y=-0.2, xanchor="center", x=0.5)
+    for ax in [ax1, ax2, ax3]:
+        for spine in ax.spines.values():
+            spine.set_linewidth(axis_linewidth)
+        ax.tick_params(axis='both', which='major', width=tick_major_width, length=tick_major_length, labelsize=tick_label_size)
+        ax.grid(True, linestyle=grid_linestyle, alpha=grid_alpha)
+
+    legend_positions = {
+        'upper right': {'loc': 'upper right', 'bbox': None},
+        'upper left': {'loc': 'upper left', 'bbox': None},
+        'lower right': {'loc': 'lower right', 'bbox': None},
+        'lower left': {'loc': 'lower left', 'bbox': None},
+        'center': {'loc': 'center', 'bbox': None},
+        'best': {'loc': 'best', 'bbox': None},
+        'right': {'loc': 'center left', 'bbox': (1.05, 0.5)},
+        'left': {'loc': 'center right', 'bbox': (-0.05, 0.5)},
+        'above': {'loc': 'lower center', 'bbox': (0.5, 1.05)},
+        'below': {'loc': 'upper center', 'bbox': (0.5, -0.05)}
+    }
+    legend_params = legend_positions.get(legend_loc, {'loc': 'upper right', 'bbox': None})
+
+    ax1.set_xlabel('y (μm)', fontsize=label_size)
+    ax1.set_ylabel('Cu Conc. (mol/cc)', fontsize=label_size)
+    ax1.set_title(f'Cu at x = {Lx/2:.1f} μm, t = {t_val:.1f} s', fontsize=title_size)
+    ax1.legend(fontsize=8, loc=legend_params['loc'], bbox_to_anchor=legend_params['bbox'], frameon=legend_frameon, framealpha=legend_framealpha)
+    ax1.ticklabel_format(style='sci', axis='y', scilimits=(0, 0))
+
+    ax2.set_xlabel('y (μm)', fontsize=label_size)
+    ax2.set_ylabel('Ni Conc. (mol/cc)', fontsize=label_size)
+    ax2.set_title(f'Ni at x = {Lx/2:.1f} μm, t = {t_val:.1f} s', fontsize=title_size)
+    ax2.legend(fontsize=8, loc=legend_params['loc'], bbox_to_anchor=legend_params['bbox'], frameon=legend_frameon, framealpha=legend_framealpha)
+    ax2.ticklabel_format(style='sci', axis='y', scilimits=(0, 0))
+
+    ax3.barh(range(len(sidebar_data)), sidebar_data, color='gray', edgecolor='black')
+    ax3.set_yticks(range(len(sidebar_data)))
+    ax3.set_yticklabels(sidebar_labels, fontsize=tick_label_size)
+    ax3.set_xlabel(
+        'Mean Cu Conc. (mol/cc)' if sidebar_metric == 'mean_cu' else 'Mean Ni Conc. (mol/cc)' if sidebar_metric == 'mean_ni' else 'Loss',
+        fontsize=label_size
     )
+    ax3.set_title('Metric per Parameter', fontsize=title_size)
+    ax3.grid(True, axis='x', linestyle=grid_linestyle, alpha=grid_alpha)
+    ax3.ticklabel_format(style='sci', axis='x', scilimits=(0, 0))
 
-    # Save figure
+    fig.suptitle('Concentration Profiles for Parameter Sweep', fontsize=title_size)
+
     os.makedirs(output_dir, exist_ok=True)
-    base_filename = f"polar_t_{t_val:.1f}_ly_{Ly:.1f}"
-    fig.write_html(os.path.join(output_dir, f"{base_filename}.html"))
-    fig.write_image(os.path.join(output_dir, f"{base_filename}.png"), scale=2)
-
+    base_filename = f"conc_sweep_t_{t_val:.1f}"
+    plt.savefig(os.path.join(output_dir, f"{base_filename}.png"), dpi=300, bbox_inches='tight')
+    plt.savefig(os.path.join(output_dir, f"{base_filename}.pdf"), bbox_inches='tight')
+    plt.close(fig)
     return fig, base_filename
-
-# ... (the rest of the code remains unchanged) ...
 
 def main():
-    st.title("Publication-Quality Concentration Profiles with Boundary Condition Validation")
+    st.title("Publication-Quality Concentration Profiles and Flux Visualizations")
 
     # Load solutions
     solutions, params_list, lys, load_logs = load_solutions(SOLUTION_DIR)
@@ -535,9 +994,8 @@ def main():
             for log in load_logs:
                 st.write(log)
 
-    # Check if solutions were loaded
     if not solutions:
-        st.error("No valid solution files found in pinn_solutions directory. Please check the directory and file contents.")
+        st.error("No valid solution files found in pinn_solutions directory.")
         return
 
     st.write(f"Loaded {len(solutions)} solutions. Unique Ly: {len(set(lys))}")
@@ -545,60 +1003,22 @@ def main():
     # Compute boundary modes
     boundary_modes = compute_boundary_modes(solutions)
     
-    # Display boundary mode information
     st.subheader("Most Frequent Boundary Values Across All Solutions")
     if boundary_modes:
         col1, col2, col3, col4 = st.columns(4)
-        
         with col1:
-            st.metric(
-                "Top Boundary (Cu)", 
-                f"{boundary_modes['top_cu']:.2e} mol/cc",
-                f"±{boundary_modes['stats']['top_cu_std']:.1e}"
-            )
-            st.metric(
-                "Top Boundary (Ni)", 
-                f"{boundary_modes['top_ni']:.2e} mol/cc",
-                f"±{boundary_modes['stats']['top_ni_std']:.1e}"
-            )
-        
+            st.metric("Top Boundary (Cu)", f"{boundary_modes['top_cu']:.2e} mol/cc", f"±{boundary_modes['stats']['top_cu_std']:.1e}")
+            st.metric("Top Boundary (Ni)", f"{boundary_modes['top_ni']:.2e} mol/cc", f"±{boundary_modes['stats']['top_ni_std']:.1e}")
         with col2:
-            st.metric(
-                "Bottom Boundary (Cu)", 
-                f"{boundary_modes['bottom_cu']:.2e} mol/cc",
-                f"±{boundary_modes['stats']['bottom_cu_std']:.1e}"
-            )
-            st.metric(
-                "Bottom Boundary (Ni)", 
-                f"{boundary_modes['bottom_ni']:.2e} mol/cc",
-                f"±{boundary_modes['stats']['bottom_ni_std']:.1e}"
-            )
-        
+            st.metric("Bottom Boundary (Cu)", f"{boundary_modes['bottom_cu']:.2e} mol/cc", f"±{boundary_modes['stats']['bottom_cu_std']:.1e}")
+            st.metric("Bottom Boundary (Ni)", f"{boundary_modes['bottom_ni']:.2e} mol/cc", f"±{boundary_modes['stats']['bottom_ni_std']:.1e}")
         with col3:
-            st.metric(
-                "Left Boundary (Cu)", 
-                f"{boundary_modes['left_cu']:.2e} mol/cc",
-                f"±{boundary_modes['stats']['left_cu_std']:.1e}"
-            )
-            st.metric(
-                "Left Boundary (Ni)", 
-                f"{boundary_modes['left_ni']:.2e} mol/cc",
-                f"±{boundary_modes['stats']['left_ni_std']:.1e}"
-            )
-        
+            st.metric("Left Boundary (Cu)", f"{boundary_modes['left_cu']:.2e} mol/cc", f"±{boundary_modes['stats']['left_cu_std']:.1e}")
+            st.metric("Left Boundary (Ni)", f"{boundary_modes['left_ni']:.2e} mol/cc", f"±{boundary_modes['stats']['left_ni_std']:.1e}")
         with col4:
-            st.metric(
-                "Right Boundary (Cu)", 
-                f"{boundary_modes['right_cu']:.2e} mol/cc",
-                f"±{boundary_modes['stats']['right_cu_std']:.1e}"
-            )
-            st.metric(
-                "Right Boundary (Ni)", 
-                f"{boundary_modes['right_ni']:.2e} mol/cc",
-                f"±{boundary_modes['stats']['right_ni_std']:.1e}"
-            )
+            st.metric("Right Boundary (Cu)", f"{boundary_modes['right_cu']:.2e} mol/cc", f"±{boundary_modes['stats']['right_cu_std']:.1e}")
+            st.metric("Right Boundary (Ni)", f"{boundary_modes['right_ni']:.2e} mol/cc", f"±{boundary_modes['stats']['right_ni_std']:.1e}")
         
-        # Verbal summary
         st.info(
             f"**Boundary Value Summary:** The most common values across all loaded solutions are: "
             f"**{boundary_modes['top_cu']:.2e} mol/cc** for Cu and **{boundary_modes['top_ni']:.2e} mol/cc** for Ni at the top boundary, "
@@ -607,38 +1027,23 @@ def main():
             f"**{boundary_modes['right_cu']:.2e} mol/cc** for Cu and **{boundary_modes['right_ni']:.2e} mol/cc** for Ni at the right boundary."
         )
 
-    # Sort unique parameters
     lys = sorted(set(lys))
 
-    # Parameter selection for single solution
     st.subheader("Select Parameters for Single Solution")
     ly_choice = st.selectbox("Domain Height (Ly, μm)", options=lys, format_func=lambda x: f"{x:.1f}")
 
-    # Custom parameters for interpolation
     use_custom_params = st.checkbox("Use Custom Parameters for Interpolation", value=False)
     if use_custom_params:
-        ly_target = st.number_input(
-            "Custom Ly (μm)",
-            min_value=30.0,
-            max_value=120.0,
-            value=ly_choice,
-            step=0.1,
-            format="%.1f"
-        )
+        ly_target = st.number_input("Custom Ly (μm)", min_value=30.0, max_value=120.0, value=ly_choice, step=0.1, format="%.1f")
     else:
         ly_target = ly_choice
 
-    # Boundary condition validation section
     st.subheader("Boundary Condition Validation")
     if st.checkbox("Show Boundary Condition Validation", value=True):
         try:
-            # Load or interpolate solution
             solution = load_and_interpolate_solution(solutions, params_list, ly_target)
-            
-            # Validate boundary conditions
             bc_validation = validate_boundary_conditions(solution)
             
-            # Display validation results
             col1, col2 = st.columns(2)
             with col1:
                 st.write("**Boundary Condition Status:**")
@@ -650,7 +1055,6 @@ def main():
                 st.markdown(f"- Bottom BC (Cu = {C_CU_BOTTOM:.1e}): <span style='color:{status_color}'>{'✓ Satisfied' if bc_validation['bottom_bc_cu'] else '✗ Violated'}</span>", unsafe_allow_html=True)
                 status_color = "green" if bc_validation['bottom_bc_ni'] else "red"
                 st.markdown(f"- Bottom BC (Ni = {C_NI_BOTTOM:.1e}): <span style='color:{status_color}'>{'✓ Satisfied' if bc_validation['bottom_bc_ni'] else '✗ Violated'}</span>", unsafe_allow_html=True)
-            
             with col2:
                 status_color = "green" if bc_validation['left_flux_cu'] and bc_validation['left_flux_ni'] else "red"
                 st.markdown(f"- Left Flux: <span style='color:{status_color}'>{'✓ Satisfied' if bc_validation['left_flux_cu'] and bc_validation['left_flux_ni'] else '✗ Violated'}</span>", unsafe_allow_html=True)
@@ -664,37 +1068,32 @@ def main():
                 for detail in bc_validation['details']:
                     st.write(f"  - {detail}")
             
-            # Plot boundary profiles
             bc_time_index = st.slider("Select Time Index for Boundary Check", 0, len(solution['times'])-1, len(solution['times'])-1, key="bc_time")
             if st.button("Generate Boundary Profile Plots"):
-                try:
-                    fig_bc, filename_bc = plot_boundary_profiles(solution, bc_time_index)
-                    st.pyplot(fig_bc)
-                    st.download_button(
-                        label="Download Boundary Profiles as PNG",
-                        data=open(os.path.join("figures", f"{filename_bc}.png"), "rb").read(),
-                        file_name=f"{filename_bc}.png",
-                        mime="image/png"
-                    )
-                    st.download_button(
-                        label="Download Boundary Profiles as PDF",
-                        data=open(os.path.join("figures", f"{filename_bc}.pdf"), "rb").read(),
-                        file_name=f"{filename_bc}.pdf",
-                        mime="application/pdf"
-                    )
-                except Exception as e:
-                    st.error(f"Failed to generate boundary profile plot: {str(e)}")
+                fig_bc, filename_bc = plot_boundary_profiles(solution, bc_time_index)
+                st.pyplot(fig_bc)
+                st.download_button(
+                    label="Download Boundary Profiles as PNG",
+                    data=open(os.path.join("figures", f"{filename_bc}.png"), "rb").read(),
+                    file_name=f"{filename_bc}.png",
+                    mime="image/png"
+                )
+                st.download_button(
+                    label="Download Boundary Profiles as PDF",
+                    data=open(os.path.join("figures", f"{filename_bc}.pdf"), "rb").read(),
+                    file_name=f"{filename_bc}.pdf",
+                    mime="application/pdf"
+                )
                 
         except Exception as e:
             st.error(f"Failed during boundary validation: {str(e)}")
 
-    # Visualization settings
     st.subheader("Visualization Settings")
     cmap_cu = st.selectbox("Cu Heatmap Colormap", options=COLORMAPS, index=COLORMAPS.index('viridis'))
     cmap_ni = st.selectbox("Ni Heatmap Colormap", options=COLORMAPS, index=COLORMAPS.index('magma'))
+    cmap_sunburst = st.selectbox("Sunburst Chart Colormap", options=COLORMAPS, index=COLORMAPS.index('Viridis'))
     sidebar_metric = st.selectbox("Sidebar Metric for Curves", options=['mean_cu', 'mean_ni', 'loss'], index=0)
 
-    # Color scale limits
     st.subheader("Color Scale Limits")
     use_custom_scale = st.checkbox("Use custom color scale limits", value=False)
     custom_cu_min, custom_cu_max, custom_ni_min, custom_ni_max = None, None, None, None
@@ -709,7 +1108,6 @@ def main():
             custom_ni_min = st.number_input("Ni Min", value=0.0, format="%.2e", key="ni_min")
             custom_ni_max = st.number_input("Ni Max", value=float(np.max([sol['c2_preds'] for sol in solutions])), format="%.2e", key="ni_max")
 
-    # Validate color scale limits
     if custom_cu_min is not None and custom_cu_max is not None and custom_cu_min >= custom_cu_max:
         st.error("Cu minimum concentration must be less than maximum concentration.")
         return
@@ -717,22 +1115,12 @@ def main():
         st.error("Ni minimum concentration must be less than maximum concentration.")
         return
 
-    # Figure customization controls
     with st.expander("Figure Customization"):
         label_size = st.slider("Axis Label Size", min_value=8, max_value=20, value=12, step=1)
         title_size = st.slider("Title Size", min_value=10, max_value=24, value=14, step=1)
         tick_label_size = st.slider("Tick Label Size", min_value=6, max_value=16, value=10, step=1)
-        legend_loc = st.selectbox(
-            "Legend Location",
-            options=['upper right', 'upper left', 'lower right', 'lower left', 'center', 'best',
-                     'right', 'left', 'above', 'below'],
-            index=0
-        )
-        curve_colormap = st.selectbox(
-            "Curve Colormap",
-            options=['viridis', 'plasma', 'inferno', 'magma', 'tab10', 'Set1', 'Set2'],
-            index=4
-        )
+        legend_loc = st.selectbox("Legend Location", options=['upper right', 'upper left', 'lower right', 'lower left', 'center', 'best', 'right', 'left', 'above', 'below'], index=0)
+        curve_colormap = st.selectbox("Curve Colormap", options=['viridis', 'plasma', 'inferno', 'magma', 'tab10', 'Set1', 'Set2'], index=4)
         axis_linewidth = st.slider("Axis Line Width", min_value=0.5, max_value=3.0, value=1.5, step=0.1)
         tick_major_width = st.slider("Tick Major Width", min_value=0.5, max_value=3.0, value=1.5, step=0.1)
         tick_major_length = st.slider("Tick Major Length", min_value=2.0, max_value=10.0, value=4.0, step=0.5)
@@ -744,207 +1132,7 @@ def main():
         legend_frameon = st.checkbox("Show Legend Frame", value=True)
         legend_framealpha = st.slider("Legend Frame Opacity", min_value=0.0, max_value=1.0, value=0.8, step=0.1)
 
-    # Load or interpolate single solution
     try:
         solution = load_and_interpolate_solution(solutions, params_list, ly_target)
     except Exception as e:
-        st.error(f"Failed to load or interpolate solution: {str(e)}")
-        return
-
-    # Display solution details
-    st.subheader("Solution Details")
-    st.write(f"$L_y$ = {solution['params']['Ly']:.1f} μm")
-    st.write(f"$C_{{Cu}}$ (bottom) = {C_CU_BOTTOM:.1e} mol/cc, $C_{{Cu}}$ (top) = {C_CU_TOP:.1e} mol/cc")
-    st.write(f"$C_{{Ni}}$ (bottom) = {C_NI_BOTTOM:.1e} mol/cc, $C_{{Ni}}$ (top) = {C_NI_TOP:.1e} mol/cc")
-    if solution.get('interpolated', False):
-        st.write("**Status**: Interpolated solution")
-    else:
-        st.write("**Status**: Exact solution")
-
-    # 2D Concentration Heatmaps
-    st.subheader("2D Concentration Heatmaps")
-    time_index = st.slider("Select Time Index for Heatmaps", 0, len(solution['times'])-1, len(solution['times'])-1)
-    fig_2d, filename_2d = plot_2d_concentration(
-        solution, time_index, cmap_cu=cmap_cu, cmap_ni=cmap_ni,
-        vmin_cu=custom_cu_min if use_custom_scale else None,
-        vmax_cu=custom_cu_max if use_custom_scale else None,
-        vmin_ni=custom_ni_min if use_custom_scale else None,
-        vmax_ni=custom_ni_max if use_custom_scale else None
-    )
-    st.pyplot(fig_2d)
-    st.download_button(
-        label="Download 2D Plot as PNG",
-        data=open(os.path.join("figures", f"{filename_2d}.png"), "rb").read(),
-        file_name=f"{filename_2d}.png",
-        mime="image/png"
-    )
-    st.download_button(
-        label="Download 2D Plot as PDF",
-        data=open(os.path.join("figures", f"{filename_2d}.pdf"), "rb").read(),
-        file_name=f"{filename_2d}.pdf",
-        mime="application/pdf"
-    )
-
-    # Centerline Concentration Curves
-    st.subheader("Centerline Concentration Curves")
-    time_indices = st.multiselect(
-        "Select Time Indices for Curves",
-        options=list(range(len(solution['times']))),
-        default=[0, len(solution['times'])//4, len(solution['times'])//2, 3*len(solution['times'])//4, len(solution['times'])-1],
-        format_func=lambda x: f"t = {solution['times'][x]:.1f} s"
-    )
-    if time_indices:
-        fig_curves, filename_curves = plot_centerline_curves(
-            solution, time_indices, sidebar_metric=sidebar_metric,
-            label_size=label_size, title_size=title_size, tick_label_size=tick_label_size,
-            legend_loc=legend_loc, curve_colormap=curve_colormap,
-            axis_linewidth=axis_linewidth, tick_major_width=tick_major_width,
-            tick_major_length=tick_major_length, fig_width=fig_width, fig_height=fig_height,
-            curve_linewidth=curve_linewidth, grid_alpha=grid_alpha, grid_linestyle=grid_linestyle,
-            legend_frameon=legend_frameon, legend_framealpha=legend_framealpha
-        )
-        st.pyplot(fig_curves)
-        st.download_button(
-            label="Download Centerline Plot as PNG",
-            data=open(os.path.join("figures", f"{filename_curves}.png"), "rb").read(),
-            file_name=f"{filename_curves}.png",
-            mime="image/png"
-        )
-        st.download_button(
-            label="Download Centerline Plot as PDF",
-            data=open(os.path.join("figures", f"{filename_curves}.pdf"), "rb").read(),
-            file_name=f"{filename_curves}.pdf",
-            mime="application/pdf"
-        )
-
-    # Parameter Sweep Curves
-    st.subheader("Parameter Sweep Curves")
-    with st.expander("Add Custom Parameter Combinations for Sweep"):
-        num_custom_params = st.number_input("Number of Custom Parameter Sets", min_value=0, max_value=5, value=0, step=1)
-        custom_params = []
-        for i in range(num_custom_params):
-            st.write(f"Custom Parameter Set {i+1}")
-            ly_custom = st.number_input(
-                f"Custom Ly (μm) {i+1}",
-                min_value=30.0,
-                max_value=120.0,
-                value=ly_choice,
-                step=0.1,
-                format="%.1f",
-                key=f"ly_custom_{i}"
-            )
-            custom_params.append((ly_custom,))
-
-    param_options = [(ly,) for ly in lys]
-    param_labels = [f"$L_y$={ly:.1f}" for ly in lys]
-    default_params = param_options[:min(4, len(param_options))]
-    selected_labels = st.multiselect(
-        "Select Exact Parameter Combinations",
-        options=param_labels,
-        default=[param_labels[param_options.index(p)] for p in default_params],
-        format_func=lambda x: x
-    )
-    selected_params = [param_options[param_labels.index(label)] for label in selected_labels]
-    selected_params.extend(custom_params)
-
-    # Generate solutions for selected parameters (exact or interpolated)
-    sweep_solutions = []
-    sweep_params_list = []
-    for params in selected_params:
-        ly = params[0]
-        try:
-            sol = load_and_interpolate_solution(solutions, params_list, ly)
-            sweep_solutions.append(sol)
-            sweep_params_list.append(params)
-        except Exception as e:
-            st.warning(f"Failed to load or interpolate solution for Ly={ly:.1f}: {str(e)}")
-
-    sweep_time_index = st.slider("Select Time Index for Sweep", 0, len(solution['times'])-1, len(solution['times'])-1)
-    if sweep_solutions and sweep_params_list:
-        fig_sweep, filename_sweep = plot_parameter_sweep(
-            sweep_solutions, sweep_params_list, sweep_params_list, sweep_time_index, sidebar_metric=sidebar_metric,
-            label_size=label_size, title_size=title_size, tick_label_size=tick_label_size,
-            legend_loc=legend_loc, curve_colormap=curve_colormap,
-            axis_linewidth=axis_linewidth, tick_major_width=tick_major_width,
-            tick_major_length=tick_major_length, fig_width=fig_width, fig_height=fig_height,
-            curve_linewidth=curve_linewidth, grid_alpha=grid_alpha, grid_linestyle=grid_linestyle,
-            legend_frameon=legend_frameon, legend_framealpha=legend_framealpha
-        )
-        st.pyplot(fig_sweep)
-        st.download_button(
-            label="Download Sweep Plot as PNG",
-            data=open(os.path.join("figures", f"{filename_sweep}.png"), "rb").read(),
-            file_name=f"{filename_sweep}.png",
-            mime="image/png"
-        )
-        st.download_button(
-            label="Download Sweep Plot as PDF",
-            data=open(os.path.join("figures", f"{filename_sweep}.pdf"), "rb").read(),
-            file_name=f"{filename_sweep}.pdf",
-            mime="application/pdf"
-        )
-
-    # Advanced Visualizations
-    st.subheader("Advanced Visualizations")
-    adv_vis_type = st.selectbox("Select Visualization Type", options=['Sunburst Chart', 'Radar Chart', 'Polar Chart'], index=0)
-    
-    # Select time index for advanced visualization
-    adv_time_index = st.slider("Select Time Index for Advanced Visualization", 0, len(solution['times'])-1, len(solution['times'])-1)
-    
-    if adv_vis_type == 'Sunburst Chart':
-        fig_sunburst, filename_sunburst = plot_sunburst_chart(solution, adv_time_index)
-        st.plotly_chart(fig_sunburst, use_container_width=True)
-        st.download_button(
-            label="Download Sunburst Chart as HTML",
-            data=open(os.path.join("figures", f"{filename_sunburst}.html"), "rb").read(),
-            file_name=f"{filename_sunburst}.html",
-            mime="text/html"
-        )
-        st.download_button(
-            label="Download Sunburst Chart as PNG",
-            data=open(os.path.join("figures", f"{filename_sunburst}.png"), "rb").read(),
-            file_name=f"{filename_sunburst}.png",
-            mime="image/png"
-        )
-    
-    elif adv_vis_type == 'Radar Chart':
-        adv_time_indices = st.multiselect(
-            "Select Time Indices for Radar Chart",
-            options=list(range(len(solution['times']))),
-            default=[0, len(solution['times'])//4, len(solution['times'])//2, 3*len(solution['times'])//4, len(solution['times'])-1],
-            format_func=lambda x: f"t = {solution['times'][x]:.1f} s"
-        )
-        if adv_time_indices:
-            fig_radar, filename_radar = plot_radar_chart(solution, adv_time_indices)
-            st.plotly_chart(fig_radar, use_container_width=True)
-            st.download_button(
-                label="Download Radar Chart as HTML",
-                data=open(os.path.join("figures", f"{filename_radar}.html"), "rb").read(),
-                file_name=f"{filename_radar}.html",
-                mime="text/html"
-            )
-            st.download_button(
-                label="Download Radar Chart as PNG",
-                data=open(os.path.join("figures", f"{filename_radar}.png"), "rb").read(),
-                file_name=f"{filename_radar}.png",
-                mime="image/png"
-            )
-    
-    elif adv_vis_type == 'Polar Chart':
-        fig_polar, filename_polar = plot_polar_chart(solution, adv_time_index)
-        st.plotly_chart(fig_polar, use_container_width=True)
-        st.download_button(
-            label="Download Polar Chart as HTML",
-            data=open(os.path.join("figures", f"{filename_polar}.html"), "rb").read(),
-            file_name=f"{filename_polar}.html",
-            mime="text/html"
-        )
-        st.download_button(
-            label="Download Polar Chart as PNG",
-            data=open(os.path.join("figures", f"{filename_polar}.png"), "rb").read(),
-            file_name=f"{filename_polar}.png",
-            mime="image/png"
-        )
-
-if __name__ == "__main__":
-    main()
+        st.error(f"Failed to load or interpolate
