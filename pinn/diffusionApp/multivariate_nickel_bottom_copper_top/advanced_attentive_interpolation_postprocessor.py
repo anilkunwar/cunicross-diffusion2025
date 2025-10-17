@@ -13,6 +13,12 @@ pio.kaleido.scope.default_height = 800
 
 SOLUTION_DIR = Path(__file__).parent / "pinn_solutions"
 
+# Fixed boundary conditions
+C_CU_TOP = 0.0
+C_CU_BOTTOM = 1.6e-3
+C_NI_TOP = 1.25e-3
+C_NI_BOTTOM = 0.0
+
 # === Load solutions ===
 @st.cache_data
 def load_solutions(solution_dir):
@@ -38,7 +44,7 @@ def safe_save(fig, output_dir, base_filename):
     try:
         fig.write_image(os.path.join(output_dir, f"{base_filename}.png"), scale=2)
     except Exception as e:
-        st.warning(f"⚠️ PNG export failed: {e}")
+        st.warning(f"PNG export failed: {e}")
     fig.write_html(os.path.join(output_dir, f"{base_filename}.html"))
 
 # === Utility: get concentration at center ===
@@ -48,95 +54,161 @@ def get_center_conc(solution, species="Cu"):
     center_idx_y = c_all.shape[2] // 2  # Ly/2
     return [c_all[t_idx, center_idx_x, center_idx_y] for t_idx in range(len(solution['times']))]
 
-# === Polar chart (concentration as radial, time as theta, center point) ===
-def plot_polar_chart_center(solutions, selected_lys, species="Cu", output_dir="figures"):
+# === Radar chart for Cu concentration ===
+def plot_radar_chart_cu(solutions, selected_lys, output_dir="figures"):
+    categories = ['y=0 (Bottom)', 'y=Ly/4', 'y=Ly/2 (Center)', 'y=3Ly/4', 'y=Ly (Top)']
     fig = go.Figure()
-    for ly_choice in selected_lys:
+    
+    colors = ['blue', 'red']  # Colors for Ly=30 and Ly=120
+    for idx, ly_choice in enumerate(selected_lys):
         solution = next((sol for sol in solutions if abs(sol['params']['Ly'] - ly_choice) < 0.1), None)
         if solution:
             times = solution['times']
-            conc = get_center_conc(solution, species)
-            theta = np.linspace(0, 2 * np.pi, len(times))
+            c_all = solution['c1_preds']  # Cu concentrations
+            center_idx_x = c_all.shape[1] // 2  # Lx/2
+            y_coords = solution['Y'][0, :]
+            y_indices = [0, len(y_coords)//4, len(y_coords)//2, 3*len(y_coords)//4, -1]  # Bottom, Ly/4, Center, 3Ly/4, Top
             
-            fig.add_trace(go.Scatterpolar(
-                r=conc,
-                theta=theta * 180 / np.pi,
-                mode="lines+markers",
-                name=f"Ly={ly_choice:.1f}",
-                marker=dict(size=6, symbol="circle"),
-                hovertemplate="Time=%{theta:.1f}°, Conc=%{r:.2e}<extra></extra>"
-            ))
+            # Sample time points with increased step size
+            time_indices = np.linspace(0, len(times)-1, 5, dtype=int)  # 5 time points
+            for t_idx in time_indices:
+                t_val = times[t_idx]
+                conc = [c_all[t_idx, center_idx_x, y_idx] for y_idx in y_indices]
+                fig.add_trace(go.Scatterpolar(
+                    r=[t_val] * len(categories),  # Time as radial axis
+                    theta=categories,
+                    mode="markers+lines",
+                    marker=dict(size=8, color=conc, colorscale="Viridis", showscale=(idx==0 and t_idx==time_indices[0]), colorbar_title="Cu Conc. (mol/cc)"),
+                    line=dict(color=colors[idx], width=2),
+                    name=f"Ly={ly_choice:.1f}, t={t_val:.1f}s",
+                    hovertemplate=f"Ly={ly_choice:.1f}, t={t_val:.1f}s<br>%{{theta}}: %{{marker.color:.2e}}<extra></extra>"
+                ))
 
     fig.update_layout(
-        title=f"{species} Concentration Evolution at Center (Lx/2=30 μm)<br>Concentration (radial), Time (angular)",
+        title="Cu Concentration Evolution at Centerline (x=Lx/2)<br>Time (radial), Position (angular)",
         polar=dict(
-            radialaxis=dict(
-                visible=True,
-                title="Concentration (mol/cc)",
-                tickformat=".2e"
-            ),
-            angularaxis=dict(
-                visible=True,
-                rotation=90,
-                direction="counterclockwise",
-                tickvals=[0, 90, 180, 270, 360],
-                ticktext=[f"{t:.1f}s" for t in [times[0], times[len(times)//4], times[len(times)//2], times[3*len(times)//4], times[-1]]]
-            )
+            radialaxis=dict(visible=True, title="Time (s)"),
+            angularaxis=dict(visible=True)
         ),
         showlegend=True,
         font=dict(size=12),
         margin=dict(l=50, r=50, t=100, b=50),
+        legend=dict(yanchor="top", y=0.99, xanchor="right", x=0.99)
     )
     
-    base_filename = f"polar_center_{species.lower()}_lys_{'_'.join([str(ly) for ly in selected_lys])}"
+    base_filename = f"radar_cu_lys_{'_'.join([str(ly) for ly in selected_lys])}"
+    safe_save(fig, output_dir, base_filename)
+    return fig, base_filename
+
+# === Radar chart for Ni concentration ===
+def plot_radar_chart_ni(solutions, selected_lys, output_dir="figures"):
+    categories = ['y=0 (Bottom)', 'y=Ly/4', 'y=Ly/2 (Center)', 'y=3Ly/4', 'y=Ly (Top)']
+    fig = go.Figure()
+    
+    colors = ['blue', 'red']  # Colors for Ly=30 and Ly=120
+    for idx, ly_choice in enumerate(selected_lys):
+        solution = next((sol for sol in solutions if abs(sol['params']['Ly'] - ly_choice) < 0.1), None)
+        if solution:
+            times = solution['times']
+            c_all = solution['c2_preds']  # Ni concentrations
+            center_idx_x = c_all.shape[1] // 2  # Lx/2
+            y_coords = solution['Y'][0, :]
+            y_indices = [0, len(y_coords)//4, len(y_coords)//2, 3*len(y_coords)//4, -1]  # Bottom, Ly/4, Center, 3Ly/4, Top
+            
+            # Sample time points with increased step size
+            time_indices = np.linspace(0, len(times)-1, 5, dtype=int)  # 5 time points
+            for t_idx in time_indices:
+                t_val = times[t_idx]
+                conc = [c_all[t_idx, center_idx_x, y_idx] for y_idx in y_indices]
+                fig.add_trace(go.Scatterpolar(
+                    r=[t_val] * len(categories),  # Time as radial axis
+                    theta=categories,
+                    mode="markers+lines",
+                    marker=dict(size=8, color=conc, colorscale="Magma", showscale=(idx==0 and t_idx==time_indices[0]), colorbar_title="Ni Conc. (mol/cc)"),
+                    line=dict(color=colors[idx], width=2),
+                    name=f"Ly={ly_choice:.1f}, t={t_val:.1f}s",
+                    hovertemplate=f"Ly={ly_choice:.1f}, t={t_val:.1f}s<br>%{{theta}}: %{{marker.color:.2e}}<extra></extra>"
+                ))
+
+    fig.update_layout(
+        title="Ni Concentration Evolution at Centerline (x=Lx/2)<br>Time (radial), Position (angular)",
+        polar=dict(
+            radialaxis=dict(visible=True, title="Time (s)"),
+            angularaxis=dict(visible=True)
+        ),
+        showlegend=True,
+        font=dict(size=12),
+        margin=dict(l=50, r=50, t=100, b=50),
+        legend=dict(yanchor="top", y=0.99, xanchor="right", x=0.99)
+    )
+    
+    base_filename = f"radar_ni_lys_{'_'.join([str(ly) for ly in selected_lys])}"
     safe_save(fig, output_dir, base_filename)
     return fig, base_filename
 
 # === Streamlit App ===
 def main():
-    st.title("🔬 PINN Center Concentration Evolution")
+    st.title("🔬 PINN Cu and Ni Concentration Evolution at Centerline")
 
     # Load solutions
     solutions, lys = load_solutions(SOLUTION_DIR)
     if not solutions:
+        st.error("No valid solutions found.")
         return
 
-    # Ly selection (multiple)
-    st.subheader("Select Domain Heights (Ly)")
-    selected_lys = st.multiselect(
-        "Select Ly values to compare (up to 4)",
-        options=lys,
-        default=lys[:min(4, len(lys))],
-        format_func=lambda x: f"{x:.1f} μm"
-    )
+    # Filter for Ly=30 and Ly=120
+    selected_lys = [ly for ly in [30.0, 120.0] if ly in lys]
+    if not selected_lys:
+        st.error("Solutions for Ly=30 or Ly=120 not found.")
+        return
 
-    # Species selection
-    species = st.selectbox("Select Species", ["Cu", "Ni"])
+    st.subheader("Cu Concentration Radar Chart")
+    fig_cu, filename_cu = plot_radar_chart_cu(solutions, selected_lys)
+    st.plotly_chart(fig_cu, use_container_width=True)
 
-    if selected_lys:
-        st.subheader(f"{species} Concentration at Center (Lx/2=30 μm, Ly/2)")
-        fig, filename = plot_polar_chart_center(solutions, selected_lys, species=species)
-        st.plotly_chart(fig, use_container_width=True)
+    # Download buttons for Cu chart
+    html_path_cu = os.path.join("figures", f"{filename_cu}.html")
+    if os.path.exists(html_path_cu):
+        st.download_button(
+            "⬇️ Download Cu Radar Chart (HTML)",
+            data=open(html_path_cu, "rb").read(),
+            file_name=f"{filename_cu}.html",
+            mime="text/html"
+        )
+    png_path_cu = os.path.join("figures", f"{filename_cu}.png")
+    if os.path.exists(png_path_cu):
+        st.download_button(
+            "⬇️ Download Cu Radar Chart (PNG)",
+            data=open(png_path_cu, "rb").read(),
+            file_name=f"{filename_cu}.png",
+            mime="image/png"
+        )
+    else:
+        st.info("PNG export unavailable (Kaleido not installed).")
 
-        # Download buttons
-        html_path = os.path.join("figures", f"{filename}.html")
-        if os.path.exists(html_path):
-            st.download_button(
-                "⬇️ Download Polar Chart (HTML)",
-                data=open(html_path, "rb").read(),
-                file_name=f"{filename}.html",
-                mime="text/html"
-            )
-        png_path = os.path.join("figures", f"{filename}.png")
-        if os.path.exists(png_path):
-            st.download_button(
-                "⬇️ Download Polar Chart (PNG)",
-                data=open(png_path, "rb").read(),
-                file_name=f"{filename}.png",
-                mime="image/png"
-            )
-        else:
-            st.info("PNG export unavailable (Kaleido not installed).")
+    st.subheader("Ni Concentration Radar Chart")
+    fig_ni, filename_ni = plot_radar_chart_ni(solutions, selected_lys)
+    st.plotly_chart(fig_ni, use_container_width=True)
+
+    # Download buttons for Ni chart
+    html_path_ni = os.path.join("figures", f"{filename_ni}.html")
+    if os.path.exists(html_path_ni):
+        st.download_button(
+            "⬇️ Download Ni Radar Chart (HTML)",
+            data=open(html_path_ni, "rb").read(),
+            file_name=f"{filename_ni}.html",
+            mime="text/html"
+        )
+    png_path_ni = os.path.join("figures", f"{filename_ni}.png")
+    if os.path.exists(png_path_ni):
+        st.download_button(
+            "⬇️ Download Ni Radar Chart (PNG)",
+            data=open(png_path_ni, "rb").read(),
+            file_name=f"{filename_ni}.png",
+            mime="image/png"
+        )
+    else:
+        st.info("PNG export unavailable (Kaleido not installed).")
 
 if __name__ == "__main__":
     main()
