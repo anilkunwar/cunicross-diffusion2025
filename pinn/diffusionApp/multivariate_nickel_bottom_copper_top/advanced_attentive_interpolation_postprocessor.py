@@ -6,10 +6,10 @@ import plotly.graph_objects as go
 from pathlib import Path
 import plotly.io as pio
 
-# === Optional: Kaleido default settings ===
+# === Kaleido default settings ===
 pio.kaleido.scope.default_format = "png"
-pio.kaleido.scope.default_width = 800
-pio.kaleido.scope.default_height = 600
+pio.kaleido.scope.default_width = 1000
+pio.kaleido.scope.default_height = 800
 
 SOLUTION_DIR = Path(__file__).parent / "pinn_solutions"
 
@@ -29,16 +29,19 @@ def load_solutions(solution_dir):
                             np.all(sol['c1_preds'] == 0) or np.all(sol['c2_preds'] == 0)):
                         solutions.append(sol)
                         lys.append(sol['params']['Ly'])
-            except Exception:
+            except Exception as e:
+                st.warning(f"Failed to load {fname}: {str(e)}")
                 continue
+    if not solutions:
+        st.error("No valid solutions found in pinn_solutions directory.")
     return solutions, sorted(set(lys))
 
 def safe_save(fig, output_dir, base_filename):
     os.makedirs(output_dir, exist_ok=True)
     try:
-        fig.write_image(os.path.join(output_dir, f"{base_filename}.png"))
+        fig.write_image(os.path.join(output_dir, f"{base_filename}.png"), scale=2)
     except Exception as e:
-        st.warning(f"⚠️ PNG export failed (Kaleido issue likely): {e}")
+        st.warning(f"PNG export failed: {e}")
     fig.write_html(os.path.join(output_dir, f"{base_filename}.html"))
 
 # === Polar chart (concentration as radial axis, center point only) ===
@@ -56,7 +59,12 @@ def plot_polar_chart_center(solution, output_dir="figures"):
     
     # Use time as angular coordinate
     theta = np.linspace(0, 2 * np.pi, len(times))
-
+    
+    # Normalize concentrations for better visualization
+    max_conc = max(max(cu_conc, default=1e-10), max(ni_conc, default=1e-10))
+    cu_conc = [c / max_conc for c in cu_conc]
+    ni_conc = [c / max_conc for c in ni_conc]
+    
     fig = go.Figure()
     # Cu concentration as radial axis
     fig.add_trace(go.Scatterpolar(
@@ -64,9 +72,9 @@ def plot_polar_chart_center(solution, output_dir="figures"):
         theta=theta * 180 / np.pi,
         mode="lines+markers",
         name="Cu",
-        line=dict(color="blue"),
-        marker=dict(size=6),
-        hovertemplate="Time=%{theta:.1f}°, Cu Conc=%{r:.2e}<extra></extra>"
+        line=dict(color="blue", width=2),
+        marker=dict(size=8, symbol="circle"),
+        hovertemplate="Time=%{theta:.1f}°, Cu Conc=%{r:.2e} (norm)<extra></extra>"
     ))
     # Ni concentration as radial axis
     fig.add_trace(go.Scatterpolar(
@@ -74,28 +82,47 @@ def plot_polar_chart_center(solution, output_dir="figures"):
         theta=theta * 180 / np.pi,
         mode="lines+markers",
         name="Ni",
-        line=dict(color="red"),
-        marker=dict(size=6),
-        hovertemplate="Time=%{theta:.1f}°, Ni Conc=%{r:.2e}<extra></extra>"
+        line=dict(color="red", width=2),
+        marker=dict(size=8, symbol="circle"),
+        hovertemplate="Time=%{theta:.1f}°, Ni Conc=%{r:.2e} (norm)<extra></extra>"
     ))
     
+    # Customize angular axis to show time values
+    time_ticks = [times[i] for i in [0, len(times)//4, len(times)//2, 3*len(times)//4, len(times)-1]]
+    theta_ticks = [0, 90, 180, 270, 360]
+    
     fig.update_layout(
-        title=f"Concentration Evolution at Center (Lx/2, Ly/2)<br>Ly={Ly:.1f} μm, Lx=60 μm",
+        title={
+            'text': f"Concentration Evolution at Center (Lx/2 = 30 μm, Ly/2 = {Ly/2:.1f} μm)<br>Normalized Concentrations",
+            'y': 0.95,
+            'x': 0.5,
+            'xanchor': 'center',
+            'yanchor': 'top'
+        },
         polar=dict(
             radialaxis=dict(
                 visible=True,
-                title="Concentration (mol/cc)",
-                tickformat=".2e"
+                title="Normalized Concentration",
+                range=[0, 1.1],
+                tickformat=".2f"
             ),
             angularaxis=dict(
                 visible=True,
                 rotation=90,
                 direction="counterclockwise",
-                tickvals=[0, 90, 180, 270],
-                ticktext=[f"{t:.1f}s" for t in [times[0], times[len(times)//4], times[len(times)//2], times[-1]]]
+                tickvals=theta_ticks,
+                ticktext=[f"{t:.1f}s" for t in time_ticks]
             )
         ),
-        showlegend=True
+        showlegend=True,
+        font=dict(size=12),
+        margin=dict(l=50, r=50, t=100, b=50),
+        legend=dict(
+            yanchor="top",
+            y=0.99,
+            xanchor="right",
+            x=0.99
+        )
     )
     
     base_filename = f"polar_center_ly_{Ly:.1f}"
@@ -109,7 +136,6 @@ def main():
     # Load solutions
     solutions, lys = load_solutions(SOLUTION_DIR)
     if not solutions:
-        st.error("No valid solutions found.")
         return
 
     # Ly selection
@@ -135,7 +161,7 @@ def main():
     html_path = os.path.join("figures", f"{filename}.html")
     if os.path.exists(html_path):
         st.download_button(
-            f"⬇️ Download Polar Chart (HTML)",
+            "⬇️ Download Polar Chart (HTML)",
             data=open(html_path, "rb").read(),
             file_name=f"{filename}.html",
             mime="text/html"
@@ -143,13 +169,13 @@ def main():
     png_path = os.path.join("figures", f"{filename}.png")
     if os.path.exists(png_path):
         st.download_button(
-            f"⬇️ Download Polar Chart (PNG)",
+            "⬇️ Download Polar Chart (PNG)",
             data=open(png_path, "rb").read(),
             file_name=f"{filename}.png",
             mime="image/png"
         )
     else:
-        st.info("PNG export unavailable (Chrome/Kaleido not installed).")
+        st.info("PNG export unavailable (Kaleido not installed).")
 
 if __name__ == "__main__":
     main()
