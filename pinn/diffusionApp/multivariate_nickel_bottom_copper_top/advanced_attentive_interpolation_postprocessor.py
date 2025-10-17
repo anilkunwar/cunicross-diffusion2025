@@ -3,11 +3,17 @@ import pickle
 import numpy as np
 import streamlit as st
 import plotly.graph_objects as go
-import plotly.express as px
 from pathlib import Path
+import plotly.io as pio
+
+# === Optional: Configure Kaleido defaults ===
+pio.kaleido.scope.default_format = "png"
+pio.kaleido.scope.default_width = 800
+pio.kaleido.scope.default_height = 600
 
 SOLUTION_DIR = Path(__file__).parent / "pinn_solutions"
 
+# === Load PINN Solutions ===
 @st.cache_data
 def load_solutions(solution_dir):
     solutions = []
@@ -27,11 +33,21 @@ def load_solutions(solution_dir):
                 continue
     return solutions, sorted(set(lys))
 
+# === Safe file saving helper ===
+def safe_save(fig, output_dir, base_filename):
+    os.makedirs(output_dir, exist_ok=True)
+    try:
+        fig.write_image(os.path.join(output_dir, f"{base_filename}.png"), format="png")
+    except Exception as e:
+        st.warning(f"⚠️ PNG export failed (Kaleido issue likely): {e}")
+    fig.write_html(os.path.join(output_dir, f"{base_filename}.html"))
+
+# === Sunburst Chart ===
 def plot_sunburst_chart(solution, time_index, output_dir="figures"):
     t_val = solution['times'][time_index]
     Ly = solution['params']['Ly']
-    c1 = solution['c1_preds'][time_index]  # Cu concentration
-    c2 = solution['c2_preds'][time_index]  # Ni concentration
+    c1 = solution['c1_preds'][time_index]
+    c2 = solution['c2_preds'][time_index]
     
     # Sample data at specific points
     points = ['Top', 'Bottom', 'Left', 'Right', 'Center']
@@ -40,14 +56,14 @@ def plot_sunburst_chart(solution, time_index, output_dir="figures"):
         np.mean(c1[:, 0]),   # Bottom
         np.mean(c1[0, :]),   # Left
         np.mean(c1[-1, :]),  # Right
-        c1[25, 25]           # Center
+        c1[c1.shape[0]//2, c1.shape[1]//2]  # Center
     ]
     ni_values = [
         np.mean(c2[:, -1]),  # Top
         np.mean(c2[:, 0]),   # Bottom
         np.mean(c2[0, :]),   # Left
         np.mean(c2[-1, :]),  # Right
-        c2[25, 25]           # Center
+        c2[c2.shape[0]//2, c2.shape[1]//2]  # Center
     ]
     
     # Prepare data for sunburst
@@ -69,14 +85,12 @@ def plot_sunburst_chart(solution, time_index, output_dir="figures"):
         title=f"Concentration Sunburst Chart<br>Ly = {Ly:.1f} μm, t = {t_val:.1f} s",
         margin=dict(t=50, l=0, r=0, b=0)
     )
-    
-    os.makedirs(output_dir, exist_ok=True)
+
     base_filename = f"sunburst_t_{t_val:.1f}_ly_{Ly:.1f}"
-    fig.write_image(os.path.join(output_dir, f"{base_filename}.png"), format="png")
-    fig.write_html(os.path.join(output_dir, f"{base_filename}.html"))
-    
+    safe_save(fig, output_dir, base_filename)
     return fig, base_filename
 
+# === Radar Chart ===
 def plot_radar_chart(solution, time_indices, output_dir="figures"):
     Ly = solution['params']['Ly']
     categories = ['Top', 'Bottom', 'Left', 'Right', 'Center']
@@ -88,18 +102,18 @@ def plot_radar_chart(solution, time_indices, output_dir="figures"):
         c2 = solution['c2_preds'][t_idx]
         
         cu_values = [
-            np.mean(c1[:, -1]),  # Top
-            np.mean(c1[:, 0]),   # Bottom
-            np.mean(c1[0, :]),   # Left
-            np.mean(c1[-1, :]),  # Right
-            c1[25, 25]           # Center
+            np.mean(c1[:, -1]),
+            np.mean(c1[:, 0]),
+            np.mean(c1[0, :]),
+            np.mean(c1[-1, :]),
+            c1[c1.shape[0]//2, c1.shape[1]//2]
         ]
         ni_values = [
-            np.mean(c2[:, -1]),  # Top
-            np.mean(c2[:, 0]),   # Bottom
-            np.mean(c2[0, :]),   # Left
-            np.mean(c2[-1, :]),  # Right
-            c2[25, 25]           # Center
+            np.mean(c2[:, -1]),
+            np.mean(c2[:, 0]),
+            np.mean(c2[0, :]),
+            np.mean(c2[-1, :]),
+            c2[c2.shape[0]//2, c2.shape[1]//2]
         ]
         
         fig.add_trace(go.Scatterpolar(
@@ -125,22 +139,20 @@ def plot_radar_chart(solution, time_indices, output_dir="figures"):
         ),
         showlegend=True
     )
-    
-    os.makedirs(output_dir, exist_ok=True)
+
     base_filename = f"radar_ly_{Ly:.1f}"
-    fig.write_image(os.path.join(output_dir, f"{base_filename}.png"), format="png")
-    fig.write_html(os.path.join(output_dir, f"{base_filename}.html"))
-    
+    safe_save(fig, output_dir, base_filename)
     return fig, base_filename
 
+# === Polar Chart ===
 def plot_polar_chart(solution, time_index, output_dir="figures"):
     t_val = solution['times'][time_index]
     Ly = solution['params']['Ly']
     c1 = solution['c1_preds'][time_index]
     c2 = solution['c2_preds'][time_index]
     
-    # Sample along centerline (x = Lx/2)
-    center_idx = 25
+    # Sample along centerline
+    center_idx = c1.shape[1] // 2
     theta = np.linspace(0, 2 * np.pi, len(c1[:, center_idx]))
     
     fig = go.Figure()
@@ -171,20 +183,17 @@ def plot_polar_chart(solution, time_index, output_dir="figures"):
         ),
         showlegend=True
     )
-    
-    os.makedirs(output_dir, exist_ok=True)
+
     base_filename = f"polar_t_{t_val:.1f}_ly_{Ly:.1f}"
-    fig.write_image(os.path.join(output_dir, f"{base_filename}.png"), format="png")
-    fig.write_html(os.path.join(output_dir, f"{base_filename}.html"))
-    
+    safe_save(fig, output_dir, base_filename)
     return fig, base_filename
 
+# === Main App ===
 def main():
-    st.title("PINN Solution Visualization")
+    st.title("📊 PINN Solution Visualization")
 
     # Load solutions
     solutions, lys = load_solutions(SOLUTION_DIR)
-
     if not solutions:
         st.error("No valid solution files found in pinn_solutions directory.")
         return
@@ -193,12 +202,7 @@ def main():
     ly_choice = st.selectbox("Domain Height (Ly, μm)", options=lys, format_func=lambda x: f"{x:.1f}")
 
     # Select solution
-    solution = None
-    for sol in solutions:
-        if abs(sol['params']['Ly'] - ly_choice) < 0.1:
-            solution = sol
-            break
-
+    solution = next((sol for sol in solutions if abs(sol['params']['Ly'] - ly_choice) < 0.1), None)
     if not solution:
         st.error("No matching solution found.")
         return
@@ -218,54 +222,40 @@ def main():
     else:
         time_index = st.slider("Select Time Index", 0, len(solution['times'])-1, len(solution['times'])-1)
 
-    # Generate and display chart
+    # === Chart generation ===
     if chart_type == 'Sunburst Chart':
         fig, filename = plot_sunburst_chart(solution, time_index)
-        st.plotly_chart(fig, use_container_width=True)
-        st.download_button(
-            label="Download Sunburst Chart as HTML",
-            data=open(os.path.join("figures", f"{filename}.html"), "rb").read(),
-            file_name=f"{filename}.html",
-            mime="text/html"
-        )
-        st.download_button(
-            label="Download Sunburst Chart as PNG",
-            data=open(os.path.join("figures", f"{filename}.png"), "rb").read(),
-            file_name=f"{filename}.png",
-            mime="image/png"
-        )
-
     elif chart_type == 'Radar Chart' and selected_times:
         fig, filename = plot_radar_chart(solution, selected_times)
-        st.plotly_chart(fig, use_container_width=True)
-        st.download_button(
-            label="Download Radar Chart as HTML",
-            data=open(os.path.join("figures", f"{filename}.html"), "rb").read(),
-            file_name=f"{filename}.html",
-            mime="text/html"
-        )
-        st.download_button(
-            label="Download Radar Chart as PNG",
-            data=open(os.path.join("figures", f"{filename}.png"), "rb").read(),
-            file_name=f"{filename}.png",
-            mime="image/png"
-        )
-
     elif chart_type == 'Polar Chart':
         fig, filename = plot_polar_chart(solution, time_index)
-        st.plotly_chart(fig, use_container_width=True)
+    else:
+        st.warning("No valid selection made.")
+        return
+
+    st.plotly_chart(fig, use_container_width=True)
+
+    # === Downloads ===
+    html_path = os.path.join("figures", f"{filename}.html")
+    png_path = os.path.join("figures", f"{filename}.png")
+
+    if os.path.exists(html_path):
         st.download_button(
-            label="Download Polar Chart as HTML",
-            data=open(os.path.join("figures", f"{filename}.html"), "rb").read(),
+            label="⬇️ Download Chart (HTML)",
+            data=open(html_path, "rb").read(),
             file_name=f"{filename}.html",
             mime="text/html"
         )
+
+    if os.path.exists(png_path):
         st.download_button(
-            label="Download Polar Chart as PNG",
-            data=open(os.path.join("figures", f"{filename}.png"), "rb").read(),
+            label="⬇️ Download Chart (PNG)",
+            data=open(png_path, "rb").read(),
             file_name=f"{filename}.png",
             mime="image/png"
         )
+    else:
+        st.info("PNG not available — Kaleido may not be installed in this environment.")
 
 if __name__ == "__main__":
     main()
