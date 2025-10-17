@@ -29,11 +29,8 @@ def load_solutions(solution_dir):
                             np.all(sol['c1_preds'] == 0) or np.all(sol['c2_preds'] == 0)):
                         solutions.append(sol)
                         lys.append(sol['params']['Ly'])
-            except Exception as e:
-                st.warning(f"Failed to load {fname}: {str(e)}")
+            except Exception:
                 continue
-    if not solutions:
-        st.error("No valid solutions found in pinn_solutions directory.")
     return solutions, sorted(set(lys))
 
 def safe_save(fig, output_dir, base_filename):
@@ -41,122 +38,91 @@ def safe_save(fig, output_dir, base_filename):
     try:
         fig.write_image(os.path.join(output_dir, f"{base_filename}.png"), scale=2)
     except Exception as e:
-        st.warning(f"PNG export failed: {e}")
+        st.warning(f"⚠️ PNG export failed: {e}")
     fig.write_html(os.path.join(output_dir, f"{base_filename}.html"))
 
-# === Polar chart (centerline concentration as radial axis, multiple Ly) ===
-def plot_polar_chart_centerline(solutions, selected_lys, species="Cu", step_size=1, output_dir="figures"):
+# === Utility: get concentration at center ===
+def get_center_conc(solution, species="Cu"):
+    c_all = solution['c1_preds'] if species == "Cu" else solution['c2_preds']
+    center_idx_x = c_all.shape[1] // 2  # Lx/2
+    center_idx_y = c_all.shape[2] // 2  # Ly/2
+    return [c_all[t_idx, center_idx_x, center_idx_y] for t_idx in range(len(solution['times']))]
+
+# === Polar chart (concentration as radial, time as theta, center point) ===
+def plot_polar_chart_center(solutions, selected_lys, species="Cu", output_dir="figures"):
     fig = go.Figure()
-    colors = ['blue', 'red', 'green', 'purple', 'orange']  # Colors for different Ly values
-    
-    for idx, ly_choice in enumerate(selected_lys):
+    for ly_choice in selected_lys:
         solution = next((sol for sol in solutions if abs(sol['params']['Ly'] - ly_choice) < 0.1), None)
-        if not solution:
-            continue
+        if solution:
+            times = solution['times']
+            conc = get_center_conc(solution, species)
+            theta = np.linspace(0, 2 * np.pi, len(times))
             
-        Ly = solution['params']['Ly']
-        times = solution['times']
-        c_all = solution['c1_preds'] if species == "Cu" else solution['c2_preds']
-        center_idx = c_all.shape[1] // 2  # Lx/2 (assuming Lx=60 μm)
-        
-        # Extract centerline concentrations (x = Lx/2) with adjustable step size
-        time_indices = range(0, len(times), step_size)
-        theta = np.linspace(0, 2 * np.pi, len(time_indices))
-        concentrations = [c_all[t_idx, center_idx, :] for t_idx in time_indices]
-        
-        # Normalize concentrations for visualization
-        max_conc = max([np.max(c) for c in concentrations], default=1e-10)
-        concentrations = [c / max_conc for c in concentrations]
-        
-        # Plot each time step
-        for t_idx, conc in zip(time_indices, concentrations):
             fig.add_trace(go.Scatterpolar(
                 r=conc,
                 theta=theta * 180 / np.pi,
-                mode="lines",
-                name=f"Ly={Ly:.1f}, t={times[t_idx]:.1f}s",
-                line=dict(color=colors[idx % len(colors)], width=1.5),
-                hovertemplate=f"Ly={Ly:.1f}, t={times[t_idx]:.1f}s, y=%{{theta:.1f}}°, Conc=%{{r:.2e}} (norm)<extra></extra>",
-                showlegend=(t_idx == time_indices[0])  # Show legend only for first time step per Ly
+                mode="lines+markers",
+                name=f"Ly={ly_choice:.1f}",
+                marker=dict(size=6, symbol="circle"),
+                hovertemplate="Time=%{theta:.1f}°, Conc=%{r:.2e}<extra></extra>"
             ))
-    
-    # Customize layout
+
     fig.update_layout(
-        title={
-            'text': f"{species} Centerline Concentration Evolution (Lx/2 = 30 μm)<br>Normalized Concentrations",
-            'y': 0.95,
-            'x': 0.5,
-            'xanchor': 'center',
-            'yanchor': 'top'
-        },
+        title=f"{species} Concentration Evolution at Center (Lx/2=30 μm)<br>Concentration (radial), Time (angular)",
         polar=dict(
             radialaxis=dict(
                 visible=True,
-                title="Normalized Concentration",
-                range=[0, 1.1],
-                tickformat=".2f"
+                title="Concentration (mol/cc)",
+                tickformat=".2e"
             ),
             angularaxis=dict(
                 visible=True,
                 rotation=90,
                 direction="counterclockwise",
-                tickvals=[0, 90, 180, 270],
-                ticktext=["0°", "90°", "180°", "270°"]
+                tickvals=[0, 90, 180, 270, 360],
+                ticktext=[f"{t:.1f}s" for t in [times[0], times[len(times)//4], times[len(times)//2], times[3*len(times)//4], times[-1]]]
             )
         ),
         showlegend=True,
         font=dict(size=12),
         margin=dict(l=50, r=50, t=100, b=50),
-        legend=dict(
-            yanchor="top",
-            y=0.99,
-            xanchor="right",
-            x=0.99
-        )
     )
     
-    base_filename = f"polar_centerline_{species.lower()}_multi_ly"
+    base_filename = f"polar_center_{species.lower()}_lys_{'_'.join([str(ly) for ly in selected_lys])}"
     safe_save(fig, output_dir, base_filename)
     return fig, base_filename
 
 # === Streamlit App ===
 def main():
-    st.title("🔬 PINN Centerline Concentration Evolution (Lx/2 = 30 μm)")
+    st.title("🔬 PINN Center Concentration Evolution")
 
     # Load solutions
     solutions, lys = load_solutions(SOLUTION_DIR)
     if not solutions:
         return
 
-    # Ly selection
+    # Ly selection (multiple)
     st.subheader("Select Domain Heights (Ly)")
     selected_lys = st.multiselect(
-        "Select two or more Ly values to compare",
+        "Select Ly values to compare (up to 4)",
         options=lys,
-        default=[lys[0]] if len(lys) == 1 else lys[:min(3, len(lys))],
+        default=lys[:min(4, len(lys))],
         format_func=lambda x: f"{x:.1f} μm"
     )
-    
-    # Step size selection
-    st.subheader("Time Step Size")
-    step_size = st.slider("Select time step size", min_value=1, max_value=10, value=1, step=1)
 
-    if len(selected_lys) < 2:
-        st.warning("Please select at least two Ly values for comparison.")
-        return
+    # Species selection
+    species = st.selectbox("Select Species", ["Cu", "Ni"])
 
-    # Generate and display polar charts for Cu and Ni
-    st.subheader("Concentration Evolution")
-    for species in ["Cu", "Ni"]:
-        st.markdown(f"### {species} Concentration")
-        fig, filename = plot_polar_chart_centerline(solutions, selected_lys, species, step_size)
+    if selected_lys:
+        st.subheader(f"{species} Concentration at Center (Lx/2=30 μm, Ly/2)")
+        fig, filename = plot_polar_chart_center(solutions, selected_lys, species=species)
         st.plotly_chart(fig, use_container_width=True)
 
         # Download buttons
         html_path = os.path.join("figures", f"{filename}.html")
         if os.path.exists(html_path):
             st.download_button(
-                f"⬇️ Download {species} Polar Chart (HTML)",
+                "⬇️ Download Polar Chart (HTML)",
                 data=open(html_path, "rb").read(),
                 file_name=f"{filename}.html",
                 mime="text/html"
@@ -164,7 +130,7 @@ def main():
         png_path = os.path.join("figures", f"{filename}.png")
         if os.path.exists(png_path):
             st.download_button(
-                f"⬇️ Download {species} Polar Chart (PNG)",
+                "⬇️ Download Polar Chart (PNG)",
                 data=open(png_path, "rb").read(),
                 file_name=f"{filename}.png",
                 mime="image/png"
