@@ -6,14 +6,14 @@ import plotly.graph_objects as go
 from pathlib import Path
 import plotly.io as pio
 
-# === Optional: Configure Kaleido defaults ===
+# === Optional: Kaleido default settings ===
 pio.kaleido.scope.default_format = "png"
 pio.kaleido.scope.default_width = 800
 pio.kaleido.scope.default_height = 600
 
 SOLUTION_DIR = Path(__file__).parent / "pinn_solutions"
 
-# === Load PINN Solutions ===
+# === Load solutions ===
 @st.cache_data
 def load_solutions(solution_dir):
     solutions = []
@@ -33,229 +33,166 @@ def load_solutions(solution_dir):
                 continue
     return solutions, sorted(set(lys))
 
-# === Safe file saving helper ===
 def safe_save(fig, output_dir, base_filename):
     os.makedirs(output_dir, exist_ok=True)
     try:
-        fig.write_image(os.path.join(output_dir, f"{base_filename}.png"), format="png")
+        fig.write_image(os.path.join(output_dir, f"{base_filename}.png"))
     except Exception as e:
         st.warning(f"⚠️ PNG export failed (Kaleido issue likely): {e}")
     fig.write_html(os.path.join(output_dir, f"{base_filename}.html"))
 
-# === Sunburst Chart ===
-def plot_sunburst_chart(solution, time_index, output_dir="figures"):
-    t_val = solution['times'][time_index]
+# === Utility: compute mean values ===
+def extract_values(c):
+    """Return dict of mean concentrations at key regions."""
+    return {
+        'Top': np.mean(c[:, -1]),
+        'Bottom': np.mean(c[:, 0]),
+        'Left': np.mean(c[0, :]),
+        'Right': np.mean(c[-1, :]),
+        'Center': c[c.shape[0] // 2, c.shape[1] // 2]
+    }
+
+# === Radar chart (separate Cu/Ni) ===
+def plot_radar_chart_species(solution, species="Cu", output_dir="figures"):
     Ly = solution['params']['Ly']
-    c1 = solution['c1_preds'][time_index]
-    c2 = solution['c2_preds'][time_index]
+    times = solution['times']
+    c_all = solution['c1_preds'] if species == "Cu" else solution['c2_preds']
+    categories = ['Top', 'Bottom', 'Left', 'Right', 'Center']
     
-    # Sample data at specific points
-    points = ['Top', 'Bottom', 'Left', 'Right', 'Center']
-    cu_values = [
-        np.mean(c1[:, -1]),  # Top
-        np.mean(c1[:, 0]),   # Bottom
-        np.mean(c1[0, :]),   # Left
-        np.mean(c1[-1, :]),  # Right
-        c1[c1.shape[0]//2, c1.shape[1]//2]  # Center
-    ]
-    ni_values = [
-        np.mean(c2[:, -1]),  # Top
-        np.mean(c2[:, 0]),   # Bottom
-        np.mean(c2[0, :]),   # Left
-        np.mean(c2[-1, :]),  # Right
-        c2[c2.shape[0]//2, c2.shape[1]//2]  # Center
-    ]
+    fig = go.Figure()
+    # time corresponds to radius (0 center -> max edge)
+    for t_idx, t_val in enumerate(times):
+        vals = extract_values(c_all[t_idx])
+        r = [vals[k] for k in categories]
+        fig.add_trace(go.Scatterpolar(
+            r=r,
+            theta=categories,
+            name=f"t={t_val:.1f}s",
+            text=[f"{v:.2e}" for v in r],
+            textposition="top center",
+            hovertemplate=f"t={t_val:.1f}s<br>%{{theta}}: %{{r:.2e}}<extra></extra>"
+        ))
     
-    # Prepare data for sunburst
-    labels = ['Solution'] + points + [f'Cu_{p}' for p in points] + [f'Ni_{p}' for p in points]
-    parents = [''] + ['Solution'] * len(points) + [p for p in points for _ in range(2)]
-    values = [0] + [0] * len(points) + cu_values + ni_values
+    fig.update_layout(
+        title=f"{species} Concentration Radar Chart<br>Ly={Ly:.1f} μm (Time → Edge)",
+        polar=dict(radialaxis=dict(visible=True, tickformat=".2e")),
+        showlegend=True
+    )
+    base_filename = f"radar_{species.lower()}_ly_{Ly:.1f}"
+    safe_save(fig, output_dir, base_filename)
+    return fig, base_filename
+
+# === Polar chart (separate Cu/Ni, radius=time) ===
+def plot_polar_chart_species(solution, species="Cu", output_dir="figures"):
+    Ly = solution['params']['Ly']
+    times = solution['times']
+    c_all = solution['c1_preds'] if species == "Cu" else solution['c2_preds']
+    center_idx = c_all.shape[2] // 2
+    theta = np.linspace(0, 2 * np.pi, c_all.shape[1])
+    
+    # time → radius
+    fig = go.Figure()
+    for t_idx, t_val in enumerate(times):
+        r = np.full_like(theta, t_val)
+        z = c_all[t_idx][:, center_idx]
+        fig.add_trace(go.Scatterpolar(
+            r=r,
+            theta=theta * 180 / np.pi,
+            mode="markers",
+            marker=dict(size=6, color=z, colorscale="Viridis", colorbar_title="Conc."),
+            name=f"t={t_val:.1f}s",
+            hovertemplate="θ=%{theta:.1f}°, c=%{marker.color:.2e}<extra></extra>"
+        ))
+    fig.update_layout(
+        title=f"{species} Polar Chart (radius=time)<br>Ly={Ly:.1f} μm",
+        polar=dict(radialaxis=dict(visible=True, title="Time (s)")),
+        showlegend=False
+    )
+    base_filename = f"polar_{species.lower()}_ly_{Ly:.1f}"
+    safe_save(fig, output_dir, base_filename)
+    return fig, base_filename
+
+# === Sunburst (separate species) ===
+def plot_sunburst_chart_species(solution, species="Cu", output_dir="figures"):
+    t_val = solution['times'][-1]
+    Ly = solution['params']['Ly']
+    c = solution['c1_preds'][-1] if species == "Cu" else solution['c2_preds'][-1]
+    vals = extract_values(c)
+    
+    labels = ['Solution'] + list(vals.keys())
+    parents = [''] + ['Solution'] * len(vals)
+    values = [0] + list(vals.values())
     
     fig = go.Figure(go.Sunburst(
         labels=labels,
         parents=parents,
         values=values,
-        branchvalues="total",
         textinfo="label+value",
         texttemplate="%{label}<br>%{value:.2e}",
-        hovertemplate="%{label}: %{value:.2e} mol/cc<extra></extra>",
+        hovertemplate="%{label}: %{value:.2e}<extra></extra>"
     ))
-    
     fig.update_layout(
-        title=f"Concentration Sunburst Chart<br>Ly = {Ly:.1f} μm, t = {t_val:.1f} s",
-        margin=dict(t=50, l=0, r=0, b=0)
+        title=f"{species} Sunburst Chart<br>Ly={Ly:.1f} μm, t={t_val:.1f}s"
     )
-
-    base_filename = f"sunburst_t_{t_val:.1f}_ly_{Ly:.1f}"
+    base_filename = f"sunburst_{species.lower()}_ly_{Ly:.1f}"
     safe_save(fig, output_dir, base_filename)
     return fig, base_filename
 
-# === Radar Chart ===
-def plot_radar_chart(solution, time_indices, output_dir="figures"):
-    Ly = solution['params']['Ly']
-    categories = ['Top', 'Bottom', 'Left', 'Right', 'Center']
-    
-    fig = go.Figure()
-    for t_idx in time_indices:
-        t_val = solution['times'][t_idx]
-        c1 = solution['c1_preds'][t_idx]
-        c2 = solution['c2_preds'][t_idx]
-        
-        cu_values = [
-            np.mean(c1[:, -1]),
-            np.mean(c1[:, 0]),
-            np.mean(c1[0, :]),
-            np.mean(c1[-1, :]),
-            c1[c1.shape[0]//2, c1.shape[1]//2]
-        ]
-        ni_values = [
-            np.mean(c2[:, -1]),
-            np.mean(c2[:, 0]),
-            np.mean(c2[0, :]),
-            np.mean(c2[-1, :]),
-            c2[c2.shape[0]//2, c2.shape[1]//2]
-        ]
-        
-        fig.add_trace(go.Scatterpolar(
-            r=cu_values,
-            theta=categories,
-            name=f'Cu, t={t_val:.1f}s',
-            line=dict(color='blue')
-        ))
-        fig.add_trace(go.Scatterpolar(
-            r=ni_values,
-            theta=categories,
-            name=f'Ni, t={t_val:.1f}s',
-            line=dict(color='red')
-        ))
-    
-    fig.update_layout(
-        title=f"Concentration Radar Chart<br>Ly = {Ly:.1f} μm",
-        polar=dict(
-            radialaxis=dict(
-                visible=True,
-                tickformat='.2e'
-            )
-        ),
-        showlegend=True
-    )
-
-    base_filename = f"radar_ly_{Ly:.1f}"
-    safe_save(fig, output_dir, base_filename)
-    return fig, base_filename
-
-# === Polar Chart ===
-def plot_polar_chart(solution, time_index, output_dir="figures"):
-    t_val = solution['times'][time_index]
-    Ly = solution['params']['Ly']
-    c1 = solution['c1_preds'][time_index]
-    c2 = solution['c2_preds'][time_index]
-    
-    # Sample along centerline
-    center_idx = c1.shape[1] // 2
-    theta = np.linspace(0, 2 * np.pi, len(c1[:, center_idx]))
-    
-    fig = go.Figure()
-    fig.add_trace(go.Scatterpolar(
-        r=c1[:, center_idx],
-        theta=theta * 180 / np.pi,
-        name='Cu',
-        line=dict(color='blue')
-    ))
-    fig.add_trace(go.Scatterpolar(
-        r=c2[:, center_idx],
-        theta=theta * 180 / np.pi,
-        name='Ni',
-        line=dict(color='red')
-    ))
-    
-    fig.update_layout(
-        title=f"Polar Chart of Centerline Concentrations<br>Ly = {Ly:.1f} μm, t = {t_val:.1f} s",
-        polar=dict(
-            radialaxis=dict(
-                visible=True,
-                tickformat='.2e'
-            ),
-            angularaxis=dict(
-                rotation=90,
-                direction="counterclockwise"
-            )
-        ),
-        showlegend=True
-    )
-
-    base_filename = f"polar_t_{t_val:.1f}_ly_{Ly:.1f}"
-    safe_save(fig, output_dir, base_filename)
-    return fig, base_filename
-
-# === Main App ===
+# === Streamlit App ===
 def main():
-    st.title("📊 PINN Solution Visualization")
-
-    # Load solutions
+    st.title("🔬 PINN Solution Visualization — Separate Cu & Ni Charts")
     solutions, lys = load_solutions(SOLUTION_DIR)
     if not solutions:
-        st.error("No valid solution files found in pinn_solutions directory.")
+        st.error("No valid solutions found.")
         return
 
-    st.subheader("Select Parameters")
-    ly_choice = st.selectbox("Domain Height (Ly, μm)", options=lys, format_func=lambda x: f"{x:.1f}")
+    # Ly selection (comparison mode)
+    st.subheader("Select Domain Heights (Ly)")
+    selected_lys = st.multiselect(
+        "Select one or two Ly values to compare",
+        options=lys,
+        default=[lys[0]] if len(lys) == 1 else lys[:2],
+        format_func=lambda x: f"{x:.1f} μm"
+    )
 
-    # Select solution
-    solution = next((sol for sol in solutions if abs(sol['params']['Ly'] - ly_choice) < 0.1), None)
-    if not solution:
-        st.error("No matching solution found.")
-        return
+    st.subheader("Chart Type & Species")
+    chart_type = st.selectbox("Chart Type", ["Radar Chart", "Polar Chart", "Sunburst Chart"])
+    species = st.selectbox("Species", ["Cu", "Ni"])
 
-    st.subheader("Chart Selection")
-    chart_type = st.selectbox("Select Chart Type", options=['Sunburst Chart', 'Radar Chart', 'Polar Chart'])
+    for ly_choice in selected_lys:
+        st.markdown(f"### Results for Ly = {ly_choice:.1f} μm")
+        solution = next((sol for sol in solutions if abs(sol['params']['Ly'] - ly_choice) < 0.1), None)
+        if not solution:
+            st.warning(f"No solution found for Ly = {ly_choice:.1f}")
+            continue
 
-    # Time selection
-    time_indices = list(range(len(solution['times'])))
-    if chart_type == 'Radar Chart':
-        selected_times = st.multiselect(
-            "Select Time Indices",
-            options=time_indices,
-            default=[0, len(time_indices)//4, len(time_indices)//2, 3*len(time_indices)//4, len(time_indices)-1],
-            format_func=lambda x: f"t = {solution['times'][x]:.1f} s"
-        )
-    else:
-        time_index = st.slider("Select Time Index", 0, len(solution['times'])-1, len(solution['times'])-1)
+        if chart_type == "Radar Chart":
+            fig, filename = plot_radar_chart_species(solution, species)
+        elif chart_type == "Polar Chart":
+            fig, filename = plot_polar_chart_species(solution, species)
+        else:
+            fig, filename = plot_sunburst_chart_species(solution, species)
+        
+        st.plotly_chart(fig, use_container_width=True)
 
-    # === Chart generation ===
-    if chart_type == 'Sunburst Chart':
-        fig, filename = plot_sunburst_chart(solution, time_index)
-    elif chart_type == 'Radar Chart' and selected_times:
-        fig, filename = plot_radar_chart(solution, selected_times)
-    elif chart_type == 'Polar Chart':
-        fig, filename = plot_polar_chart(solution, time_index)
-    else:
-        st.warning("No valid selection made.")
-        return
-
-    st.plotly_chart(fig, use_container_width=True)
-
-    # === Downloads ===
-    html_path = os.path.join("figures", f"{filename}.html")
-    png_path = os.path.join("figures", f"{filename}.png")
-
-    if os.path.exists(html_path):
-        st.download_button(
-            label="⬇️ Download Chart (HTML)",
-            data=open(html_path, "rb").read(),
-            file_name=f"{filename}.html",
-            mime="text/html"
-        )
-
-    if os.path.exists(png_path):
-        st.download_button(
-            label="⬇️ Download Chart (PNG)",
-            data=open(png_path, "rb").read(),
-            file_name=f"{filename}.png",
-            mime="image/png"
-        )
-    else:
-        st.info("PNG not available — Kaleido may not be installed in this environment.")
+        html_path = os.path.join("figures", f"{filename}.html")
+        if os.path.exists(html_path):
+            st.download_button(
+                f"⬇️ Download {species} {chart_type} (HTML)",
+                data=open(html_path, "rb").read(),
+                file_name=f"{filename}.html",
+                mime="text/html"
+            )
+        png_path = os.path.join("figures", f"{filename}.png")
+        if os.path.exists(png_path):
+            st.download_button(
+                f"⬇️ Download {species} {chart_type} (PNG)",
+                data=open(png_path, "rb").read(),
+                file_name=f"{filename}.png",
+                mime="image/png"
+            )
+        else:
+            st.info("PNG export unavailable (Chrome/Kaleido not installed).")
 
 if __name__ == "__main__":
     main()
