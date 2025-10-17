@@ -44,56 +44,46 @@ def safe_save(fig, output_dir, base_filename):
         st.warning(f"PNG export failed: {e}")
     fig.write_html(os.path.join(output_dir, f"{base_filename}.html"))
 
-# === Polar chart (concentration as radial axis, center point only) ===
-def plot_polar_chart_center(solution, output_dir="figures"):
-    Ly = solution['params']['Ly']
-    times = solution['times']
-    c1_all = solution['c1_preds']  # Cu concentrations
-    c2_all = solution['c2_preds']  # Ni concentrations
-    center_idx_x = c1_all.shape[1] // 2  # Lx/2
-    center_idx_y = c1_all.shape[2] // 2  # Ly/2
-
-    # Extract concentrations at center point (Lx/2, Ly/2) over time
-    cu_conc = [c1_all[t_idx, center_idx_x, center_idx_y] for t_idx in range(len(times))]
-    ni_conc = [c2_all[t_idx, center_idx_x, center_idx_y] for t_idx in range(len(times))]
-    
-    # Use time as angular coordinate
-    theta = np.linspace(0, 2 * np.pi, len(times))
-    
-    # Normalize concentrations for better visualization
-    max_conc = max(max(cu_conc, default=1e-10), max(ni_conc, default=1e-10))
-    cu_conc = [c / max_conc for c in cu_conc]
-    ni_conc = [c / max_conc for c in ni_conc]
-    
+# === Polar chart (centerline concentration as radial axis, multiple Ly) ===
+def plot_polar_chart_centerline(solutions, selected_lys, species="Cu", step_size=1, output_dir="figures"):
     fig = go.Figure()
-    # Cu concentration as radial axis
-    fig.add_trace(go.Scatterpolar(
-        r=cu_conc,
-        theta=theta * 180 / np.pi,
-        mode="lines+markers",
-        name="Cu",
-        line=dict(color="blue", width=2),
-        marker=dict(size=8, symbol="circle"),
-        hovertemplate="Time=%{theta:.1f}°, Cu Conc=%{r:.2e} (norm)<extra></extra>"
-    ))
-    # Ni concentration as radial axis
-    fig.add_trace(go.Scatterpolar(
-        r=ni_conc,
-        theta=theta * 180 / np.pi,
-        mode="lines+markers",
-        name="Ni",
-        line=dict(color="red", width=2),
-        marker=dict(size=8, symbol="circle"),
-        hovertemplate="Time=%{theta:.1f}°, Ni Conc=%{r:.2e} (norm)<extra></extra>"
-    ))
+    colors = ['blue', 'red', 'green', 'purple', 'orange']  # Colors for different Ly values
     
-    # Customize angular axis to show time values
-    time_ticks = [times[i] for i in [0, len(times)//4, len(times)//2, 3*len(times)//4, len(times)-1]]
-    theta_ticks = [0, 90, 180, 270, 360]
+    for idx, ly_choice in enumerate(selected_lys):
+        solution = next((sol for sol in solutions if abs(sol['params']['Ly'] - ly_choice) < 0.1), None)
+        if not solution:
+            continue
+            
+        Ly = solution['params']['Ly']
+        times = solution['times']
+        c_all = solution['c1_preds'] if species == "Cu" else solution['c2_preds']
+        center_idx = c_all.shape[1] // 2  # Lx/2 (assuming Lx=60 μm)
+        
+        # Extract centerline concentrations (x = Lx/2) with adjustable step size
+        time_indices = range(0, len(times), step_size)
+        theta = np.linspace(0, 2 * np.pi, len(time_indices))
+        concentrations = [c_all[t_idx, center_idx, :] for t_idx in time_indices]
+        
+        # Normalize concentrations for visualization
+        max_conc = max([np.max(c) for c in concentrations], default=1e-10)
+        concentrations = [c / max_conc for c in concentrations]
+        
+        # Plot each time step
+        for t_idx, conc in zip(time_indices, concentrations):
+            fig.add_trace(go.Scatterpolar(
+                r=conc,
+                theta=theta * 180 / np.pi,
+                mode="lines",
+                name=f"Ly={Ly:.1f}, t={times[t_idx]:.1f}s",
+                line=dict(color=colors[idx % len(colors)], width=1.5),
+                hovertemplate=f"Ly={Ly:.1f}, t={times[t_idx]:.1f}s, y=%{{theta:.1f}}°, Conc=%{{r:.2e}} (norm)<extra></extra>",
+                showlegend=(t_idx == time_indices[0])  # Show legend only for first time step per Ly
+            ))
     
+    # Customize layout
     fig.update_layout(
         title={
-            'text': f"Concentration Evolution at Center (Lx/2 = 30 μm, Ly/2 = {Ly/2:.1f} μm)<br>Normalized Concentrations",
+            'text': f"{species} Centerline Concentration Evolution (Lx/2 = 30 μm)<br>Normalized Concentrations",
             'y': 0.95,
             'x': 0.5,
             'xanchor': 'center',
@@ -110,8 +100,8 @@ def plot_polar_chart_center(solution, output_dir="figures"):
                 visible=True,
                 rotation=90,
                 direction="counterclockwise",
-                tickvals=theta_ticks,
-                ticktext=[f"{t:.1f}s" for t in time_ticks]
+                tickvals=[0, 90, 180, 270],
+                ticktext=["0°", "90°", "180°", "270°"]
             )
         ),
         showlegend=True,
@@ -125,13 +115,13 @@ def plot_polar_chart_center(solution, output_dir="figures"):
         )
     )
     
-    base_filename = f"polar_center_ly_{Ly:.1f}"
+    base_filename = f"polar_centerline_{species.lower()}_multi_ly"
     safe_save(fig, output_dir, base_filename)
     return fig, base_filename
 
 # === Streamlit App ===
 def main():
-    st.title("🔬 PINN Concentration Evolution at Center (Lx/2, Ly/2)")
+    st.title("🔬 PINN Centerline Concentration Evolution (Lx/2 = 30 μm)")
 
     # Load solutions
     solutions, lys = load_solutions(SOLUTION_DIR)
@@ -139,43 +129,48 @@ def main():
         return
 
     # Ly selection
-    st.subheader("Select Domain Height (Ly)")
-    ly_choice = st.selectbox(
-        "Select Ly value",
+    st.subheader("Select Domain Heights (Ly)")
+    selected_lys = st.multiselect(
+        "Select two or more Ly values to compare",
         options=lys,
+        default=[lys[0]] if len(lys) == 1 else lys[:min(3, len(lys))],
         format_func=lambda x: f"{x:.1f} μm"
     )
+    
+    # Step size selection
+    st.subheader("Time Step Size")
+    step_size = st.slider("Select time step size", min_value=1, max_value=10, value=1, step=1)
 
-    # Find solution
-    solution = next((sol for sol in solutions if abs(sol['params']['Ly'] - ly_choice) < 0.1), None)
-    if not solution:
-        st.warning(f"No solution found for Ly = {ly_choice:.1f}")
+    if len(selected_lys) < 2:
+        st.warning("Please select at least two Ly values for comparison.")
         return
 
-    # Generate and display polar chart
-    st.subheader(f"Concentration Evolution at Center (Lx/2 = 30 μm, Ly/2 = {ly_choice/2:.1f} μm)")
-    fig, filename = plot_polar_chart_center(solution)
-    st.plotly_chart(fig, use_container_width=True)
+    # Generate and display polar charts for Cu and Ni
+    st.subheader("Concentration Evolution")
+    for species in ["Cu", "Ni"]:
+        st.markdown(f"### {species} Concentration")
+        fig, filename = plot_polar_chart_centerline(solutions, selected_lys, species, step_size)
+        st.plotly_chart(fig, use_container_width=True)
 
-    # Download buttons
-    html_path = os.path.join("figures", f"{filename}.html")
-    if os.path.exists(html_path):
-        st.download_button(
-            "⬇️ Download Polar Chart (HTML)",
-            data=open(html_path, "rb").read(),
-            file_name=f"{filename}.html",
-            mime="text/html"
-        )
-    png_path = os.path.join("figures", f"{filename}.png")
-    if os.path.exists(png_path):
-        st.download_button(
-            "⬇️ Download Polar Chart (PNG)",
-            data=open(png_path, "rb").read(),
-            file_name=f"{filename}.png",
-            mime="image/png"
-        )
-    else:
-        st.info("PNG export unavailable (Kaleido not installed).")
+        # Download buttons
+        html_path = os.path.join("figures", f"{filename}.html")
+        if os.path.exists(html_path):
+            st.download_button(
+                f"⬇️ Download {species} Polar Chart (HTML)",
+                data=open(html_path, "rb").read(),
+                file_name=f"{filename}.html",
+                mime="text/html"
+            )
+        png_path = os.path.join("figures", f"{filename}.png")
+        if os.path.exists(png_path):
+            st.download_button(
+                f"⬇️ Download {species} Polar Chart (PNG)",
+                data=open(png_path, "rb").read(),
+                file_name=f"{filename}.png",
+                mime="image/png"
+            )
+        else:
+            st.info("PNG export unavailable (Kaleido not installed).")
 
 if __name__ == "__main__":
     main()
