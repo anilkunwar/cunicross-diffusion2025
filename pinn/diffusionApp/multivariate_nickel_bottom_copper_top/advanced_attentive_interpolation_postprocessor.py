@@ -6,7 +6,6 @@ import streamlit as st
 # === Utility for saving charts ===
 def safe_save(fig, output_dir, base_filename):
     os.makedirs(output_dir, exist_ok=True)
-    # Save as HTML and attempt PNG (high-resolution)
     html_path = os.path.join(output_dir, f"{base_filename}.html")
     fig.write_html(html_path)
     try:
@@ -23,26 +22,23 @@ def plot_radar_concentration(solution, species="Cu", r_tick_step=None, theta_tic
     times = np.array(solution["times"])
     c_all = solution["c1_preds"] if species == "Cu" else solution["c2_preds"]
 
-    if c_all.ndim == 4:  # handle extra batch dimension
+    if c_all.ndim == 4:
         c_all = c_all[0]
     nt, ny, nx = c_all.shape
     center_x = nx // 2
 
     # Concentration values along y-axis
     conc_profiles = c_all[:, :, center_x]  # shape: (nt, ny)
-
-    # Angular axis: y positions
-    theta_deg = np.linspace(0, 360, ny)
-    theta_labels = [f"{c:.2e}" for c in conc_profiles[-1]]  # last time snapshot for labels
+    theta_deg = np.linspace(0, 360, ny)  # angular positions
 
     fig = go.Figure()
 
-    # Color scale representation: average across angular positions
+    # Plot traces for all time points
     for t_idx, t_val in enumerate(times):
         conc = conc_profiles[t_idx]
         fig.add_trace(
             go.Scatterpolar(
-                r=[t_val]*ny,
+                r=[t_val] * ny,
                 theta=theta_deg,
                 mode="markers+lines",
                 marker=dict(
@@ -59,19 +55,23 @@ def plot_radar_concentration(solution, species="Cu", r_tick_step=None, theta_tic
             )
         )
 
-    # Tick control
-    radial_ticks = None
-    angular_ticks = None
-    if r_tick_step:
-        radial_ticks = np.arange(times.min(), times.max() + r_tick_step, r_tick_step)
+    # Radial ticks
+    radial_ticks = np.arange(times.min(), times.max() + (r_tick_step or 1), r_tick_step or 1)
+
+    # Angular ticks and labels
     if theta_tick_step:
-        angular_ticks = np.arange(0, 360 + theta_tick_step, theta_tick_step)
+        angular_ticks = np.arange(0, 360, theta_tick_step)
+        indices = np.clip((angular_ticks / 360 * ny).astype(int), 0, ny-1)
+        angular_labels = [f"{conc_profiles[-1, i]:.2e}" for i in indices]
+    else:
+        angular_ticks = None
+        angular_labels = None
 
     fig.update_layout(
         title=f"{species} Radar Chart — Ly={Ly:.2e} m",
         polar=dict(
             radialaxis=dict(visible=True, title="Time (s)", tickvals=radial_ticks),
-            angularaxis=dict(tickvals=angular_ticks, ticktext=theta_labels if angular_ticks else theta_labels)
+            angularaxis=dict(tickvals=angular_ticks, ticktext=angular_labels)
         ),
         template="plotly_white",
         font=dict(size=14),
@@ -83,7 +83,7 @@ def plot_radar_concentration(solution, species="Cu", r_tick_step=None, theta_tic
     safe_save(fig, output_dir, base_filename)
     return fig
 
-# === Polar chart: alternative view ===
+# === Polar chart: concentration vs time (alternative layout) ===
 def plot_polar_concentration(solution, species="Cu", r_tick_step=None, theta_tick_step=None, output_dir="figures"):
     Ly = solution["params"]["Ly"]
     times = np.array(solution["times"])
@@ -95,22 +95,23 @@ def plot_polar_concentration(solution, species="Cu", r_tick_step=None, theta_tic
     center_x = nx // 2
 
     theta_deg = np.linspace(0, 360, ny)
-    theta_labels = [f"{c:.2e}" for c in c_all[-1, :, center_x]]
+    conc_profiles = c_all[:, :, center_x]
 
     fig = go.Figure()
+
     for t_idx, t_val in enumerate(times):
-        conc = c_all[t_idx, :, center_x]
+        conc = conc_profiles[t_idx]
         fig.add_trace(
             go.Scatterpolar(
-                r=[t_val]*ny,
+                r=[t_val] * ny,
                 theta=theta_deg,
                 mode="markers",
                 marker=dict(
                     size=8,
                     color=conc,
                     colorscale="Viridis" if species=="Cu" else "Magma",
-                    cmin=c_all.min(),
-                    cmax=c_all.max(),
+                    cmin=conc_profiles.min(),
+                    cmax=conc_profiles.max(),
                     colorbar=dict(title=f"{species} Conc (mol/cc)")
                 ),
                 name=f"t={t_val:.2f}s"
@@ -118,13 +119,20 @@ def plot_polar_concentration(solution, species="Cu", r_tick_step=None, theta_tic
         )
 
     radial_ticks = np.arange(times.min(), times.max() + (r_tick_step or 1), r_tick_step or 1)
-    angular_ticks = np.arange(0, 360 + (theta_tick_step or 10), theta_tick_step or 10)
+
+    if theta_tick_step:
+        angular_ticks = np.arange(0, 360, theta_tick_step)
+        indices = np.clip((angular_ticks / 360 * ny).astype(int), 0, ny-1)
+        angular_labels = [f"{conc_profiles[-1, i]:.2e}" for i in indices]
+    else:
+        angular_ticks = None
+        angular_labels = None
 
     fig.update_layout(
         title=f"{species} Polar Chart — Ly={Ly:.2e} m",
         polar=dict(
             radialaxis=dict(visible=True, title="Time (s)", tickvals=radial_ticks),
-            angularaxis=dict(tickvals=angular_ticks, ticktext=theta_labels)
+            angularaxis=dict(tickvals=angular_ticks, ticktext=angular_labels)
         ),
         template="plotly_white",
         font=dict(size=14),
@@ -136,11 +144,11 @@ def plot_polar_concentration(solution, species="Cu", r_tick_step=None, theta_tic
     safe_save(fig, output_dir, base_filename)
     return fig
 
-# === Streamlit app ===
+# === Streamlit App ===
 def main():
     st.title("📊 Publication-Quality Cu-Ni Diffusion Radar/Polar Charts")
 
-    # Demo solution (replace with your loaded solution)
+    # Demo solution (replace with your loaded PINN solution)
     times = np.linspace(0, 10, 6)
     nx, ny = 40, 40
     x = np.linspace(0, 1, nx)
@@ -152,7 +160,7 @@ def main():
 
     species = st.selectbox("Species:", ["Cu", "Ni"])
     r_step = st.number_input("Radial tick step (Time)", value=2.0, step=0.5)
-    theta_step = st.number_input("Angular tick step (positions)", value=45.0, step=5.0)
+    theta_step = st.number_input("Angular tick step (Positions)", value=45.0, step=5.0)
 
     st.subheader("Radar Chart")
     fig_radar = plot_radar_concentration(solution, species=species, r_tick_step=r_step, theta_tick_step=theta_step)
@@ -161,7 +169,6 @@ def main():
     st.subheader("Polar Chart")
     fig_polar = plot_polar_concentration(solution, species=species, r_tick_step=r_step, theta_tick_step=theta_step)
     st.plotly_chart(fig_polar, use_container_width=True)
-
 
 if __name__ == "__main__":
     main()
