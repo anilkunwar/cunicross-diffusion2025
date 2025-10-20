@@ -147,6 +147,8 @@ Concentration Fields, Flux and Others:
 
 [![meaningtowords](https://img.shields.io/badge/selfcrossdiffpost3-streamlit-red)](https://self-and-cross-diffusioncomparison3.streamlit.app/) 
 
+[![meaningtowords](https://img.shields.io/badge/selfcrossdiffpost4-streamlit-red)](https://self-and-cross-diffusioncomparison4.streamlit.app/) 
+
 
 [![meaningtowords](https://img.shields.io/badge/selfcrossdiffmath-streamlit-red)](https://mathematicalvisualization-crossdiffusion2dpinn.streamlit.app/) 
 
