@@ -154,11 +154,11 @@ Concentration Fields, Flux and Others:
 # For analysis of uphill diffusion
 [![meaningtowords](https://img.shields.io/badge/selfcrossdiffmath-streamlit-red)](https://mathematicalvisualization-crossdiffusion2dpinn.streamlit.app/) 
 
-[![meaningtowords](https://img.shields.io/badge/selfcrossdiffmath2-streamlit-red)](https://mathematicalvisualizationr2-crossdiffusion2dpinn.streamlit.app/) 
+[![meaningtowords](https://img.shields.io/badge/selfcrossdiffmath2-streamlit-red)](https://mathematicalvisualization-crossdiffusion2dpinn2.streamlit.app/) 
 
-[![meaningtowords](https://img.shields.io/badge/selfcrossdiffmath3-streamlit-red)](https://mathematicalvisualizationr3-crossdiffusion2dpinn.streamlit.app/) 
+[![meaningtowords](https://img.shields.io/badge/selfcrossdiffmath3-streamlit-red)](https://mathematicalvisualization-crossdiffusion2dpinn3.streamlit.app/) 
 
-[![meaningtowords](https://img.shields.io/badge/selfcrossdiffmath4-streamlit-red)](https://mathematicalvisualizationr4-crossdiffusion2dpinn.streamlit.app/) 
+[![meaningtowords](https://img.shields.io/badge/selfcrossdiffmath4-streamlit-red)](https://mathematicalvisualization-crossdiffusion2dpinn4.streamlit.app/) 
 
 
 
