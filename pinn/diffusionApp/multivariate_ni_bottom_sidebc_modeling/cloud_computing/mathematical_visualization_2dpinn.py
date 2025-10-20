@@ -31,46 +31,126 @@ DIFFUSION_TYPES = ['crossdiffusion', 'cu_selfdiffusion', 'ni_selfdiffusion']
 
 @st.cache_data
 def load_solutions(solution_dir):
-    solutions, load_logs, metadata = [], [], []
+    solutions = []
+    load_logs = []
+    metadata = []
+
     for fname in os.listdir(solution_dir):
         if not fname.endswith(".pkl"):
             load_logs.append(f"{fname}: Skipped - not a .pkl file.")
             continue
+
         filepath = os.path.join(solution_dir, fname)
         try:
             with open(filepath, "rb") as f:
                 sol = pickle.load(f)
+
+            # Validate required keys
             required = ['params', 'X', 'Y', 'c1_preds', 'c2_preds', 'times']
             if not all(key in sol for key in required):
-                load_logs.append(f"{fname}: Missing keys {set(required) - set(sol.keys())}")
+                missing = set(required) - set(sol.keys())
+                load_logs.append(f"{fname}: Missing keys {missing}")
                 continue
 
-            match = re.match(r"solution_(\w+)_ly_([\d.]+)_tmax_([\d.]+)\.pkl", fname)
+            # Parse diffusion type and Ly from filename - more flexible pattern
+            patterns = [
+                r"solution_(\w+)_ly_([\d.]+)_tmax_([\d.]+)\.pkl",
+                r"solution_([a-zA-Z_]+)_ly_([\d.]+)_tmax_([\d.]+)\.pkl",
+                r"(\w+)_ly_([\d.]+)_tmax_([\d.]+)\.pkl"
+            ]
+            
+            match = None
+            for pattern in patterns:
+                match = re.match(pattern, fname)
+                if match:
+                    break
+            
             if not match:
-                load_logs.append(f"{fname}: Invalid filename format")
+                load_logs.append(f"{fname}: Invalid filename format - {fname}")
                 continue
 
             diff_type, ly_val, t_max = match.groups()
-            ly_val, t_max = float(ly_val), float(t_max)
+            ly_val = float(ly_val)
+            t_max = float(t_max)
+
+            # Normalize diffusion type
+            diff_type = diff_type.lower()
             if diff_type not in DIFFUSION_TYPES:
-                load_logs.append(f"{fname}: Unknown diffusion type {diff_type}")
+                # Try to map variations
+                type_map = {
+                    'cross': 'crossdiffusion',
+                    'cu_self': 'cu_selfdiffusion', 
+                    'ni_self': 'ni_selfdiffusion',
+                    'cucross': 'crossdiffusion',
+                    'nicross': 'crossdiffusion',
+                    'self_cu': 'cu_selfdiffusion',
+                    'self_ni': 'ni_selfdiffusion'
+                }
+                diff_type = type_map.get(diff_type, diff_type)
+                
+            if diff_type not in DIFFUSION_TYPES:
+                load_logs.append(f"{fname}: Unknown diffusion type '{diff_type}'. Known: {DIFFUSION_TYPES}")
                 continue
 
-            c1_preds, c2_preds = sol['c1_preds'], sol['c2_preds']
-            if c1_preds[0].shape != (50,50):
-                c1_preds = [c.T for c in c1_preds]
-                c2_preds = [c.T for c in c2_preds]
-                sol['orientation_note'] = "Transposed to rows=y, cols=x"
-            else:
-                sol['orientation_note'] = "Already rows=y, cols=x"
+            # Handle array orientation - more robust approach
+            c1_preds = sol['c1_preds']
+            c2_preds = sol['c2_preds']
+            
+            # Ensure we have lists of arrays
+            if not (isinstance(c1_preds, list) and isinstance(c2_preds, list)):
+                load_logs.append(f"{fname}: c1_preds/c2_preds are not lists")
+                continue
 
-            sol.update({'c1_preds': c1_preds, 'c2_preds': c2_preds,
-                        'diffusion_type': diff_type, 'Ly_parsed': ly_val})
+            if len(c1_preds) == 0:
+                load_logs.append(f"{fname}: Empty predictions")
+                continue
+
+            # Check and fix orientation
+            first_shape = c1_preds[0].shape
+            if len(first_shape) != 2:
+                load_logs.append(f"{fname}: Invalid prediction shape {first_shape}")
+                continue
+
+            # Standardize to (50, 50) shape if needed
+            if first_shape != (50, 50):
+                try:
+                    if first_shape == (2500,):
+                        # Reshape flattened arrays
+                        c1_preds = [c.reshape(50, 50) for c in c1_preds]
+                        c2_preds = [c.reshape(50, 50) for c in c2_preds]
+                        sol['orientation_note'] = "Reshaped from flattened"
+                    else:
+                        # Transpose to get (50, 50)
+                        c1_preds = [c.T for c in c1_preds]
+                        c2_preds = [c.T for c in c2_preds]
+                        sol['orientation_note'] = f"Transposed from {first_shape} to (50, 50)"
+                except Exception as e:
+                    load_logs.append(f"{fname}: Shape adjustment failed - {str(e)}")
+                    continue
+            else:
+                sol['orientation_note'] = "Already (50, 50)"
+
+            # Update the solution
+            sol.update({
+                'c1_preds': c1_preds, 
+                'c2_preds': c2_preds,
+                'diffusion_type': diff_type, 
+                'Ly_parsed': ly_val,
+                'filename': fname
+            })
+
             solutions.append(sol)
-            metadata.append({'type': diff_type, 'Ly': ly_val, 'filename': fname})
-            load_logs.append(f"{fname}: Loaded [{diff_type}, Ly={ly_val}, t_max={t_max}]")
+            metadata.append({
+                'type': diff_type, 
+                'Ly': ly_val, 
+                'filename': fname,
+                'shape': c1_preds[0].shape
+            })
+            load_logs.append(f"{fname}: ✓ Loaded [{diff_type}, Ly={ly_val:.1f}]")
+
         except Exception as e:
-            load_logs.append(f"{fname}: Failed - {str(e)}")
+            load_logs.append(f"{fname}: ✗ Failed - {str(e)}")
+
     return solutions, metadata, load_logs
 
 def compute_fluxes_and_grads(c1_preds, c2_preds, x_coords, y_coords, params):
@@ -240,32 +320,100 @@ def main():
     """)
 
     solutions, metadata, load_logs = load_solutions(SOLUTION_DIR)
+    
+    # DEBUG: Show what was loaded
+    with st.expander("🔍 Debug: File Loading Results", expanded=False):
+        st.subheader("Load Summary")
+        
+        if solutions:
+            loaded_types = set([s['diffusion_type'] for s in solutions])
+            st.success(f"✅ Successfully loaded {len(solutions)} solution files")
+            st.write(f"**Loaded diffusion types:** {loaded_types}")
+            
+            # Show breakdown by type
+            for diff_type in DIFFUSION_TYPES:
+                type_solutions = [s for s in solutions if s['diffusion_type'] == diff_type]
+                if type_solutions:
+                    lys = sorted(set([s['Ly_parsed'] for s in type_solutions]))
+                    st.write(f"- **{diff_type}**: {len(type_solutions)} files, Ly values: {lys}")
+                else:
+                    st.write(f"- **{diff_type}**: ❌ No files loaded")
+        else:
+            st.error("❌ No solutions loaded!")
+        
+        st.subheader("Detailed Load Logs")
+        log_container = st.container(height=300)
+        for log in load_logs:
+            if "✓" in log or "Loaded" in log:
+                log_container.success(log)
+            elif "Skipped" in log:
+                log_container.warning(log)
+            elif "Failed" in log or "✗" in log:
+                log_container.error(log)
+            else:
+                log_container.info(log)
+
     if not solutions:
-        st.error("No valid solution files found.")
+        st.error("No valid solution files found in the pinn_solutions directory.")
+        st.info("""
+        **Troubleshooting tips:**
+        - Check that .pkl files exist in the `pinn_solutions` folder
+        - Verify filenames follow pattern: `solution_[type]_ly_[value]_tmax_[value].pkl`
+        - Supported types: crossdiffusion, cu_selfdiffusion, ni_selfdiffusion
+        - Example: `solution_crossdiffusion_ly_50.0_tmax_100.0.pkl`
+        """)
         return
 
     # Sidebar parameters
     st.sidebar.header("Simulation Parameters")
-    diff_type = st.sidebar.selectbox("Diffusion Type", DIFFUSION_TYPES, format_func=lambda x:x.replace('_',' ').title())
-    available_lys = sorted(set(s['Ly_parsed'] for s in solutions if s['diffusion_type']==diff_type))
-    ly_target = st.sidebar.select_slider("Ly (μm)", options=available_lys,value=available_lys[0] if available_lys else 50.0)
-    time_index = st.sidebar.slider("Time Index",0,49,49)
-    downsample = st.sidebar.slider("Downsample",1,5,2)
+    
+    # Get available diffusion types that actually have solutions
+    available_types = sorted(set(s['diffusion_type'] for s in solutions))
+    if not available_types:
+        st.error("No diffusion types available despite loading solutions. Check debug info.")
+        return
+        
+    diff_type = st.sidebar.selectbox("Diffusion Type", available_types, 
+                                    format_func=lambda x: x.replace('_',' ').title())
+    
+    # Get available Ly values for the selected diffusion type
+    available_lys = sorted(set(s['Ly_parsed'] for s in solutions if s['diffusion_type'] == diff_type))
+    if not available_lys:
+        st.error(f"No Ly values available for {diff_type}. Check debug info.")
+        return
+        
+    ly_target = st.sidebar.select_slider("Ly (μm)", options=available_lys, 
+                                        value=available_lys[0] if available_lys else 50.0)
+    
+    time_index = st.sidebar.slider("Time Index", 0, 49, 49)
+    downsample = st.sidebar.slider("Downsample", 1, 5, 2)
 
     # Plot customization
-    color_cu,color_ni,linewidth,linestyle,font_size,dpi,colorscale = get_plot_customization()
+    color_cu, color_ni, linewidth, linestyle, font_size, dpi, colorscale = get_plot_customization()
 
-    solution = load_and_process_solution(solutions,diff_type,ly_target)
+    solution = load_and_process_solution(solutions, diff_type, ly_target)
     if solution:
         st.subheader("Uphill Diffusion Detection")
         st.markdown("Uphill occurs when J_y · ∇_y C > 0")
-        plot_uphill_regions(solution,time_index,downsample,colorscale)
+        plot_uphill_regions(solution, time_index, downsample, colorscale)
 
         st.subheader("Flux vs Gradient Comparison")
         st.markdown("Plots J_y vs -∇_y C along the central line.")
-        plot_flux_vs_gradient(solution,time_index,color_cu,color_ni,linewidth,linestyle,font_size,dpi)
+        plot_flux_vs_gradient(solution, time_index, color_cu, color_ni, linewidth, linestyle, font_size, dpi)
+        
+        # Show solution info
+        with st.expander("Solution Information"):
+            st.write(f"**Diffusion type:** {solution['diffusion_type']}")
+            st.write(f"**Ly:** {solution['params']['Ly']} μm")
+            st.write(f"**Lx:** {solution['params']['Lx']} μm") 
+            st.write(f"**Time range:** {solution['times'][0]:.1f}s to {solution['times'][-1]:.1f}s")
+            st.write(f"**Array shape:** {solution['c1_preds'][0].shape}")
+            st.write(f"**Orientation:** {solution.get('orientation_note', 'Not specified')}")
+            if solution.get('interpolated'):
+                st.write("**Note:** This solution was interpolated from multiple files")
+                st.write(f"**Source Ly values:** {solution.get('used_lys', [])}")
     else:
-        st.error(f"No solution for {diff_type}, Ly={ly_target:.1f}")
+        st.error(f"No solution available for {diff_type} with Ly={ly_target:.1f}")
 
-if __name__=="__main__":
+if __name__ == "__main__":
     main()
