@@ -140,7 +140,9 @@ Concentration Fields, Flux and Others:
 [![meaningtowords](https://img.shields.io/badge/niselfdiffusionLy90-streamlit-red)](https://ni-selfdiffusion2dpinn-ly-90.streamlit.app/) 
 
 
-
+# Comparison of self and cross diffusion at Ly = 50/90 micrometers 
+[![meaningtowords](https://img.shields.io/badge/selfcrossdiffpost-streamlit-red)](https://self-and-cross-diffusioncomparison.streamlit.app/
+) 
 
 -----------------------------------------------------------------
 Multivariate crossdiffusion 2D pinn
