@@ -466,7 +466,7 @@ def generate_and_save_solution(_model, times, param_set, output_dir, _hash):
     }
     
     solution_filename = os.path.join(output_dir, 
-        f"solution_ly_{param_set['Ly']:.1f}_tmax_{param_set['t_max']:.1f}.pkl")
+        f"solution_cu_selfdiffusion_ly_{param_set['Ly']:.1f}_tmax_{param_set['t_max']:.1f}.pkl")
     
     try:
         with open(solution_filename, 'wb') as f:
