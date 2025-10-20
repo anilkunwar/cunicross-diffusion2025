@@ -17,7 +17,10 @@ import re
 st.set_page_config(page_title="Cu/Ni Cross-Diffusion Viewer", layout="wide")
 
 # Directory containing .pkl solution files (ensure exists)
-SOLUTION_DIR = "./pinn_solutions"
+#SOLUTION_DIR = "./pinn_solutions"
+# Directory containing .pkl solution files (ensure exists)
+SOLUTION_DIR = os.path.join(os.path.dirname(__file__), "pinn_solutions")
+os.makedirs(SOLUTION_DIR, exist_ok=True)
 os.makedirs(SOLUTION_DIR, exist_ok=True)
 
 st.title("🧠 Cu–Ni Cross-Diffusion PINN Visualization")
