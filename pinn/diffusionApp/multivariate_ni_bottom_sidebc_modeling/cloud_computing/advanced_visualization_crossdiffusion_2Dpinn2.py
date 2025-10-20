@@ -234,18 +234,16 @@ def plot_solution(solution, time_index, downsample, title_suffix="", cu_colormap
 
     fig = make_subplots(rows=1, cols=2, 
                        subplot_titles=(f"Cu @ {t_val:.1f}s", f"Ni @ {t_val:.1f}s"),
-                       horizontal_spacing=0.15)  # Increased horizontal spacing between subplots
+                       horizontal_spacing=0.20)  # Increased horizontal spacing between subplots
 
     fig.add_trace(go.Heatmap(
         x=x_ds, y=y_ds, z=c1, colorscale=cu_colormap,
-        colorbar=dict(title='Cu Conc', x=0.45, len=0.8, thickness=15),  # Adjusted colorbar
-        zsmooth='best'
+        colorbar=dict(title='Cu Conc', x=0.45), zsmooth='best'
     ), row=1, col=1)
 
     fig.add_trace(go.Heatmap(
         x=x_ds, y=y_ds, z=c2, colorscale=ni_colormap,
-        colorbar=dict(title='Ni Conc', x=1.02, len=0.8, thickness=15),  # Adjusted colorbar
-        zsmooth='best'
+        colorbar=dict(title='Ni Conc', x=1.02), zsmooth='best'
     ), row=1, col=2)
 
     if show_grid:
@@ -256,20 +254,10 @@ def plot_solution(solution, time_index, downsample, title_suffix="", cu_colormap
             for y in np.arange(0, Ly + y_tick_interval, y_tick_interval):
                 fig.add_shape(type='line', x0=0, y0=y, x1=Lx, y1=y, xref=xref, yref=yref,
                               line=dict(color='gray', width=grid_thickness, dash='dot'))
-    
-    # Add borders with padding
     for col, xref, yref in [(1, 'x', 'y'), (2, 'x2', 'y2')]:
-        # Top border with padding
         fig.add_shape(type='line', x0=0, y0=Ly, x1=Lx, y1=Ly, xref=xref, yref=yref,
                       line=dict(color='black', width=border_thickness))
-        # Bottom border
-        fig.add_shape(type='line', x0=0, y0=0, x1=Lx, y1=0, xref=xref, yref=yref,
-                      line=dict(color='black', width=border_thickness))
-        # Left border
-        fig.add_shape(type='line', x0=0, y0=0, x1=0, y1=Ly, xref=xref, yref=yref,
-                      line=dict(color='black', width=border_thickness))
-        # Right border
-        fig.add_shape(type='line', x0=Lx, y0=0, x1=Lx, y1=Ly, xref=xref, yref=yref,
+        fig.add_shape(type='rect', x0=0, y0=0, x1=Lx, y1=Ly, xref=xref, yref=yref,
                       line=dict(color='black', width=border_thickness))
 
     height = int(base_height + height_multiplier * Ly)
@@ -280,27 +268,12 @@ def plot_solution(solution, time_index, downsample, title_suffix="", cu_colormap
         title=f"Concentration Fields: {Lx}μm × {Ly}μm {title_suffix}",
         showlegend=False,
         template='plotly_white',
-        font=dict(size=font_size),
-        margin=dict(l=60, r=60, t=80, b=40)  # Increased margins for padding
+        font=dict(size=font_size)
     )
-    
-    fig.update_xaxes(title_text="x (μm)", range=[0, Lx], gridcolor='white', zeroline=False, 
-                     row=1, col=1, dtick=x_tick_interval, 
-                     automargin=True,  # Auto margin for labels
-                     pad=dict(l=10, r=10, t=10, b=10))  # Padding around axes
-    
-    fig.update_yaxes(title_text="y (μm)", range=[0, Ly], gridcolor='white', zeroline=False, 
-                     row=1, col=1, dtick=y_tick_interval,
-                     automargin=True)
-    
-    fig.update_xaxes(title_text="x (μm)", range=[0, Lx], gridcolor='white', zeroline=False, 
-                     row=1, col=2, dtick=x_tick_interval,
-                     automargin=True,
-                     pad=dict(l=10, r=10, t=10, b=10))
-    
-    fig.update_yaxes(title_text="y (μm)", range=[0, Ly], gridcolor='white', zeroline=False, 
-                     row=1, col=2, dtick=y_tick_interval,
-                     automargin=True)
+    fig.update_xaxes(title_text="x (μm)", range=[0, Lx], gridcolor='white', zeroline=False, row=1, col=1, dtick=x_tick_interval)
+    fig.update_yaxes(title_text="y (μm)", range=[0, Ly], gridcolor='white', zeroline=False, row=1, col=1, dtick=y_tick_interval)
+    fig.update_xaxes(title_text="x (μm)", range=[0, Lx], gridcolor='white', zeroline=False, row=1, col=2, dtick=x_tick_interval)
+    fig.update_yaxes(title_text="y (μm)", range=[0, Ly], gridcolor='white', zeroline=False, row=1, col=2, dtick=y_tick_interval)
 
     st.plotly_chart(fig, use_container_width=False)
 
