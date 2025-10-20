@@ -5,8 +5,6 @@ import streamlit as st
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import matplotlib.pyplot as plt
-from scipy.interpolate import RegularGridInterpolator
-from scipy.spatial.distance import cdist
 import re
 
 # ------------------------------
@@ -26,7 +24,6 @@ plt.rcParams.update({
 
 SOLUTION_DIR = os.path.join(os.path.dirname(__file__), "pinn_solutions")
 os.makedirs(SOLUTION_DIR, exist_ok=True)
-
 DIFFUSION_TYPES = ['crossdiffusion', 'cu_selfdiffusion', 'ni_selfdiffusion']
 
 # ------------------------------
@@ -55,7 +52,6 @@ def load_solutions(solution_dir):
 
             raw_type, ly_val, _ = match.groups()
             ly_val = float(ly_val)
-
             diff_type = raw_type.lower()
             type_map = {
                 'crossdiffusion': 'crossdiffusion',
@@ -111,7 +107,7 @@ def detect_uphill(solution,time_index):
     return J1_y*grad_c1_y>0, J2_y*grad_c2_y>0
 
 # ------------------------------
-# Streamlit Plotting Functions
+# Streamlit Plot Customization
 # ------------------------------
 
 def get_plot_customization():
@@ -128,7 +124,6 @@ def get_plot_customization():
     legend_font_size = st.sidebar.slider("Legend Font Size", 6, 20, 12)
     grid_on = st.sidebar.checkbox("Show Grid", True)
 
-    # Colorscales
     colorscale_plotly = st.sidebar.selectbox("Uphill Colorscale (Plotly)", [
         "Viridis", "Cividis", "Plasma", "Inferno", "Magma", "Turbo", "Rainbow",
         "RdBu", "Picnic", "Jet", "Hot", "Electric", "Portland", "Earth", "Ice", "YlGnBu"
@@ -191,18 +186,19 @@ def plot_uphill_regions(solution, time_index, downsample=2, colorscale='Viridis'
     st.plotly_chart(fig, use_container_width=True)
 
 # ------------------------------
-# Plotly Flux vs Gradient with Uphill Overlay
+# Plotly Flux vs Gradient with Semi-transparent Uphill Overlay
 # ------------------------------
 
 def plot_flux_vs_gradient_plotly(solution, time_index, color_cu, color_ni, line_width, line_style,
                                  fig_width, fig_height, font_size):
     y_coords = solution['Y'][0,:]
     t_val = solution['times'][time_index]
+    mid_idx = solution['X'].shape[0]//2
 
-    J1_y = solution['J1_preds'][time_index][1][:,solution['X'].shape[0]//2]
-    grad_c1_y = solution['grad_c1_y'][time_index][:,solution['X'].shape[0]//2]
-    J2_y = solution['J2_preds'][time_index][1][:,solution['X'].shape[0]//2]
-    grad_c2_y = solution['grad_c2_y'][time_index][:,solution['X'].shape[0]//2]
+    J1_y = solution['J1_preds'][time_index][1][:,mid_idx]
+    grad_c1_y = solution['grad_c1_y'][time_index][:,mid_idx]
+    J2_y = solution['J2_preds'][time_index][1][:,mid_idx]
+    grad_c2_y = solution['grad_c2_y'][time_index][:,mid_idx]
 
     uphill_cu = J1_y*grad_c1_y > 0
     uphill_ni = J2_y*grad_c2_y > 0
@@ -219,8 +215,12 @@ def plot_flux_vs_gradient_plotly(solution, time_index, color_cu, color_ni, line_
                              name='J_Cu', line=dict(color=color_cu, width=line_width, dash='dash')),
                   row=1, col=1)
     if show_uphill:
-        fig.add_trace(go.Scatter(x=y_coords, y=J1_y, fill='tonexty', mode='none',
-                                 name='Uphill', fillcolor='rgba(255,0,0,0.3)'), row=1, col=1)
+        fig.add_trace(go.Scatter(x=np.concatenate([y_coords, y_coords[::-1]]),
+                                 y=np.concatenate([np.zeros_like(J1_y), J1_y[::-1]]),
+                                 fill='toself', fillcolor='rgba(255,0,0,0.3)',
+                                 line=dict(color='rgba(255,0,0,0)'),
+                                 name='Uphill', mode='lines'),
+                      row=1, col=1)
 
     # Ni
     fig.add_trace(go.Scatter(x=y_coords, y=-grad_c2_y, mode='lines', 
@@ -230,8 +230,12 @@ def plot_flux_vs_gradient_plotly(solution, time_index, color_cu, color_ni, line_
                              name='J_Ni', line=dict(color=color_ni, width=line_width, dash='dash')),
                   row=1, col=2)
     if show_uphill:
-        fig.add_trace(go.Scatter(x=y_coords, y=J2_y, fill='tonexty', mode='none',
-                                 name='Uphill', fillcolor='rgba(255,0,0,0.3)'), row=1, col=2)
+        fig.add_trace(go.Scatter(x=np.concatenate([y_coords, y_coords[::-1]]),
+                                 y=np.concatenate([np.zeros_like(J2_y), J2_y[::-1]]),
+                                 fill='toself', fillcolor='rgba(255,0,0,0.3)',
+                                 line=dict(color='rgba(255,0,0,0)'),
+                                 name='Uphill', mode='lines'),
+                      row=1, col=2)
 
     fig.update_layout(height=int(fig_height*100), width=int(fig_width*100),
                       title=f"Flux vs Gradient with Uphill Overlay @ t={t_val:.1f}s",
@@ -241,20 +245,20 @@ def plot_flux_vs_gradient_plotly(solution, time_index, color_cu, color_ni, line_
     st.plotly_chart(fig, use_container_width=True)
 
 # ------------------------------
-# Matplotlib versions (unchanged)
+# Matplotlib Flux vs Gradient
 # ------------------------------
 
 def plot_flux_vs_gradient(solution, time_index, color_cu, color_ni, line_width, line_style,
                           fig_width, fig_height, font_size, tick_len, tick_width, 
                           legend_font_size, grid_on, axis_label_size, tick_label_size, spine_width):
-    x_idx = solution['X'].shape[0]//2
+    mid_idx = solution['X'].shape[0]//2
     y_coords = solution['Y'][0,:]
     t_val = solution['times'][time_index]
 
-    J1_y = solution['J1_preds'][time_index][1][:,x_idx]
-    grad_c1_y = solution['grad_c1_y'][time_index][:,x_idx]
-    J2_y = solution['J2_preds'][time_index][1][:,x_idx]
-    grad_c2_y = solution['grad_c2_y'][time_index][:,x_idx]
+    J1_y = solution['J1_preds'][time_index][1][:,mid_idx]
+    grad_c1_y = solution['grad_c1_y'][time_index][:,mid_idx]
+    J2_y = solution['J2_preds'][time_index][1][:,mid_idx]
+    grad_c2_y = solution['grad_c2_y'][time_index][:,mid_idx]
 
     fig, axes = plt.subplots(1,2,figsize=(fig_width,fig_height))
     
@@ -316,4 +320,43 @@ def main():
     downsample = st.sidebar.slider("Downsample", 1, 5, 2)
     plot_type = st.sidebar.radio("Heatmap Type", ["Plotly", "Matplotlib"], index=0)
 
-    (color_cu, color
+    # Plot customization
+    (color_cu, color_ni, line_width, line_style, fig_width, fig_height, 
+     font_size, tick_len, tick_width, legend_font_size, grid_on,
+     colorscale_plotly, colorscale_mpl,
+     axis_label_size, tick_label_size, spine_width) = get_plot_customization()
+
+    # Select solution based on type and Ly
+    selected_sols = [s for s in solutions if s['diffusion_type']==diff_type and s['Ly_parsed']==ly_target]
+    if not selected_sols:
+        st.warning("No solution found for the selected diffusion type and Ly!")
+        return
+    solution = selected_sols[0]
+    st.subheader(f"Selected Solution: {solution['filename']}")
+    st.text(f"Orientation Note: {solution['orientation_note']}")
+
+    st.sidebar.header("Visualization Options")
+    show_uphill_heatmap = st.sidebar.checkbox("Show Uphill Regions Heatmap", value=True)
+    show_flux_gradient_plotly = st.sidebar.checkbox("Show Flux vs Gradient (Plotly)", value=True)
+    show_flux_gradient_mpl = st.sidebar.checkbox("Show Flux vs Gradient (Matplotlib)", value=False)
+
+    # Compute fluxes if missing
+    if 'J1_preds' not in solution:
+        J1_preds,J2_preds,grad_c1_y,grad_c2_y = compute_fluxes_and_grads(
+            solution['c1_preds'], solution['c2_preds'], solution['X'][:,0], solution['Y'][0,:], solution['params']
+        )
+        solution.update({'J1_preds':J1_preds, 'J2_preds':J2_preds, 'grad_c1_y':grad_c1_y, 'grad_c2_y':grad_c2_y})
+
+    if show_uphill_heatmap:
+        plot_uphill_regions(solution, time_index, downsample, colorscale_plotly, fig_width, fig_height, font_size)
+
+    if show_flux_gradient_plotly:
+        plot_flux_vs_gradient_plotly(solution, time_index, color_cu, color_ni, line_width, line_style, fig_width, fig_height, font_size)
+
+    if show_flux_gradient_mpl:
+        plot_flux_vs_gradient(solution, time_index, color_cu, color_ni, line_width, line_style,
+                              fig_width, fig_height, font_size, tick_len, tick_width, 
+                              legend_font_size, grid_on, axis_label_size, tick_label_size, spine_width)
+
+if __name__=="__main__":
+    main()
