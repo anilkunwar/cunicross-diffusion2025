@@ -48,7 +48,7 @@ def load_solutions(solution_dir):
                 load_logs.append(f"{fname}: Missing keys {set(required)-set(sol.keys())}")
                 continue
 
-            # --- FIXED: parse filename correctly ---
+            # --- Parse filename ---
             match = re.match(r"solution_(\w+)_ly_([\d.]+)_tmax_([\d.]+)\.pkl", fname)
             if not match:
                 load_logs.append(f"{fname}: Invalid filename format")
@@ -58,7 +58,6 @@ def load_solutions(solution_dir):
             ly_val = float(ly_val)
 
             # Normalize diffusion type
-            diff_type = raw_type.lower()
             type_map = {
                 'crossdiffusion': 'crossdiffusion',
                 'cu_selfdiffusion': 'cu_selfdiffusion',
@@ -67,11 +66,10 @@ def load_solutions(solution_dir):
                 'cu_self': 'cu_selfdiffusion',
                 'ni_self': 'ni_selfdiffusion'
             }
-            diff_type = type_map.get(diff_type, diff_type)
+            diff_type = type_map.get(raw_type.lower(), raw_type.lower())
             if diff_type not in DIFFUSION_TYPES:
                 load_logs.append(f"{fname}: Unknown diffusion type '{diff_type}'")
                 continue
-            # --- END FIX ---
 
             # Ensure predictions are 50x50
             c1_preds, c2_preds = sol['c1_preds'], sol['c2_preds']
@@ -86,7 +84,14 @@ def load_solutions(solution_dir):
                     sol['orientation_note'] = f"Transposed from {c1_preds[0].shape}"
             else:
                 sol['orientation_note'] = "Already (50,50)"
-            sol.update({'c1_preds': c1_preds,'c2_preds':c2_preds,'diffusion_type':diff_type,'Ly_parsed':ly_val,'filename':fname})
+
+            sol.update({
+                'c1_preds': c1_preds,
+                'c2_preds': c2_preds,
+                'diffusion_type': diff_type,
+                'Ly_parsed': ly_val,
+                'filename': fname
+            })
             solutions.append(sol)
             metadata.append({'type':diff_type,'Ly':ly_val,'filename':fname,'shape':c1_preds[0].shape})
             load_logs.append(f"{fname}: ✓ Loaded [{diff_type}, Ly={ly_val:.1f}]")
@@ -132,17 +137,24 @@ def get_plot_customization():
     legend_font_size = st.sidebar.slider("Legend Font Size", 6, 20, 12)
     grid_on = st.sidebar.checkbox("Show Grid", True)
 
-    # --- Colormap options ---
-    mpl_cmaps = sorted([m for m in plt.colormaps() if not m.endswith("_r")])  # >50 options
-    colorscale = st.sidebar.selectbox("Uphill Heatmap Colorscale", mpl_cmaps, index=5)
+    # --- Plotly colormaps ---
+    plotly_cmaps = [
+        'Viridis', 'Cividis', 'Plasma', 'Inferno', 'Magma', 'Turbo',
+        'RdBu', 'Picnic', 'Jet', 'Hot', 'Cool', 'Rainbow', 'Earth'
+    ]
+    colorscale_plotly = st.sidebar.selectbox("Plotly Uphill Colorscale", plotly_cmaps, index=0)
 
-    # New options for matplotlib styling
+    # --- Matplotlib colormaps ---
+    mpl_cmaps = sorted([m for m in plt.colormaps() if not m.endswith("_r")])
+    colorscale_mpl = st.sidebar.selectbox("Matplotlib Uphill Colormap", mpl_cmaps, index=5)
+
     axis_label_size = st.sidebar.slider("Axis Label Size", 8, 20, 12)
     tick_label_size = st.sidebar.slider("Tick Label Size", 6, 16, 10)
     spine_width = st.sidebar.slider("Axis Spine Width", 0.5, 3.0, 1.0)
 
     return (color_cu, color_ni, line_width, line_style, fig_width, fig_height, 
-            font_size, tick_len, tick_width, legend_font_size, grid_on, colorscale,
+            font_size, tick_len, tick_width, legend_font_size, grid_on,
+            colorscale_plotly, colorscale_mpl,
             axis_label_size, tick_label_size, spine_width)
 
 def plot_flux_vs_gradient(solution, time_index, color_cu, color_ni, line_width, line_style,
@@ -159,19 +171,12 @@ def plot_flux_vs_gradient(solution, time_index, color_cu, color_ni, line_width, 
 
     fig, axes = plt.subplots(1,2,figsize=(fig_width,fig_height))
     
-    # Apply styling to both axes
     for ax in axes:
-        # Set spine width
-        for spine in ax.spines.values():
-            spine.set_linewidth(spine_width)
-        # Set tick parameters
-        ax.tick_params(axis='both', which='major', length=tick_len, width=tick_width, 
-                       labelsize=tick_label_size)
+        for spine in ax.spines.values(): spine.set_linewidth(spine_width)
+        ax.tick_params(axis='both', which='major', length=tick_len, width=tick_width, labelsize=tick_label_size)
         ax.tick_params(axis='both', which='minor', length=tick_len/2, width=tick_width/2)
-        if grid_on: 
-            ax.grid(True, alpha=0.3)
+        if grid_on: ax.grid(True, alpha=0.3)
     
-    # Cu
     axes[0].plot(y_coords, -grad_c1_y, color=color_cu, lw=line_width, linestyle=line_style,label=r"$-\nabla C_{Cu}$")
     axes[0].plot(y_coords, J1_y, color=color_cu, lw=line_width, linestyle='--',label=r"$J_{Cu}$")
     axes[0].fill_between(y_coords,0,J1_y,where=(J1_y*-grad_c1_y>0),color='red',alpha=0.3,label='Uphill')
@@ -180,7 +185,6 @@ def plot_flux_vs_gradient(solution, time_index, color_cu, color_ni, line_width, 
     axes[0].set_title(f"Cu Flux vs Gradient @ t={t_val:.1f}s", fontsize=font_size+2)
     axes[0].legend(fontsize=legend_font_size)
 
-    # Ni
     axes[1].plot(y_coords, -grad_c2_y, color=color_ni, lw=line_width, linestyle=line_style,label=r"$-\nabla C_{Ni}$")
     axes[1].plot(y_coords, J2_y, color=color_ni, lw=line_width, linestyle='--',label=r"$J_{Ni}$")
     axes[1].fill_between(y_coords,0,J2_y,where=(J2_y*-grad_c2_y>0),color='red',alpha=0.3,label='Uphill')
@@ -194,10 +198,10 @@ def plot_flux_vs_gradient(solution, time_index, color_cu, color_ni, line_width, 
     st.pyplot(fig)
     plt.close()
 
-def plot_uphill_regions(solution, time_index, downsample=2, colorscale='RdBu', 
+def plot_uphill_regions(solution, time_index, downsample=2, colorscale='Viridis', 
                         fig_width=10, fig_height=5, font_size=14):
-    x_coords = solution['X'][:,0]  
-    y_coords = solution['Y'][0,:]  
+    x_coords = solution['X'][:,0]
+    y_coords = solution['Y'][0,:]
     t_val = solution['times'][time_index]
     diff_type = solution['diffusion_type']
 
@@ -215,6 +219,7 @@ def plot_uphill_regions(solution, time_index, downsample=2, colorscale='RdBu',
         x_plot = x_coords[x_idx]
         y_plot = y_coords[y_idx]
         z_plot = np.abs(J[np.ix_(y_idx, x_idx)]) * uphill[np.ix_(y_idx, x_idx)]
+        
         fig.add_trace(go.Heatmap(
             x=x_plot,
             y=y_plot,
@@ -223,6 +228,7 @@ def plot_uphill_regions(solution, time_index, downsample=2, colorscale='RdBu',
             colorbar=dict(title="|J|"),
             zsmooth='best'
         ), row=1, col=i+1)
+        
         fig.update_xaxes(title_text="x (μm)", row=1, col=i+1)
         fig.update_yaxes(title_text="y (μm)", row=1, col=i+1)
     
@@ -256,6 +262,7 @@ def plot_uphill_regions_matplotlib(solution, time_index, downsample=2, colorscal
         x_plot = x_coords[x_idx]
         y_plot = y_coords[y_idx]
         z_plot = np.abs(J[np.ix_(y_idx, x_idx)]) * uphill[np.ix_(y_idx, x_idx)]
+        
         im = ax.imshow(z_plot, 
                       extent=[x_plot.min(), x_plot.max(), y_plot.min(), y_plot.max()],
                       origin='lower', 
@@ -268,8 +275,7 @@ def plot_uphill_regions_matplotlib(solution, time_index, downsample=2, colorscal
         cbar = plt.colorbar(im, ax=ax)
         cbar.set_label("|J|", fontsize=axis_label_size)
         cbar.ax.tick_params(labelsize=tick_label_size)
-        for spine in ax.spines.values():
-            spine.set_linewidth(spine_width)
+        for spine in ax.spines.values(): spine.set_linewidth(spine_width)
         ax.tick_params(axis='both', which='major', labelsize=tick_label_size)
     
     plt.suptitle(f"Uphill Diffusion Magnitude: {diff_type.replace('_',' ')} @ t={t_val:.1f}s", 
@@ -297,7 +303,6 @@ def main():
         st.error("No valid solution files found!")
         return
 
-    # Sidebar Parameters
     st.sidebar.header("Simulation Parameters")
     available_types = sorted(set(s['diffusion_type'] for s in solutions))
     diff_type = st.sidebar.selectbox("Diffusion Type", available_types, format_func=lambda x: x.replace('_',' ').title())
@@ -305,41 +310,35 @@ def main():
     ly_target = st.sidebar.select_slider("Ly (μm)", options=available_lys, value=available_lys[0])
     time_index = st.sidebar.slider("Time Index", 0, 49, 49)
     downsample = st.sidebar.slider("Downsample", 1, 5, 2)
-    
-    # Plot type selection
     plot_type = st.sidebar.radio("Heatmap Type", ["Plotly", "Matplotlib"], index=0)
-    
+
     (color_cu, color_ni, line_width, line_style, fig_width, fig_height, 
-     font_size, tick_len, tick_width, legend_font_size, grid_on, colorscale,
+     font_size, tick_len, tick_width, legend_font_size, grid_on,
+     colorscale_plotly, colorscale_mpl,
      axis_label_size, tick_label_size, spine_width) = get_plot_customization()
 
-    # Select solution
     solution = next((s for s in solutions if s['diffusion_type']==diff_type and abs(s['Ly_parsed']-ly_target)<1e-4), None)
     if solution is None:
         st.error(f"No solution for {diff_type} with Ly={ly_target}")
         return
 
-    # Compute fluxes and gradients
     J1,J2,grad_c1,grad_c2 = compute_fluxes_and_grads(solution['c1_preds'], solution['c2_preds'],
                                                      solution['X'][:,0], solution['Y'][0,:], solution['params'])
     solution.update({'J1_preds':J1,'J2_preds':J2,'grad_c1_y':grad_c1,'grad_c2_y':grad_c2})
 
-    # Uphill
     st.subheader("Uphill Diffusion Detection")
     if plot_type == "Plotly":
-        plot_uphill_regions(solution, time_index, downsample, colorscale, fig_width, fig_height, font_size)
+        plot_uphill_regions(solution, time_index, downsample, colorscale_plotly, fig_width, fig_height, font_size)
     else:
-        plot_uphill_regions_matplotlib(solution, time_index, downsample, colorscale, 
+        plot_uphill_regions_matplotlib(solution, time_index, downsample, colorscale_mpl, 
                                       fig_width, fig_height, font_size,
                                       axis_label_size, tick_label_size, spine_width)
 
-    # Flux vs Gradient
     st.subheader("Flux vs Gradient Comparison")
     plot_flux_vs_gradient(solution, time_index, color_cu, color_ni, line_width, line_style,
                           fig_width, fig_height, font_size, tick_len, tick_width, 
                           legend_font_size, grid_on, axis_label_size, tick_label_size, spine_width)
 
-    # Solution Info
     with st.expander("Solution Information"):
         st.write(f"**Diffusion type:** {solution['diffusion_type']}")
         st.write(f"**Ly:** {solution['params']['Ly']} μm")
