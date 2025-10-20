@@ -18,7 +18,6 @@ plt.rcParams.update({
     "mathtext.fontset": "dejavusans"
 })
 
-# Directory containing .pkl solution files (ensure exists)
 SOLUTION_DIR = os.path.join(os.path.dirname(__file__), "pinn_solutions")
 os.makedirs(SOLUTION_DIR, exist_ok=True)
 
@@ -112,18 +111,25 @@ def detect_uphill(solution,time_index):
 # ------------------------------
 # Streamlit Plotting Functions
 # ------------------------------
+
 def get_plot_customization():
     st.sidebar.header("Plot Styling Options")
-    color_cu = st.sidebar.color_picker("Cu Curve Color", "#1f77b4")
-    color_ni = st.sidebar.color_picker("Ni Curve Color", "#ff7f0e")
-    linewidth = st.sidebar.slider("Line Width",1,5,2)
-    linestyle = st.sidebar.selectbox("Line Style",["solid","dashed","dotted"],0)
-    font_size = st.sidebar.slider("Font Size",8,24,14)
-    dpi = st.sidebar.slider("DPI (Matplotlib)",100,600,300)
-    colorscale = st.sidebar.selectbox("Heatmap Colorscale",["RdBu","Viridis","Cividis"],0)
-    return color_cu,color_ni,linewidth,linestyle,font_size,dpi,colorscale
+    color_cu = st.sidebar.color_picker("Cu Line Color", "#1f77b4")
+    color_ni = st.sidebar.color_picker("Ni Line Color", "#ff7f0e")
+    line_width = st.sidebar.slider("Line Width", 1, 10, 2)
+    line_style = st.sidebar.selectbox("Line Style", ["solid","dashed","dotted"],0)
+    fig_width = st.sidebar.slider("Figure Width", 6, 20, 14)
+    fig_height = st.sidebar.slider("Figure Height", 4, 12, 6)
+    font_size = st.sidebar.slider("Font Size", 8, 24, 14)
+    tick_len = st.sidebar.slider("Tick Length", 2, 20, 6)
+    tick_width = st.sidebar.slider("Tick Width", 1, 5, 1)
+    legend_font_size = st.sidebar.slider("Legend Font Size", 6, 20, 12)
+    grid_on = st.sidebar.checkbox("Show Grid", True)
+    colorscale = st.sidebar.selectbox("Uphill Heatmap Colorscale", plt.colormaps(), index=5)
+    return color_cu,color_ni,line_width,line_style,fig_width,fig_height,font_size,tick_len,tick_width,legend_font_size,grid_on,colorscale
 
-def plot_flux_vs_gradient(solution,time_index,color_cu,color_ni,linewidth,linestyle,font_size,dpi):
+def plot_flux_vs_gradient(solution,time_index,color_cu,color_ni,line_width,line_style,
+                          fig_width,fig_height,font_size,tick_len,tick_width,legend_font_size,grid_on):
     x_idx = solution['X'].shape[0]//2
     y_coords = solution['Y'][0,:]
     t_val = solution['times'][time_index]
@@ -133,35 +139,36 @@ def plot_flux_vs_gradient(solution,time_index,color_cu,color_ni,linewidth,linest
     J2_y = solution['J2_preds'][time_index][1][:,x_idx]
     grad_c2_y = solution['grad_c2_y'][time_index][:,x_idx]
 
-    fig, axes = plt.subplots(1,2,figsize=(14,6),dpi=dpi)
-    plt.rcParams.update({"font.size": font_size})
+    fig, axes = plt.subplots(1,2,figsize=(fig_width,fig_height))
     
     # Cu
-    axes[0].plot(y_coords, -grad_c1_y, color=color_cu,lw=linewidth,linestyle=linestyle,label=r"$-\nabla C_{Cu}$")
-    axes[0].plot(y_coords, J1_y, color=color_cu,lw=linewidth,linestyle='--',label=r"$J_{Cu}$")
+    axes[0].plot(y_coords, -grad_c1_y, color=color_cu, lw=line_width, linestyle=line_style,label=r"$-\nabla C_{Cu}$")
+    axes[0].plot(y_coords, J1_y, color=color_cu, lw=line_width, linestyle='--',label=r"$J_{Cu}$")
     axes[0].fill_between(y_coords,0,J1_y,where=(J1_y*-grad_c1_y>0),color='red',alpha=0.3,label='Uphill')
-    axes[0].set_xlabel("y (μm)")
-    axes[0].set_ylabel("Flux / -Gradient")
-    axes[0].set_title(f"Cu Flux vs Gradient @ t={t_val:.1f}s")
-    axes[0].legend()
-    axes[0].grid(True)
+    axes[0].set_xlabel("y (μm)", fontsize=font_size)
+    axes[0].set_ylabel("Flux / -Gradient", fontsize=font_size)
+    axes[0].set_title(f"Cu Flux vs Gradient @ t={t_val:.1f}s", fontsize=font_size+2)
+    axes[0].tick_params(length=tick_len, width=tick_width)
+    axes[0].legend(fontsize=legend_font_size)
+    if grid_on: axes[0].grid(True)
 
     # Ni
-    axes[1].plot(y_coords, -grad_c2_y, color=color_ni,lw=linewidth,linestyle=linestyle,label=r"$-\nabla C_{Ni}$")
-    axes[1].plot(y_coords, J2_y, color=color_ni,lw=linewidth,linestyle='--',label=r"$J_{Ni}$")
+    axes[1].plot(y_coords, -grad_c2_y, color=color_ni, lw=line_width, linestyle=line_style,label=r"$-\nabla C_{Ni}$")
+    axes[1].plot(y_coords, J2_y, color=color_ni, lw=line_width, linestyle='--',label=r"$J_{Ni}$")
     axes[1].fill_between(y_coords,0,J2_y,where=(J2_y*-grad_c2_y>0),color='red',alpha=0.3,label='Uphill')
-    axes[1].set_xlabel("y (μm)")
-    axes[1].set_ylabel("Flux / -Gradient")
-    axes[1].set_title(f"Ni Flux vs Gradient @ t={t_val:.1f}s")
-    axes[1].legend()
-    axes[1].grid(True)
+    axes[1].set_xlabel("y (μm)", fontsize=font_size)
+    axes[1].set_ylabel("Flux / -Gradient", fontsize=font_size)
+    axes[1].set_title(f"Ni Flux vs Gradient @ t={t_val:.1f}s", fontsize=font_size+2)
+    axes[1].tick_params(length=tick_len, width=tick_width)
+    axes[1].legend(fontsize=legend_font_size)
+    if grid_on: axes[1].grid(True)
 
-    plt.suptitle(f"Flux vs Gradient: {solution['diffusion_type'].replace('_',' ')}",fontsize=font_size+4)
+    plt.suptitle(f"Flux vs Gradient: {solution['diffusion_type'].replace('_',' ')}", fontsize=font_size+4)
     plt.tight_layout(rect=[0,0,1,0.95])
     st.pyplot(fig)
     plt.close()
 
-def plot_uphill_regions(solution,time_index,downsample=2,colorscale='RdBu'):
+def plot_uphill_regions(solution,time_index,downsample=2,colorscale='RdBu',fig_width=10,fig_height=5,font_size=14):
     x_coords = solution['X'][:,0]
     y_coords = solution['Y'][0,:]
     t_val = solution['times'][time_index]
@@ -182,7 +189,9 @@ def plot_uphill_regions(solution,time_index,downsample=2,colorscale='RdBu'):
             x=x_coords[x_idx],y=y_coords[y_idx],z=z,
             colorscale=colorscale,colorbar=dict(title="|J|"),zsmooth='best'
         ),row=1,col=i+1)
-    fig.update_layout(height=500,width=1000,title=f"Uphill Diffusion Magnitude: {diff_type.replace('_',' ')} @ t={t_val:.1f}s",template='plotly_white')
+    fig.update_layout(height=int(fig_height*100), width=int(fig_width*100),
+                      title=f"Uphill Diffusion Magnitude: {diff_type.replace('_',' ')} @ t={t_val:.1f}s",
+                      template='plotly_white', font=dict(size=font_size))
     st.plotly_chart(fig,use_container_width=True)
 
 # ------------------------------
@@ -212,35 +221,36 @@ def main():
     ly_target = st.sidebar.select_slider("Ly (μm)", options=available_lys,value=available_lys[0])
     time_index = st.sidebar.slider("Time Index",0,49,49)
     downsample = st.sidebar.slider("Downsample",1,5,2)
-    color_cu,color_ni,linewidth,linestyle,font_size,dpi,colorscale = get_plot_customization()
+    color_cu,color_ni,line_width,line_style,fig_width,fig_height,font_size,tick_len,tick_width,legend_font_size,grid_on,colorscale = get_plot_customization()
 
     # Select solution
     solution = next((s for s in solutions if s['diffusion_type']==diff_type and abs(s['Ly_parsed']-ly_target)<1e-4), None)
-    if solution:
-        # Compute fluxes if not already
-        if 'J1_preds' not in solution:
-            J1,J2,grad1,grad2 = compute_fluxes_and_grads(solution['c1_preds'],solution['c2_preds'],
-                                                         solution['X'][:,0],solution['Y'][0,:],
-                                                         solution['params'])
-            solution.update({'J1_preds':J1,'J2_preds':J2,'grad_c1_y':grad1,'grad_c2_y':grad2})
+    if solution is None:
+        st.error(f"No solution for {diff_type} with Ly={ly_target}")
+        return
 
-        st.subheader("Uphill Diffusion Detection")
-        st.markdown("Regions where $J_y \\cdot \\nabla_y C > 0$ indicate uphill diffusion")
-        plot_uphill_regions(solution,time_index,downsample,colorscale)
+    # Compute fluxes and gradients
+    J1,J2,grad_c1,grad_c2 = compute_fluxes_and_grads(solution['c1_preds'],solution['c2_preds'],
+                                                     solution['X'][:,0],solution['Y'][0,:],solution['params'])
+    solution.update({'J1_preds':J1,'J2_preds':J2,'grad_c1_y':grad_c1,'grad_c2_y':grad_c2})
 
-        st.subheader("Flux vs Gradient Comparison")
-        st.markdown("Central line comparison of $J_y$ vs $-\\nabla_y C$")
-        plot_flux_vs_gradient(solution,time_index,color_cu,color_ni,linewidth,linestyle,font_size,dpi)
+    # Uphill
+    st.subheader("Uphill Diffusion Detection")
+    plot_uphill_regions(solution,time_index,downsample,colorscale,fig_width,fig_height,font_size)
 
-        with st.expander("Solution Information"):
-            st.write(f"**Diffusion type:** {solution['diffusion_type']}")
-            st.write(f"**Ly:** {solution['params']['Ly']} μm")
-            st.write(f"**Lx:** {solution['params']['Lx']} μm")
-            st.write(f"**Time range:** {solution['times'][0]:.1f}s - {solution['times'][-1]:.1f}s")
-            st.write(f"**Array shape:** {solution['c1_preds'][0].shape}")
-            st.write(f"**Orientation:** {solution.get('orientation_note','Not specified')}")
-    else:
-        st.error(f"No solution available for {diff_type} with Ly={ly_target:.1f}")
+    # Flux vs Gradient
+    st.subheader("Flux vs Gradient Comparison")
+    plot_flux_vs_gradient(solution,time_index,color_cu,color_ni,line_width,line_style,
+                          fig_width,fig_height,font_size,tick_len,tick_width,legend_font_size,grid_on)
+
+    # Solution Info
+    with st.expander("Solution Information"):
+        st.write(f"**Diffusion type:** {solution['diffusion_type']}")
+        st.write(f"**Ly:** {solution['params']['Ly']} μm")
+        st.write(f"**Lx:** {solution['params']['Lx']} μm") 
+        st.write(f"**Time range:** {solution['times'][0]:.1f}s to {solution['times'][-1]:.1f}s")
+        st.write(f"**Array shape:** {solution['c1_preds'][0].shape}")
+        st.write(f"**Orientation:** {solution.get('orientation_note', 'Not specified')}")
 
 if __name__=="__main__":
     main()
