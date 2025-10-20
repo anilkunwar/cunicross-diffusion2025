@@ -230,7 +230,7 @@ def plot_solution(solution, time_index, downsample, title_suffix="", cu_colormap
     x_ds = x_coords[x_indices]
     y_ds = y_coords[y_indices]
     c1 = solution['c1_preds'][time_index][np.ix_(y_indices, x_indices)]  # rows=y, cols=x
-    c2 = solution['c2_preds'][time_index][time_index][np.ix_(y_indices, x_indices)]
+    c2 = solution['c2_preds'][time_index][np.ix_(y_indices, x_indices)]
 
     fig = make_subplots(rows=1, cols=2, subplot_titles=(f"Cu @ {t_val:.1f}s", f"Ni @ {t_val:.1f}s"))
 
@@ -486,6 +486,11 @@ def plot_line_comparison(solutions, diff_type, ly_values, time_index, line_thick
     colors = [color_ly1, color_ly2]
     labels = [legend_label1 or f'Ly = {ly_values[0]:.1f} μm', legend_label2 or f'Ly = {ly_values[1]:.1f} μm']
 
+    c1_min = min(min(sol1['c1_preds'][time_index][:, len(sol1['X'][:, 0]) // 2]), min(sol2['c1_preds'][time_index][:, len(sol2['X'][:, 0]) // 2]))
+    c1_max = max(max(sol1['c1_preds'][time_index][:, len(sol1['X'][:, 0]) // 2]), max(sol2['c1_preds'][time_index][:, len(sol2['X'][:, 0]) // 2]))
+    c2_min = min(min(sol1['c2_preds'][time_index][:, len(sol1['X'][:, 0]) // 2]), min(sol2['c2_preds'][time_index][:, len(sol2['X'][:, 0]) // 2]))
+    c2_max = max(max(sol1['c2_preds'][time_index][:, len(sol1['X'][:, 0]) // 2]), max(sol2['c2_preds'][time_index][:, len(sol2['X'][:, 0]) // 2]))
+
     for idx, (sol, Ly, color, label, linestyle) in enumerate(zip([sol1, sol2], ly_values, colors, labels, ['-', '--'])):
         x_idx = len(sol['X'][:, 0]) // 2  # x = center index
         y_coords = sol['Y'][0, :]
@@ -501,7 +506,7 @@ def plot_line_comparison(solutions, diff_type, ly_values, time_index, line_thick
     ax1.set_title(f'Cu @ x=center, t={t_val:.1f}s', fontsize=label_font_size + 2)
     ax1.legend(fontsize=label_font_size - 2, loc=legend_loc)
     ax1.tick_params(labelsize=tick_font_size)
-    ax1.set_xticks(np.arange(min(c1_center), max(c1_center) + x_tick_interval, x_tick_interval))
+    ax1.set_xticks(np.arange(c1_min, c1_max + x_tick_interval, x_tick_interval))
     ax1.set_yticks(np.arange(0, max(ly_values) + y_tick_interval, y_tick_interval))
     ax1.grid(show_grid)
     for spine in ax1.spines.values():
@@ -514,7 +519,7 @@ def plot_line_comparison(solutions, diff_type, ly_values, time_index, line_thick
     ax2.set_title(f'Ni @ x=center, t={t_val:.1f}s', fontsize=label_font_size + 2)
     ax2.legend(fontsize=label_font_size - 2, loc=legend_loc)
     ax2.tick_params(labelsize=tick_font_size)
-    ax2.set_xticks(np.arange(min(c2_center), max(c2_center) + x_tick_interval, x_tick_interval))
+    ax2.set_xticks(np.arange(c2_min, c2_max + x_tick_interval, x_tick_interval))
     ax2.set_yticks(np.arange(0, max(ly_values) + y_tick_interval, y_tick_interval))
     ax2.grid(show_grid)
     for spine in ax2.spines.values():
@@ -576,6 +581,15 @@ def plot_center_concentrations(center_concentrations, diff_type, line_thickness=
     colors = [color_ly1, color_ly2]
     labels = [legend_label1 or f'Ly = {center_concentrations[0]["Ly"]:.1f} μm', legend_label2 or f'Ly = {center_concentrations[1]["Ly"]:.1f} μm']
 
+    c1_min = min(min(center_concentrations[0]['c1_center']), min(center_concentrations[1]['c1_center']))
+    c1_max = max(max(center_concentrations[0]['c1_center']), max(center_concentrations[1]['c1_center']))
+    c2_min = min(min(center_concentrations[0]['c2_center']), min(center_concentrations[1]['c2_center']))
+    c2_max = max(max(center_concentrations[0]['c2_center']), max(center_concentrations[1]['c2_center']))
+    j1_min = min(min(center_concentrations[0]['J1_mag_center']), min(center_concentrations[1]['J1_mag_center']))
+    j1_max = max(max(center_concentrations[0]['J1_mag_center']), max(center_concentrations[1]['J1_mag_center']))
+    j2_min = min(min(center_concentrations[0]['J2_mag_center']), min(center_concentrations[1]['J2_mag_center']))
+    j2_max = max(max(center_concentrations[0]['J2_mag_center']), max(center_concentrations[1]['J2_mag_center']))
+
     for conc, color, label in zip(center_concentrations, colors, labels):
         ax1.plot(conc['times'], conc['c1_center'], label=label, linewidth=line_thickness, color=color)
         ax2.plot(conc['times'], conc['c2_center'], label=label, linewidth=line_thickness, color=color)
@@ -588,7 +602,7 @@ def plot_center_concentrations(center_concentrations, diff_type, line_thickness=
     ax1.legend(fontsize=label_font_size - 2, loc=legend_loc)
     ax1.tick_params(labelsize=tick_font_size)
     ax1.set_xticks(np.arange(0, max(conc['times']) + x_tick_interval, x_tick_interval))
-    ax1.set_yticks(np.arange(min(conc['c1_center']), max(conc['c1_center']) + y_tick_interval, y_tick_interval))
+    ax1.set_yticks(np.arange(c1_min, c1_max + y_tick_interval, y_tick_interval))
     ax1.grid(show_grid)
     for spine in ax1.spines.values():
         spine.set_linewidth(spine_thickness)
@@ -601,7 +615,7 @@ def plot_center_concentrations(center_concentrations, diff_type, line_thickness=
     ax2.legend(fontsize=label_font_size - 2, loc=legend_loc)
     ax2.tick_params(labelsize=tick_font_size)
     ax2.set_xticks(np.arange(0, max(conc['times']) + x_tick_interval, x_tick_interval))
-    ax2.set_yticks(np.arange(min(conc['c2_center']), max(conc['c2_center']) + y_tick_interval, y_tick_interval))
+    ax2.set_yticks(np.arange(c2_min, c2_max + y_tick_interval, y_tick_interval))
     ax2.grid(show_grid)
     for spine in ax2.spines.values():
         spine.set_linewidth(spine_thickness)
@@ -614,7 +628,7 @@ def plot_center_concentrations(center_concentrations, diff_type, line_thickness=
     ax3.legend(fontsize=label_font_size - 2, loc=legend_loc)
     ax3.tick_params(labelsize=tick_font_size)
     ax3.set_xticks(np.arange(0, max(conc['times']) + x_tick_interval, x_tick_interval))
-    ax3.set_yticks(np.arange(min(conc['J1_mag_center']), max(conc['J1_mag_center']) + y_tick_interval, y_tick_interval))
+    ax3.set_yticks(np.arange(j1_min, j1_max + y_tick_interval, y_tick_interval))
     ax3.grid(show_grid)
     if any(np.any(conc['J1_mag_center'] > 0) for conc in center_concentrations):
         ax3.set_yscale('log')
@@ -629,7 +643,7 @@ def plot_center_concentrations(center_concentrations, diff_type, line_thickness=
     ax4.legend(fontsize=label_font_size - 2, loc=legend_loc)
     ax4.tick_params(labelsize=tick_font_size)
     ax4.set_xticks(np.arange(0, max(conc['times']) + x_tick_interval, x_tick_interval))
-    ax4.set_yticks(np.arange(min(conc['J2_mag_center']), max(conc['J2_mag_center']) + y_tick_interval, y_tick_interval))
+    ax4.set_yticks(np.arange(j2_min, j2_max + y_tick_interval, y_tick_interval))
     ax4.grid(show_grid)
     if any(np.any(conc['J2_mag_center'] > 0) for conc in center_concentrations):
         ax4.set_yscale('log')
