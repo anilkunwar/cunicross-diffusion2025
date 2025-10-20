@@ -215,7 +215,7 @@ def load_and_interpolate_solution(solutions, diff_type, ly_target, tolerance=1e-
         return solution
     return attention_weighted_interpolation(solutions, [s['Ly_parsed'] for s in solutions], ly_target, diff_type)
 
-def plot_solution(solution, time_index, downsample, title_suffix="", cu_colormap='viridis', ni_colormap='magma', font_size=12, x_tick_interval=10, y_tick_interval=10, show_grid=True, grid_thickness=0.5, border_thickness=1, height_multiplier=5, base_height=200):
+def plot_solution(solution, time_index, downsample, title_suffix="", cu_colormap='viridis', ni_colormap='magma', font_size=12, x_tick_interval=10, y_tick_interval=10, show_grid=True, grid_thickness=0.5, border_thickness=1, height_multiplier=5, base_height=200, base_width=200, width_multiplier=5):
     """Plot concentration fields for a single solution."""
     x_coords = solution['X'][:, 0]
     y_coords = solution['Y'][0, :]
@@ -259,8 +259,10 @@ def plot_solution(solution, time_index, downsample, title_suffix="", cu_colormap
                       line=dict(color='black', width=border_thickness))
 
     height = int(base_height + height_multiplier * Ly)
+    width = int(base_width + width_multiplier * Lx * 2)  # *2 for two subplots
     fig.update_layout(
         height=height,
+        width=width,
         title=f"Concentration Fields: {Lx}μm × {Ly}μm {title_suffix}",
         showlegend=False,
         template='plotly_white',
@@ -271,9 +273,9 @@ def plot_solution(solution, time_index, downsample, title_suffix="", cu_colormap
     fig.update_xaxes(title_text="x (μm)", range=[0, Lx], gridcolor='white', zeroline=False, row=1, col=2, dtick=x_tick_interval)
     fig.update_yaxes(title_text="y (μm)", range=[0, Ly], gridcolor='white', zeroline=False, row=1, col=2, dtick=y_tick_interval)
 
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, use_container_width=False)
 
-def plot_flux_comparison(solutions, diff_type, ly_values, time_index, downsample, font_size=12, x_tick_interval=10, y_tick_interval=10, show_grid=True, grid_thickness=0.5, border_thickness=1, arrow_thickness=1, height_multiplier=5, base_height=200):
+def plot_flux_comparison(solutions, diff_type, ly_values, time_index, downsample, font_size=12, x_tick_interval=10, y_tick_interval=10, show_grid=True, grid_thickness=0.5, border_thickness=1, arrow_thickness=1, height_multiplier=5, base_height=200, base_width=200, width_multiplier=5):
     """Plot flux fields for two Ly values for a given diffusion type (enhanced spacing/colorbar handling)."""
     if len(ly_values) != 2:
         st.error("Please select exactly two Ly values for comparison.")
@@ -444,8 +446,10 @@ def plot_flux_comparison(solutions, diff_type, ly_values, time_index, downsample
                           line=dict(color='black', width=border_thickness))
 
     height = int(base_height + height_multiplier * max(ly_values))
+    width = int(base_width + width_multiplier * sol1['params']['Lx'] * 4)  # *4 for four subplots per row, but adjust as needed
     fig.update_layout(
         height=height,
+        width=width,
         margin=dict(l=30, r=30, t=120, b=30),
         title=f"Flux Fields Comparison: {diff_type.replace('_', ' ')} @ t={t_val:.1f}s",
         annotations=annotations_all,
@@ -465,9 +469,9 @@ def plot_flux_comparison(solutions, diff_type, ly_values, time_index, downsample
             fig.update_xaxes(title_text="x (μm)", range=[0, sol1['params']['Lx']], gridcolor='white', zeroline=False, row=row, col=col, dtick=x_tick_interval)
             fig.update_yaxes(title_text="y (μm)", range=[0, ly_values[1]], gridcolor='white', zeroline=False, row=row, col=col, dtick=y_tick_interval)
 
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, use_container_width=False)
 
-def plot_line_comparison(solutions, diff_type, ly_values, time_index, line_thickness=2, label_font_size=12, tick_font_size=10, x_tick_interval=0.0005, y_tick_interval=10, spine_thickness=1.5, color_ly1='#1f77b4', color_ly2='#ff7f0e', fig_width=12, fig_height=6, legend_loc='upper right', show_grid=True, cu_x_label='Cu Concentration (mol/cm³)', cu_y_label='y (μm)', ni_x_label='Ni Concentration (mol/cm³)', ni_y_label='y (μm)', legend_label1='', legend_label2='', rotate_ticks=False):
+def plot_line_comparison(solutions, diff_type, ly_values, time_index, line_thickness=2, label_font_size=12, tick_font_size=10, conc_x_tick_interval=0.0005, line_y_tick_interval=10, spine_thickness=1.5, color_ly1='#1f77b4', color_ly2='#ff7f0e', fig_width=12, fig_height=6, legend_loc='upper right', show_grid=True, cu_x_label='Cu Concentration (mol/cm³)', cu_y_label='y (μm)', ni_x_label='Ni Concentration (mol/cm³)', ni_y_label='y (μm)', legend_label1='', legend_label2='', rotate_ticks=False):
     """Plot central line profiles for two Ly values for a given diffusion type."""
     if len(ly_values) != 2:
         st.error("Please select exactly two Ly values for comparison.")
@@ -506,8 +510,8 @@ def plot_line_comparison(solutions, diff_type, ly_values, time_index, line_thick
     ax1.set_title(f'Cu @ x=center, t={t_val:.1f}s', fontsize=label_font_size + 2)
     ax1.legend(fontsize=label_font_size - 2, loc=legend_loc)
     ax1.tick_params(labelsize=tick_font_size)
-    ax1.set_xticks(np.arange(c1_min, c1_max + x_tick_interval, x_tick_interval))
-    ax1.set_yticks(np.arange(0, max(ly_values) + y_tick_interval, y_tick_interval))
+    ax1.set_xticks(np.arange(c1_min, c1_max + conc_x_tick_interval, conc_x_tick_interval))
+    ax1.set_yticks(np.arange(0, max(ly_values) + line_y_tick_interval, line_y_tick_interval))
     ax1.grid(show_grid)
     for spine in ax1.spines.values():
         spine.set_linewidth(spine_thickness)
@@ -519,8 +523,8 @@ def plot_line_comparison(solutions, diff_type, ly_values, time_index, line_thick
     ax2.set_title(f'Ni @ x=center, t={t_val:.1f}s', fontsize=label_font_size + 2)
     ax2.legend(fontsize=label_font_size - 2, loc=legend_loc)
     ax2.tick_params(labelsize=tick_font_size)
-    ax2.set_xticks(np.arange(c2_min, c2_max + x_tick_interval, x_tick_interval))
-    ax2.set_yticks(np.arange(0, max(ly_values) + y_tick_interval, y_tick_interval))
+    ax2.set_xticks(np.arange(c2_min, c2_max + conc_x_tick_interval, conc_x_tick_interval))
+    ax2.set_yticks(np.arange(0, max(ly_values) + line_y_tick_interval, line_y_tick_interval))
     ax2.grid(show_grid)
     for spine in ax2.spines.values():
         spine.set_linewidth(spine_thickness)
@@ -566,7 +570,7 @@ def compute_center_concentrations(solutions, diff_type, ly_values):
 
     return center_concentrations
 
-def plot_center_concentrations(center_concentrations, diff_type, line_thickness=2, label_font_size=12, tick_font_size=10, x_tick_interval=50, y_tick_interval=0.0001, spine_thickness=1.5, color_ly1='#1f77b4', color_ly2='#ff7f0e', fig_width=12, fig_height=12, legend_loc='upper right', show_grid=True, cu_conc_x_label='Time (s)', cu_conc_y_label='Cu Concentration (mol/cm³)', ni_conc_x_label='Time (s)', ni_conc_y_label='Ni Concentration (mol/cm³)', cu_flux_x_label='Time (s)', cu_flux_y_label='Cu Flux Magnitude', ni_flux_x_label='Time (s)', ni_flux_y_label='Ni Flux Magnitude', legend_label1='', legend_label2='', rotate_ticks=False):
+def plot_center_concentrations(center_concentrations, diff_type, line_thickness=2, label_font_size=12, tick_font_size=10, center_time_tick_interval=50, center_conc_y_tick_interval=0.0001, center_flux_y_tick_interval=0.0001, spine_thickness=1.5, color_ly1='#1f77b4', color_ly2='#ff7f0e', fig_width=12, fig_height=12, legend_loc='upper right', show_grid=True, cu_conc_x_label='Time (s)', cu_conc_y_label='Cu Concentration (mol/cm³)', ni_conc_x_label='Time (s)', ni_conc_y_label='Ni Concentration (mol/cm³)', cu_flux_x_label='Time (s)', cu_flux_y_label='Cu Flux Magnitude', ni_flux_x_label='Time (s)', ni_flux_y_label='Ni Flux Magnitude', legend_label1='', legend_label2='', rotate_ticks=False):
     """Plot center point concentrations and flux magnitudes for two Ly values."""
     sns.set_context("paper")
     sns.set_style("whitegrid")
@@ -601,8 +605,8 @@ def plot_center_concentrations(center_concentrations, diff_type, line_thickness=
     ax1.set_title('Cu Concentration at Center', fontsize=label_font_size + 2)
     ax1.legend(fontsize=label_font_size - 2, loc=legend_loc)
     ax1.tick_params(labelsize=tick_font_size)
-    ax1.set_xticks(np.arange(0, max(conc['times']) + x_tick_interval, x_tick_interval))
-    ax1.set_yticks(np.arange(c1_min, c1_max + y_tick_interval, y_tick_interval))
+    ax1.set_xticks(np.arange(0, max(conc['times']) + center_time_tick_interval, center_time_tick_interval))
+    ax1.set_yticks(np.arange(c1_min, c1_max + center_conc_y_tick_interval, center_conc_y_tick_interval))
     ax1.grid(show_grid)
     for spine in ax1.spines.values():
         spine.set_linewidth(spine_thickness)
@@ -614,8 +618,8 @@ def plot_center_concentrations(center_concentrations, diff_type, line_thickness=
     ax2.set_title('Ni Concentration at Center', fontsize=label_font_size + 2)
     ax2.legend(fontsize=label_font_size - 2, loc=legend_loc)
     ax2.tick_params(labelsize=tick_font_size)
-    ax2.set_xticks(np.arange(0, max(conc['times']) + x_tick_interval, x_tick_interval))
-    ax2.set_yticks(np.arange(c2_min, c2_max + y_tick_interval, y_tick_interval))
+    ax2.set_xticks(np.arange(0, max(conc['times']) + center_time_tick_interval, center_time_tick_interval))
+    ax2.set_yticks(np.arange(c2_min, c2_max + center_conc_y_tick_interval, center_conc_y_tick_interval))
     ax2.grid(show_grid)
     for spine in ax2.spines.values():
         spine.set_linewidth(spine_thickness)
@@ -627,8 +631,8 @@ def plot_center_concentrations(center_concentrations, diff_type, line_thickness=
     ax3.set_title('Cu Flux Magnitude at Center', fontsize=label_font_size + 2)
     ax3.legend(fontsize=label_font_size - 2, loc=legend_loc)
     ax3.tick_params(labelsize=tick_font_size)
-    ax3.set_xticks(np.arange(0, max(conc['times']) + x_tick_interval, x_tick_interval))
-    ax3.set_yticks(np.arange(j1_min, j1_max + y_tick_interval, y_tick_interval))
+    ax3.set_xticks(np.arange(0, max(conc['times']) + center_time_tick_interval, center_time_tick_interval))
+    ax3.set_yticks(np.arange(j1_min, j1_max + center_flux_y_tick_interval, center_flux_y_tick_interval))
     ax3.grid(show_grid)
     if any(np.any(conc['J1_mag_center'] > 0) for conc in center_concentrations):
         ax3.set_yscale('log')
@@ -642,8 +646,8 @@ def plot_center_concentrations(center_concentrations, diff_type, line_thickness=
     ax4.set_title('Ni Flux Magnitude at Center', fontsize=label_font_size + 2)
     ax4.legend(fontsize=label_font_size - 2, loc=legend_loc)
     ax4.tick_params(labelsize=tick_font_size)
-    ax4.set_xticks(np.arange(0, max(conc['times']) + x_tick_interval, x_tick_interval))
-    ax4.set_yticks(np.arange(j2_min, j2_max + y_tick_interval, y_tick_interval))
+    ax4.set_xticks(np.arange(0, max(conc['times']) + center_time_tick_interval, center_time_tick_interval))
+    ax4.set_yticks(np.arange(j2_min, j2_max + center_flux_y_tick_interval, center_flux_y_tick_interval))
     ax4.grid(show_grid)
     if any(np.any(conc['J2_mag_center'] > 0) for conc in center_concentrations):
         ax4.set_yscale('log')
@@ -773,6 +777,8 @@ def main():
     rotate_ticks = st.sidebar.checkbox("Rotate Tick Labels", value=False)
     height_multiplier = st.sidebar.slider("Height Multiplier", 1, 10, 5)
     base_height = st.sidebar.slider("Base Height", 100, 500, 200)
+    width_multiplier = st.sidebar.slider("Width Multiplier", 1, 10, 5)
+    base_width = st.sidebar.slider("Base Width", 100, 500, 200)
     cu_x_label = st.sidebar.text_input("Cu X Label", "Cu Concentration (mol/cm³)")
     cu_y_label = st.sidebar.text_input("Cu Y Label", "y (μm)")
     ni_x_label = st.sidebar.text_input("Ni X Label", "Ni Concentration (mol/cm³)")
@@ -787,8 +793,11 @@ def main():
     cu_flux_y_label = st.sidebar.text_input("Cu Flux Y Label", "Cu Flux Magnitude")
     ni_flux_x_label = st.sidebar.text_input("Ni Flux X Label", "Time (s)")
     ni_flux_y_label = st.sidebar.text_input("Ni Flux Y Label", "Ni Flux Magnitude")
-    conc_x_tick_interval = st.sidebar.slider("Conc X Tick Interval (mol/cm³)", 0.0001, 0.001, 0.0005, step=0.0001, format="%.4f")
-    flux_y_tick_interval = st.sidebar.slider("Flux Y Tick Interval", 0.0001, 0.001, 0.0001, step=0.0001, format="%.4f")
+    line_conc_x_tick_interval = st.sidebar.slider("Line Conc X Tick Interval (mol/cm³)", 0.0001, 0.001, 0.0005, step=0.0001, format="%.4f")
+    line_y_tick_interval = st.sidebar.slider("Line Y Tick Interval (μm)", 5, 50, 10)
+    center_time_tick_interval = st.sidebar.slider("Center Time Tick Interval (s)", 10, 100, 50)
+    center_conc_y_tick_interval = st.sidebar.slider("Center Conc Y Tick Interval (mol/cm³)", 0.0001, 0.001, 0.0001, step=0.0001, format="%.4f")
+    center_flux_y_tick_interval = st.sidebar.slider("Center Flux Y Tick Interval", 0.0001, 0.001, 0.0001, step=0.0001, format="%.4f")
 
     # Tabs
     tab1, tab2, tab3, tab4 = st.tabs(["Concentration", "Flux Comparison", "Central Line Comparison", "Center Point Comparison"])
@@ -798,23 +807,23 @@ def main():
         for ly in ly_values:
             solution = load_and_interpolate_solution(solutions, diff_type, ly)
             if solution:
-                plot_solution(solution, time_index, downsample, title_suffix=f"[{diff_type.replace('_', ' ')}, Ly={ly:.1f}]", cu_colormap=cu_colormap, ni_colormap=ni_colormap, font_size=font_size, x_tick_interval=x_tick_interval, y_tick_interval=y_tick_interval, show_grid=show_grid, grid_thickness=grid_thickness, border_thickness=border_thickness, height_multiplier=height_multiplier, base_height=base_height)
+                plot_solution(solution, time_index, downsample, title_suffix=f"[{diff_type.replace('_', ' ')}, Ly={ly:.1f}]", cu_colormap=cu_colormap, ni_colormap=ni_colormap, font_size=font_size, x_tick_interval=x_tick_interval, y_tick_interval=y_tick_interval, show_grid=show_grid, grid_thickness=grid_thickness, border_thickness=border_thickness, height_multiplier=height_multiplier, base_height=base_height, base_width=base_width, width_multiplier=width_multiplier)
             else:
                 st.error(f"No solution for {diff_type}, Ly={ly:.1f}")
 
     with tab2:
         st.subheader("Flux Fields Comparison")
-        plot_flux_comparison(solutions, diff_type, ly_values, time_index, downsample, font_size=font_size, x_tick_interval=x_tick_interval, y_tick_interval=y_tick_interval, show_grid=show_grid, grid_thickness=grid_thickness, border_thickness=border_thickness, arrow_thickness=arrow_thickness, height_multiplier=height_multiplier, base_height=base_height)
+        plot_flux_comparison(solutions, diff_type, ly_values, time_index, downsample, font_size=font_size, x_tick_interval=x_tick_interval, y_tick_interval=y_tick_interval, show_grid=show_grid, grid_thickness=grid_thickness, border_thickness=border_thickness, arrow_thickness=arrow_thickness, height_multiplier=height_multiplier, base_height=base_height, base_width=base_width, width_multiplier=width_multiplier)
 
     with tab3:
         st.subheader("Central Line Profiles Comparison")
-        plot_line_comparison(solutions, diff_type, ly_values, time_index, line_thickness=line_thickness, label_font_size=label_font_size, tick_font_size=tick_font_size, x_tick_interval=conc_x_tick_interval, y_tick_interval=y_tick_interval, spine_thickness=spine_thickness, color_ly1=color_ly1, color_ly2=color_ly2, fig_width=fig_width, fig_height=fig_height, legend_loc=legend_loc, show_grid=show_grid, cu_x_label=cu_x_label, cu_y_label=cu_y_label, ni_x_label=ni_x_label, ni_y_label=ni_y_label, legend_label1=legend_label1, legend_label2=legend_label2, rotate_ticks=rotate_ticks)
+        plot_line_comparison(solutions, diff_type, ly_values, time_index, line_thickness=line_thickness, label_font_size=label_font_size, tick_font_size=tick_font_size, conc_x_tick_interval=line_conc_x_tick_interval, line_y_tick_interval=line_y_tick_interval, spine_thickness=spine_thickness, color_ly1=color_ly1, color_ly2=color_ly2, fig_width=fig_width, fig_height=fig_height, legend_loc=legend_loc, show_grid=show_grid, cu_x_label=cu_x_label, cu_y_label=cu_y_label, ni_x_label=ni_x_label, ni_y_label=ni_y_label, legend_label1=legend_label1, legend_label2=legend_label2, rotate_ticks=rotate_ticks)
 
     with tab4:
         st.subheader("Center Point Concentration and Flux Magnitude Comparison")
         center_concentrations = compute_center_concentrations(solutions, diff_type, ly_values)
         if center_concentrations:
-            plot_center_concentrations(center_concentrations, diff_type, line_thickness=line_thickness, label_font_size=label_font_size, tick_font_size=tick_font_size, x_tick_interval=x_tick_interval, y_tick_interval=flux_y_tick_interval, spine_thickness=spine_thickness, color_ly1=color_ly1, color_ly2=color_ly2, fig_width=fig_width, fig_height=fig_height, legend_loc=legend_loc, show_grid=show_grid, cu_conc_x_label=cu_conc_x_label, cu_conc_y_label=cu_conc_y_label, ni_conc_x_label=ni_conc_x_label, ni_conc_y_label=ni_conc_y_label, cu_flux_x_label=cu_flux_x_label, cu_flux_y_label=cu_flux_y_label, ni_flux_x_label=ni_flux_x_label, ni_flux_y_label=ni_flux_y_label, legend_label1=legend_label1, legend_label2=legend_label2, rotate_ticks=rotate_ticks)
+            plot_center_concentrations(center_concentrations, diff_type, line_thickness=line_thickness, label_font_size=label_font_size, tick_font_size=tick_font_size, center_time_tick_interval=center_time_tick_interval, center_conc_y_tick_interval=center_conc_y_tick_interval, center_flux_y_tick_interval=center_flux_y_tick_interval, spine_thickness=spine_thickness, color_ly1=color_ly1, color_ly2=color_ly2, fig_width=fig_width, fig_height=fig_height, legend_loc=legend_loc, show_grid=show_grid, cu_conc_x_label=cu_conc_x_label, cu_conc_y_label=cu_conc_y_label, ni_conc_x_label=ni_conc_x_label, ni_conc_y_label=ni_conc_y_label, cu_flux_x_label=cu_flux_x_label, cu_flux_y_label=cu_flux_y_label, ni_flux_x_label=ni_flux_x_label, ni_flux_y_label=ni_flux_y_label, legend_label1=legend_label1, legend_label2=legend_label2, rotate_ticks=rotate_ticks)
         else:
             st.error(f"Could not compute center concentrations for {diff_type}, Ly={ly_values}")
 
