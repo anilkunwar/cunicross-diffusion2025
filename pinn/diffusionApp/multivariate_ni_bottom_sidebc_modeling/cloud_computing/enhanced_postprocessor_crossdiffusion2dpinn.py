@@ -1,3 +1,4 @@
+# app.py
 import os
 import pickle
 import numpy as np
@@ -13,8 +14,22 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 import re
 
-# Directory containing .pkl solution files
+# --- Page config & Streamlit helper UI ---
+st.set_page_config(page_title="Cu/Ni Cross-Diffusion Viewer", layout="wide")
+
+# Directory containing .pkl solution files (ensure exists)
 SOLUTION_DIR = os.path.join(os.path.dirname(__file__), "pinn_solutions")
+os.makedirs(SOLUTION_DIR, exist_ok=True)
+
+st.title("🧠 Cu–Ni Cross-Diffusion PINN Visualization")
+st.caption("Automatically loads all `.pkl` solutions from the `pinn_solutions/` folder")
+
+num_files = len([f for f in os.listdir(SOLUTION_DIR) if f.endswith('.pkl')])
+st.info(f"📁 **Solution directory:** `{SOLUTION_DIR}` — {num_files} file(s) found")
+
+if st.button("🔄 Reload Solutions"):
+    st.cache_data.clear()
+    st.experimental_rerun()
 
 # Diffusion types
 DIFFUSION_TYPES = ['crossdiffusion', 'cu_selfdiffusion', 'ni_selfdiffusion']
@@ -256,7 +271,7 @@ def plot_solution(solution, time_index, downsample, title_suffix="", cu_colormap
     st.plotly_chart(fig, use_container_width=True)
 
 def plot_flux_comparison(solutions, diff_type, ly_values, time_index, downsample):
-    """Plot flux fields for two Ly values for a given diffusion type."""
+    """Plot flux fields for two Ly values for a given diffusion type (enhanced spacing/colorbar handling)."""
     if len(ly_values) != 2:
         st.error("Please select exactly two Ly values for comparison.")
         return
@@ -267,29 +282,33 @@ def plot_flux_comparison(solutions, diff_type, ly_values, time_index, downsample
         st.error(f"Could not load solutions for {diff_type}, Ly={ly_values}")
         return
 
+    # Use increased horizontal spacing and leave room for colorbars
     fig = make_subplots(
         rows=3, cols=4,
         subplot_titles=(
-            f"Cu Flux Quiver, Ly={ly_values[0]:.1f}", f"Ni Flux Quiver, Ly={ly_values[0]:.1f}",
-            f"Cu Flux Quiver, Ly={ly_values[1]:.1f}", f"Ni Flux Quiver, Ly={ly_values[1]:.1f}",
+            f"Cu Flux Mag, Ly={ly_values[0]:.1f}", f"Ni Flux Mag, Ly={ly_values[0]:.1f}",
+            f"Cu Flux Mag, Ly={ly_values[1]:.1f}", f"Ni Flux Mag, Ly={ly_values[1]:.1f}",
             f"Cu J_1x, Ly={ly_values[0]:.1f}", f"Ni J_2x, Ly={ly_values[0]:.1f}",
             f"Cu J_1x, Ly={ly_values[1]:.1f}", f"Ni J_2x, Ly={ly_values[1]:.1f}",
             f"Cu J_1y, Ly={ly_values[0]:.1f}", f"Ni J_2y, Ly={ly_values[0]:.1f}",
             f"Cu J_1y, Ly={ly_values[1]:.1f}", f"Ni J_2y, Ly={ly_values[1]:.1f}"
         ),
         vertical_spacing=0.12,
-        horizontal_spacing=0.1
+        horizontal_spacing=0.18  # increased spacing to avoid overlap
     )
 
+    annotations_all = []
+    # We'll use t_val from sol1 (both solutions share time indexing)
+    t_val = sol1['times'][time_index]
+    # Loop two solutions
     for idx, (sol, Ly) in enumerate([(sol1, ly_values[0]), (sol2, ly_values[1])]):
         x_coords = sol['X'][:, 0]
         y_coords = sol['Y'][0, :]
-        t_val = sol['times'][time_index]
         Lx = sol['params']['Lx']
 
         ds = max(1, downsample)
-        x_indices = np.unique(np.linspace(0, len(x_coords)-1, num=len(x_coords)//ds, dtype=int))
-        y_indices = np.unique(np.linspace(0, len(y_coords)-1, num=len(y_coords)//ds, dtype=int))
+        x_indices = np.unique(np.linspace(0, len(x_coords)-1, num=max(2, len(x_coords)//ds), dtype=int))
+        y_indices = np.unique(np.linspace(0, len(y_coords)-1, num=max(2, len(y_coords)//ds), dtype=int))
 
         x_ds = x_coords[x_indices]
         y_ds = y_coords[y_indices]
@@ -302,115 +321,112 @@ def plot_flux_comparison(solutions, diff_type, ly_values, time_index, downsample
         c1 = sol['c1_preds'][time_index][np.ix_(y_indices, x_indices)]
         c2 = sol['c2_preds'][time_index][np.ix_(y_indices, x_indices)]
 
-        # Quiver plots
+        # Flux magnitudes (log for display)
         J1_magnitude = np.sqrt(J1_x**2 + J1_y**2)
-        max_J1 = np.max(J1_magnitude) + 1e-9
+        J2_magnitude = np.sqrt(J2_x**2 + J2_y**2)
+
+        # Heatmap for log flux magnitude (Cu)
         fig.add_trace(go.Heatmap(
             x=x_ds, y=y_ds, z=np.log10(np.maximum(J1_magnitude, 1e-10)),
-            colorscale='viridis', colorbar=dict(title='Log Cu Flux Mag', x=0.22+0.55*idx, len=0.3, y=0.85),
+            colorscale='viridis',
+            colorbar=dict(title='Log Cu Flux Mag', x=0.22 + 0.6*idx, len=0.3, y=0.85),
             zsmooth='best', hovertemplate='x: %{x:.1f} μm<br>y: %{y:.1f} μm<br>Flux: %{z:.2e}'
-        ), row=1, col=1+idx*2)
+        ), row=1, col=1 + idx*2)
 
-        scale = 0.1 * Lx
-        annotations_cu = []
-        for i in range(0, len(x_ds), 2):
-            for j in range(0, len(y_ds), 2):
-                if J1_magnitude[j, i] > 1e-10:  # Adjust index for rows=y, cols=x
-                    annotations_cu.append(dict(
-                        x=x_ds[i], y=y_ds[j], xref=f"x{1+idx*2}", yref=f"y{1+idx*2}",
-                        ax=x_ds[i] + scale * J1_x[j, i] / max_J1, ay=y_ds[j] + scale * J1_y[j, i] / max_J1,
-                        showarrow=True, arrowhead=2, arrowsize=1, arrowwidth=1.2, arrowcolor='white'
-                    ))
-
+        # Overlay contour of concentration
         fig.add_trace(go.Contour(
-            z=c1, x=x_ds, y=y_ds, colorscale='blues', showscale=False, opacity=0.3,
-            contours=dict(showlabels=True, start=np.min(c1), end=np.max(c1), size=(np.max(c1)-np.min(c1))/8),
+            z=c1, x=x_ds, y=y_ds, colorscale='blues', showscale=False, opacity=0.35,
+            contours=dict(showlabels=False),
             line=dict(width=1)
-        ), row=1, col=1+idx*2)
+        ), row=1, col=1 + idx*2)
 
-        J2_magnitude = np.sqrt(J2_x**2 + J2_y**2)
-        max_J2 = np.max(J2_magnitude) + 1e-9
+        # Heatmap for log flux magnitude (Ni)
         fig.add_trace(go.Heatmap(
             x=x_ds, y=y_ds, z=np.log10(np.maximum(J2_magnitude, 1e-10)),
-            colorscale='cividis', colorbar=dict(title='Log Ni Flux Mag', x=0.45+0.55*idx, len=0.3, y=0.85),
+            colorscale='cividis',
+            colorbar=dict(title='Log Ni Flux Mag', x=0.45 + 0.6*idx, len=0.3, y=0.85),
             zsmooth='best', hovertemplate='x: %{x:.1f} μm<br>y: %{y:.1f} μm<br>Flux: %{z:.2e}'
-        ), row=1, col=2+idx*2)
-
-        annotations_ni = []
-        for i in range(0, len(x_ds), 2):
-            for j in range(0, len(y_ds), 2):
-                if J2_magnitude[j, i] > 1e-10:
-                    annotations_ni.append(dict(
-                        x=x_ds[i], y=y_ds[j], xref=f"x{2+idx*2}", yref=f"y{2+idx*2}",
-                        ax=x_ds[i] + scale * J2_x[j, i] / max_J2, ay=y_ds[j] + scale * J2_y[j, i] / max_J2,
-                        showarrow=True, arrowhead=2, arrowsize=1, arrowwidth=1.2, arrowcolor='white'
-                    ))
+        ), row=1, col=2 + idx*2)
 
         fig.add_trace(go.Contour(
-            z=c2, x=x_ds, y=y_ds, colorscale='reds', showscale=False, opacity=0.3,
-            contours=dict(showlabels=True, start=np.min(c2), end=np.max(c2), size=(np.max(c2)-np.min(c2))/8),
+            z=c2, x=x_ds, y=y_ds, colorscale='reds', showscale=False, opacity=0.35,
+            contours=dict(showlabels=False),
             line=dict(width=1)
-        ), row=1, col=2+idx*2)
+        ), row=1, col=2 + idx*2)
 
-        # J_x plots
+        # Jx components (row 2)
         fig.add_trace(go.Heatmap(
             x=x_ds, y=y_ds, z=J1_x, colorscale='rdbu', zmid=0,
-            colorbar=dict(title='Cu J_1x', x=0.22+0.55*idx, len=0.3, y=0.5),
+            colorbar=dict(title='Cu J_1x', x=0.22 + 0.6*idx, len=0.3, y=0.5),
             zsmooth='best', hovertemplate='x: %{x:.1f} μm<br>y: %{y:.1f} μm<br>J_1x: %{z:.2e}'
-        ), row=2, col=1+idx*2)
-
+        ), row=2, col=1 + idx*2)
         fig.add_trace(go.Contour(
-            z=c1, x=x_ds, y=y_ds, colorscale='blues', showscale=False, opacity=0.3,
-            contours=dict(showlabels=True, start=np.min(c1), end=np.max(c1), size=(np.max(c1)-np.min(c1))/8),
-            line=dict(width=1)
-        ), row=2, col=1+idx*2)
+            z=c1, x=x_ds, y=y_ds, colorscale='blues', showscale=False, opacity=0.25, line=dict(width=1)
+        ), row=2, col=1 + idx*2)
 
         fig.add_trace(go.Heatmap(
             x=x_ds, y=y_ds, z=J2_x, colorscale='rdbu', zmid=0,
-            colorbar=dict(title='Ni J_2x', x=0.45+0.55*idx, len=0.3, y=0.5),
+            colorbar=dict(title='Ni J_2x', x=0.45 + 0.6*idx, len=0.3, y=0.5),
             zsmooth='best', hovertemplate='x: %{x:.1f} μm<br>y: %{y:.1f} μm<br>J_2x: %{z:.2e}'
-        ), row=2, col=2+idx*2)
-
+        ), row=2, col=2 + idx*2)
         fig.add_trace(go.Contour(
-            z=c2, x=x_ds, y=y_ds, colorscale='reds', showscale=False, opacity=0.3,
-            contours=dict(showlabels=True, start=np.min(c2), end=np.max(c2), size=(np.max(c2)-np.min(c2))/8),
-            line=dict(width=1)
-        ), row=2, col=2+idx*2)
+            z=c2, x=x_ds, y=y_ds, colorscale='reds', showscale=False, opacity=0.25, line=dict(width=1)
+        ), row=2, col=2 + idx*2)
 
-        # J_y plots
+        # Jy components (row 3)
         fig.add_trace(go.Heatmap(
             x=x_ds, y=y_ds, z=J1_y, colorscale='rdbu', zmid=0,
-            colorbar=dict(title='Cu J_1y', x=0.22+0.55*idx, len=0.3, y=0.15),
+            colorbar=dict(title='Cu J_1y', x=0.22 + 0.6*idx, len=0.3, y=0.15),
             zsmooth='best', hovertemplate='x: %{x:.1f} μm<br>y: %{y:.1f} μm<br>J_1y: %{z:.2e}'
-        ), row=3, col=1+idx*2)
-
+        ), row=3, col=1 + idx*2)
         fig.add_trace(go.Contour(
-            z=c1, x=x_ds, y=y_ds, colorscale='blues', showscale=False, opacity=0.3,
-            contours=dict(showlabels=True, start=np.min(c1), end=np.max(c1), size=(np.max(c1)-np.min(c1))/8),
-            line=dict(width=1)
-        ), row=3, col=1+idx*2)
+            z=c1, x=x_ds, y=y_ds, colorscale='blues', showscale=False, opacity=0.25, line=dict(width=1)
+        ), row=3, col=1 + idx*2)
 
         fig.add_trace(go.Heatmap(
             x=x_ds, y=y_ds, z=J2_y, colorscale='rdbu', zmid=0,
-            colorbar=dict(title='Ni J_2y', x=0.45+0.55*idx, len=0.3, y=0.15),
+            colorbar=dict(title='Ni J_2y', x=0.45 + 0.6*idx, len=0.3, y=0.15),
             zsmooth='best', hovertemplate='x: %{x:.1f} μm<br>y: %{y:.1f} μm<br>J_2y: %{z:.2e}'
-        ), row=3, col=2+idx*2)
-
+        ), row=3, col=2 + idx*2)
         fig.add_trace(go.Contour(
-            z=c2, x=x_ds, y=y_ds, colorscale='reds', showscale=False, opacity=0.3,
-            contours=dict(showlabels=True, start=np.min(c2), end=np.max(c2), size=(np.max(c2)-np.min(c2))/8),
-            line=dict(width=1)
-        ), row=3, col=2+idx*2)
+            z=c2, x=x_ds, y=y_ds, colorscale='reds', showscale=False, opacity=0.25, line=dict(width=1)
+        ), row=3, col=2 + idx*2)
 
+        # Add vector annotations (quiver-like arrows) but convert to annotation arrows to avoid overlap with colorbars.
+        scale = 0.12 * Lx
+        # sample stride for annotations to keep them readable
+        stride = max(1, len(x_ds) // 10)
+        for i in range(0, len(x_ds), stride):
+            for j in range(0, len(y_ds), stride):
+                if J1_magnitude[j, i] > 1e-12:
+                    annotations_all.append(dict(
+                        x=x_ds[i], y=y_ds[j],
+                        ax=x_ds[i] + scale * (J1_x[j, i] / (np.max(J1_magnitude) + 1e-12)),
+                        ay=y_ds[j] + scale * (J1_y[j, i] / (np.max(J1_magnitude) + 1e-12)),
+                        xref=f"x{1 + idx*2}", yref=f"y{1 + idx*2}",
+                        axref=f"x{1 + idx*2}", ayref=f"y{1 + idx*2}",
+                        showarrow=True, arrowhead=2, arrowsize=1, arrowwidth=1, arrowcolor='white'
+                    ))
+                if J2_magnitude[j, i] > 1e-12:
+                    annotations_all.append(dict(
+                        x=x_ds[i], y=y_ds[j],
+                        ax=x_ds[i] + scale * (J2_x[j, i] / (np.max(J2_magnitude) + 1e-12)),
+                        ay=y_ds[j] + scale * (J2_y[j, i] / (np.max(J2_magnitude) + 1e-12)),
+                        xref=f"x{2 + idx*2}", yref=f"y{2 + idx*2}",
+                        axref=f"x{2 + idx*2}", ayref=f"y{2 + idx*2}",
+                        showarrow=True, arrowhead=2, arrowsize=1, arrowwidth=1, arrowcolor='white'
+                    ))
+
+        # Add grid lines and border shapes per subplot
         for row, col, xref, yref in [
             (1, 1+idx*2, f'x{1+idx*2}', f'y{1+idx*2}'), (1, 2+idx*2, f'x{2+idx*2}', f'y{2+idx*2}'),
             (2, 1+idx*2, f'x{5+idx*2}', f'y{5+idx*2}'), (2, 2+idx*2, f'x{6+idx*2}', f'y{6+idx*2}'),
             (3, 1+idx*2, f'x{9+idx*2}', f'y{9+idx*2}'), (3, 2+idx*2, f'x{10+idx*2}', f'y{10+idx*2}')
         ]:
-            for x in x_ds[::2]:
+            for x in x_ds[::max(1, len(x_ds)//8)]:
                 fig.add_shape(type='line', x0=x, y0=0, x1=x, y1=Ly, xref=xref, yref=yref,
                               line=dict(color='gray', width=0.5, dash='dot'))
-            for y in y_ds[::2]:
+            for y in y_ds[::max(1, len(y_ds)//8)]:
                 fig.add_shape(type='line', x0=0, y0=y, x1=Lx, y1=y, xref=xref, yref=yref,
                               line=dict(color='gray', width=0.5, dash='dot'))
             fig.add_shape(type='line', x0=0, y0=Ly, x1=Lx, y1=Ly, xref=xref, yref=yref,
@@ -420,18 +436,20 @@ def plot_flux_comparison(solutions, diff_type, ly_values, time_index, downsample
 
     fig.update_layout(
         height=1000,
-        margin=dict(l=20, r=20, t=100, b=20),
+        margin=dict(l=30, r=30, t=120, b=30),
         title=f"Flux Fields Comparison: {diff_type.replace('_', ' ')} @ t={t_val:.1f}s",
-        annotations=annotations_cu + annotations_ni,
+        annotations=annotations_all,
         showlegend=False,
         template='plotly_white'
     )
 
-    for row, col, xref in [(1,1,'x1'), (1,2,'x2'), (1,3,'x3'), (1,4,'x4'),
-                           (2,1,'x5'), (2,2,'x6'), (2,3,'x7'), (2,4,'x8'),
-                           (3,1,'x9'), (3,2,'x10'), (3,3,'x11'), (3,4,'x12')]:
-        fig.update_xaxes(title_text="x (μm)", range=[0, Lx], gridcolor='white', zeroline=False, row=row, col=col)
-        fig.update_yaxes(title_text="y (μm)", range=[0, max(ly_values)], gridcolor='white', zeroline=False, row=row, col=col)
+    # axis formatting for all subplots
+    total_rows = 3
+    total_cols = 4
+    for row in range(1, total_rows + 1):
+        for col in range(1, total_cols + 1):
+            fig.update_xaxes(title_text="x (μm)", range=[0, sol1['params']['Lx']], gridcolor='white', zeroline=False, row=row, col=col)
+            fig.update_yaxes(title_text="y (μm)", range=[0, max(ly_values)], gridcolor='white', zeroline=False, row=row, col=col)
 
     st.plotly_chart(fig, use_container_width=True)
 
@@ -449,10 +467,10 @@ def plot_line_comparison(solutions, diff_type, ly_values, time_index):
 
     sns.set_context("paper")
     sns.set_style("whitegrid")
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 6), dpi=300)
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 6), dpi=200)
 
     for sol, Ly, linestyle in [(sol1, ly_values[0], '-'), (sol2, ly_values[1], '--')]:
-        x_idx = len(sol['X'][:, 0]) // 2  # x = Lx/2
+        x_idx = len(sol['X'][:, 0]) // 2  # x = center index
         y_coords = sol['Y'][0, :]
         c1_center = sol['c1_preds'][time_index][:, x_idx]
         c2_center = sol['c2_preds'][time_index][:, x_idx]
@@ -461,17 +479,17 @@ def plot_line_comparison(solutions, diff_type, ly_values, time_index):
         ax1.plot(c1_center, y_coords, label=f'Ly = {Ly:.1f} μm', linestyle=linestyle, linewidth=2)
         ax2.plot(c2_center, y_coords, label=f'Ly = {Ly:.1f} μm', linestyle=linestyle, linewidth=2)
 
-    ax1.set_xlabel('Cu Concentration (mol/cm³)', fontsize=14)
-    ax1.set_ylabel('y (μm)', fontsize=14)
-    ax1.set_title(f'Cu @ x=30μm, t={t_val:.1f}s', fontsize=16)
-    ax1.legend(fontsize=12)
+    ax1.set_xlabel('Cu Concentration (mol/cm³)', fontsize=12)
+    ax1.set_ylabel('y (μm)', fontsize=12)
+    ax1.set_title(f'Cu @ x=center, t={t_val:.1f}s', fontsize=14)
+    ax1.legend(fontsize=10)
 
-    ax2.set_xlabel('Ni Concentration (mol/cm³)', fontsize=14)
-    ax2.set_ylabel('y (μm)', fontsize=14)
-    ax2.set_title(f'Ni @ x=30μm, t={t_val:.1f}s', fontsize=16)
-    ax2.legend(fontsize=12)
+    ax2.set_xlabel('Ni Concentration (mol/cm³)', fontsize=12)
+    ax2.set_ylabel('y (μm)', fontsize=12)
+    ax2.set_title(f'Ni @ x=center, t={t_val:.1f}s', fontsize=14)
+    ax2.legend(fontsize=10)
 
-    plt.suptitle(f"Central Line Profiles: {diff_type.replace('_', ' ')}", fontsize=18)
+    plt.suptitle(f"Central Line Profiles: {diff_type.replace('_', ' ')}", fontsize=16)
     plt.tight_layout(rect=[0, 0, 1, 0.95])
     st.pyplot(fig)
     plt.close()
@@ -514,7 +532,7 @@ def plot_center_concentrations(center_concentrations, diff_type):
     """Plot center point concentrations and flux magnitudes for two Ly values."""
     sns.set_context("paper")
     sns.set_style("whitegrid")
-    fig = plt.figure(figsize=(12, 12), dpi=300)
+    fig = plt.figure(figsize=(12, 12), dpi=200)
     gs = fig.add_gridspec(2, 2)
 
     ax1 = fig.add_subplot(gs[0, 0])
@@ -522,7 +540,7 @@ def plot_center_concentrations(center_concentrations, diff_type):
     ax3 = fig.add_subplot(gs[1, 0])
     ax4 = fig.add_subplot(gs[1, 1])
 
-    colors = plt.cm.tab20([0, 0.5])
+    colors = plt.cm.tab10([0, 3])
 
     for conc, color in zip(center_concentrations, colors):
         label = f'Ly = {conc["Ly"]:.1f} μm'
@@ -531,29 +549,31 @@ def plot_center_concentrations(center_concentrations, diff_type):
         ax3.plot(conc['times'], conc['J1_mag_center'], label=label, linewidth=2, color=color)
         ax4.plot(conc['times'], conc['J2_mag_center'], label=label, linewidth=2, color=color)
 
-    ax1.set_xlabel('Time (s)', fontsize=14)
-    ax1.set_ylabel('Cu Concentration (mol/cm³)', fontsize=14)
-    ax1.set_title('Cu Concentration at Center', fontsize=16)
-    ax1.legend(fontsize=12)
+    ax1.set_xlabel('Time (s)', fontsize=12)
+    ax1.set_ylabel('Cu Concentration (mol/cm³)', fontsize=12)
+    ax1.set_title('Cu Concentration at Center', fontsize=14)
+    ax1.legend(fontsize=10)
 
-    ax2.set_xlabel('Time (s)', fontsize=14)
-    ax2.set_ylabel('Ni Concentration (mol/cm³)', fontsize=14)
-    ax2.set_title('Ni Concentration at Center', fontsize=16)
-    ax2.legend(fontsize=12)
+    ax2.set_xlabel('Time (s)', fontsize=12)
+    ax2.set_ylabel('Ni Concentration (mol/cm³)', fontsize=12)
+    ax2.set_title('Ni Concentration at Center', fontsize=14)
+    ax2.legend(fontsize=10)
 
-    ax3.set_xlabel('Time (s)', fontsize=14)
-    ax3.set_ylabel('Cu Flux Magnitude', fontsize=14)
-    ax3.set_title('Cu Flux Magnitude at Center', fontsize=16)
-    ax3.legend(fontsize=12)
-    ax3.set_yscale('log') if np.any(conc['J1_mag_center'] > 0) else None
+    ax3.set_xlabel('Time (s)', fontsize=12)
+    ax3.set_ylabel('Cu Flux Magnitude', fontsize=12)
+    ax3.set_title('Cu Flux Magnitude at Center', fontsize=14)
+    ax3.legend(fontsize=10)
+    if any(np.any(conc['J1_mag_center'] > 0) for conc in center_concentrations):
+        ax3.set_yscale('log')
 
-    ax4.set_xlabel('Time (s)', fontsize=14)
-    ax4.set_ylabel('Ni Flux Magnitude', fontsize=14)
-    ax4.set_title('Ni Flux Magnitude at Center', fontsize=16)
-    ax4.legend(fontsize=12)
-    ax4.set_yscale('log') if np.any(conc['J2_mag_center'] > 0) else None
+    ax4.set_xlabel('Time (s)', fontsize=12)
+    ax4.set_ylabel('Ni Flux Magnitude', fontsize=12)
+    ax4.set_title('Ni Flux Magnitude at Center', fontsize=14)
+    ax4.legend(fontsize=10)
+    if any(np.any(conc['J2_mag_center'] > 0) for conc in center_concentrations):
+        ax4.set_yscale('log')
 
-    plt.suptitle(f"Center Point Evolution: {diff_type.replace('_', ' ')} (x=30μm, y=Ly/2)", fontsize=18)
+    plt.suptitle(f"Center Point Evolution: {diff_type.replace('_', ' ')} (center)", fontsize=16)
     plt.tight_layout(rect=[0, 0, 1, 0.95])
     st.pyplot(fig)
     plt.close(fig)
@@ -612,8 +632,7 @@ def download_data(solution, time_index, all_times=False):
         return zip_buffer.getvalue(), f"data_{solution['diffusion_type']}_ly_{solution['params']['Ly']:.1f}_all_times.zip"
 
 def main():
-    st.title("Cross-Diffusion 2D Visualization with Ly Comparison")
-
+    st.sidebar.header("Simulation Parameters")
     solutions, metadata, load_logs = load_solutions(SOLUTION_DIR)
 
     if load_logs:
@@ -631,8 +650,6 @@ def main():
         st.write("- solution_ni_selfdiffusion_ly_50.0_tmax_200.pkl")
         return
 
-    # Sidebar
-    st.sidebar.header("Simulation Parameters")
     diff_type = st.sidebar.selectbox(
         "Select Diffusion Type",
         options=DIFFUSION_TYPES,
