@@ -156,6 +156,9 @@ Concentration Fields, Flux and Others:
 
 [![meaningtowords](https://img.shields.io/badge/selfcrossdiffmath2-streamlit-red)](https://mathematicalvisualization-crossdiffusion2dpinn2.streamlit.app/) 
 
+[![meaningtowords](https://img.shields.io/badge/selfcrossdiffmath3-streamlit-red)](https://mathematicalvisualization-crossdiffusion2dpinn3.streamlit.app/) 
+
+
 
 
 
