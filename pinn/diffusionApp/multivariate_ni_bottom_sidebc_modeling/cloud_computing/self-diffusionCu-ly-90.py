@@ -149,7 +149,7 @@ def boundary_loss_bottom(model):
     
     c_pred = model(x, y, t)
     return (torch.mean((c_pred[:, 0] - C_CU_BOTTOM)**2) + 
-            torch.mean((c_pred[:, 1] - C_NI_TOP)**2))
+            torch.mean((c_pred[:, 1] - C_NI_BOTTOM)**2))
 
 def boundary_loss_top(model):
     num = 200
@@ -159,7 +159,7 @@ def boundary_loss_top(model):
     
     c_pred = model(x, y, t)
     return (torch.mean((c_pred[:, 0] - C_CU_TOP)**2) + 
-            torch.mean((c_pred[:, 1] - C_NI_BOTTOM)**2))
+            torch.mean((c_pred[:, 1] - C_NI_TOP)**2))
 
 def boundary_loss_sides(model):
     num = 200
