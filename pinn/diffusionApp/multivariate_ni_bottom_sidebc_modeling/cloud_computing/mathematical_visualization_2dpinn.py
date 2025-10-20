@@ -11,8 +11,9 @@ from scipy.interpolate import RegularGridInterpolator
 from scipy.spatial.distance import cdist
 from matplotlib import rcParams
 
-# Directory containing .pkl solution files
-SOLUTION_DIR = "pinn_solutions"  # Adjust path as needed
+# Directory containing .pkl solution files (ensure exists)
+SOLUTION_DIR = os.path.join(os.path.dirname(__file__), "pinn_solutions")
+os.makedirs(SOLUTION_DIR, exist_ok=True)
 
 # Diffusion types
 DIFFUSION_TYPES = ['crossdiffusion', 'cu_selfdiffusion', 'ni_selfdiffusion']
