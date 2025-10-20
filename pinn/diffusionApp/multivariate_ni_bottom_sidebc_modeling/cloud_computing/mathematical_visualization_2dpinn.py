@@ -11,6 +11,13 @@ from scipy.interpolate import RegularGridInterpolator
 from scipy.spatial.distance import cdist
 from matplotlib import rcParams
 
+# Disable LaTeX globally to prevent errors
+plt.rcParams.update({
+    "text.usetex": False,
+    "font.family": "sans-serif",
+    "mathtext.fontset": "dejavusans"
+})
+
 # Directory containing .pkl solution files (ensure exists)
 SOLUTION_DIR = os.path.join(os.path.dirname(__file__), "pinn_solutions")
 os.makedirs(SOLUTION_DIR, exist_ok=True)
@@ -162,22 +169,32 @@ def plot_flux_vs_gradient(solution,time_index,color_cu,color_ni,linewidth,linest
     J2_y_center = solution['J2_preds'][time_index][1][:,x_idx]
     grad_c2_y_center = solution['grad_c2_y'][time_index][:,x_idx]
 
-    rcParams.update({"text.usetex": True,"font.size": font_size,
-                     "axes.labelsize": font_size,"axes.titlesize": font_size+2,
-                     "legend.fontsize": font_size-2})
+    # Use matplotlib's built-in mathtext instead of LaTeX
+    plt.rcParams.update({
+        "font.size": font_size,
+        "axes.labelsize": font_size,
+        "axes.titlesize": font_size+2,
+        "legend.fontsize": font_size-2,
+        "mathtext.fontset": "dejavusans"
+    })
+    
     fig,(ax1,ax2)=plt.subplots(1,2,figsize=(12,6),dpi=dpi)
-    ax1.plot(y_coords,-grad_c1_y_center,label=r'$-\nabla C_\mathrm{Cu}$',color=color_cu,linewidth=linewidth,linestyle=linestyle)
-    ax1.plot(y_coords,J1_y_center,label=r'$J_\mathrm{Cu}$',color=color_cu,linewidth=linewidth,linestyle='--')
-    ax1.set_xlabel(r'$y$ ($\mu$m)')
-    ax1.set_ylabel(r'Flux / -Gradient')
+    
+    # Use matplotlib's mathtext (without LaTeX)
+    ax1.plot(y_coords,-grad_c1_y_center,label=r'$-\nabla C_{Cu}$',color=color_cu,linewidth=linewidth,linestyle=linestyle)
+    ax1.plot(y_coords,J1_y_center,label=r'$J_{Cu}$',color=color_cu,linewidth=linewidth,linestyle='--')
+    ax1.set_xlabel('y (μm)')
+    ax1.set_ylabel('Flux / -Gradient')
     ax1.set_title(f'Cu Flux vs Gradient @ t={t_val:.1f}s')
     ax1.legend()
-    ax2.plot(y_coords,-grad_c2_y_center,label=r'$-\nabla C_\mathrm{Ni}$',color=color_ni,linewidth=linewidth,linestyle=linestyle)
-    ax2.plot(y_coords,J2_y_center,label=r'$J_\mathrm{Ni}$',color=color_ni,linewidth=linewidth,linestyle='--')
-    ax2.set_xlabel(r'$y$ ($\mu$m)')
-    ax2.set_ylabel(r'Flux / -Gradient')
+    
+    ax2.plot(y_coords,-grad_c2_y_center,label=r'$-\nabla C_{Ni}$',color=color_ni,linewidth=linewidth,linestyle=linestyle)
+    ax2.plot(y_coords,J2_y_center,label=r'$J_{Ni}$',color=color_ni,linewidth=linewidth,linestyle='--')
+    ax2.set_xlabel('y (μm)')
+    ax2.set_ylabel('Flux / -Gradient')
     ax2.set_title(f'Ni Flux vs Gradient @ t={t_val:.1f}s')
     ax2.legend()
+    
     plt.suptitle(f"Flux vs Gradient: {diff_type.replace('_',' ')}",fontsize=font_size+4)
     plt.tight_layout(rect=[0,0,1,0.95])
     st.pyplot(fig)
@@ -212,14 +229,14 @@ def plot_uphill_regions(solution,time_index,downsample,colorscale='RdBu'):
 def main():
     st.title("Theoretical Assessment of Diffusion Solutions")
 
-    st.markdown(r"""
+    st.markdown("""
     ### Applicable Theories
     1. **Fick's First Law (Extended for Multicomponent Systems)**:
-       \[ \mathbf{J}_i = - \sum_{j} D_{ij} \nabla C_j \]
-       - Self-diffusion: \( D_{ij} = 0 \) for \( i \neq j \)
-       - Cross-diffusion: Off-diagonal terms may cause uphill diffusion \( \mathbf{J}_i \cdot \nabla C_i > 0 \)
+       J_i = - Σ D_ij ∇ C_j
+       - Self-diffusion: D_ij = 0 for i ≠ j
+       - Cross-diffusion: Off-diagonal terms may cause uphill diffusion (J_i · ∇ C_i > 0)
     2. **Continuity Equation**:
-       \[ \frac{\partial C_i}{\partial t} = - \nabla \cdot \mathbf{J}_i \]
+       ∂C_i/∂t = - ∇ · J_i
     """)
 
     solutions, metadata, load_logs = load_solutions(SOLUTION_DIR)
@@ -241,11 +258,11 @@ def main():
     solution = load_and_process_solution(solutions,diff_type,ly_target)
     if solution:
         st.subheader("Uphill Diffusion Detection")
-        st.markdown(r"Uphill occurs when \( \mathbf{J}_y \cdot \nabla_y C > 0 \)")
+        st.markdown("Uphill occurs when J_y · ∇_y C > 0")
         plot_uphill_regions(solution,time_index,downsample,colorscale)
 
         st.subheader("Flux vs Gradient Comparison")
-        st.markdown(r"Plots \( \mathbf{J}_y \) vs \( -\nabla_y C \) along the central line.")
+        st.markdown("Plots J_y vs -∇_y C along the central line.")
         plot_flux_vs_gradient(solution,time_index,color_cu,color_ni,linewidth,linestyle,font_size,dpi)
     else:
         st.error(f"No solution for {diff_type}, Ly={ly_target:.1f}")
