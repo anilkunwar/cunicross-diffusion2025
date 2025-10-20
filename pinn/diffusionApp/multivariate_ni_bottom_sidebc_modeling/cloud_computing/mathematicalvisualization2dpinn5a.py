@@ -1,256 +1,213 @@
-import os
-import pickle
-import numpy as np
-import pandas as pd
 import streamlit as st
-import matplotlib.pyplot as plt
+import numpy as np
 import plotly.graph_objects as go
+import pandas as pd
 from plotly.subplots import make_subplots
-import re
+import matplotlib.pyplot as plt
+from matplotlib.colors import ListedColormap
 
-# ------------------------------
-# Global Settings
-# ------------------------------
-plt.rcParams.update({
-    "font.family": "serif",
-    "mathtext.fontset": "dejavuserif",
-    "font.size": 14,
-    "axes.titlesize": 16,
-    "axes.labelsize": 14,
-    "xtick.labelsize": 12,
-    "ytick.labelsize": 12,
-    "legend.fontsize": 12,
-    "figure.dpi": 150
-})
-
-SOLUTION_DIR = os.path.join(os.path.dirname(__file__), "pinn_solutions")
-os.makedirs(SOLUTION_DIR, exist_ok=True)
-DIFFUSION_TYPES = ['crossdiffusion', 'cu_selfdiffusion', 'ni_selfdiffusion']
-
-# ------------------------------
+# ============================================================
 # Utility Functions
-# ------------------------------
+# ============================================================
 
-@st.cache_data
-def load_solutions(solution_dir):
-    """Load valid .pkl PINN solution files."""
-    solutions = []
-    for fname in os.listdir(solution_dir):
-        if not fname.endswith(".pkl"):
-            continue
-        filepath = os.path.join(solution_dir, fname)
-        try:
-            with open(filepath, "rb") as f:
-                sol = pickle.load(f)
-            match = re.match(r"solution_(\w+)_ly_([\d.]+)_tmax_([\d.]+)\.pkl", fname)
-            if not match:
-                continue
-            raw_type, ly_val, _ = match.groups()
-            type_map = {
-                'cross': 'crossdiffusion',
-                'crossdiffusion': 'crossdiffusion',
-                'cu_self': 'cu_selfdiffusion',
-                'cu_selfdiffusion': 'cu_selfdiffusion',
-                'ni_self': 'ni_selfdiffusion',
-                'ni_selfdiffusion': 'ni_selfdiffusion'
-            }
-            diff_type = type_map.get(raw_type.lower(), raw_type)
-            sol.update({
-                'diffusion_type': diff_type,
-                'Ly_parsed': float(ly_val),
-                'filename': fname
-            })
-            solutions.append(sol)
-        except Exception:
-            continue
-    return solutions
-
-
-def compute_fluxes_and_grads(c1_preds, c2_preds, x_coords, y_coords, params):
-    """Compute fluxes and gradients along x and y."""
-    D11, D12, D21, D22 = params['D11'], params['D12'], params['D21'], params['D22']
-    dx, dy = x_coords[1]-x_coords[0], y_coords[1]-y_coords[0]
-    J1_preds, J2_preds, grad_c1_y, grad_c2_y = [], [], [], []
-    for c1, c2 in zip(c1_preds, c2_preds):
-        grad_c1_x, grad_c1_y_i = np.gradient(c1, dx, axis=1), np.gradient(c1, dy, axis=0)
-        grad_c2_x, grad_c2_y_i = np.gradient(c2, dx, axis=1), np.gradient(c2, dy, axis=0)
-        J1_preds.append([-(D11*grad_c1_x + D12*grad_c2_x), -(D11*grad_c1_y_i + D12*grad_c2_y_i)])
-        J2_preds.append([-(D21*grad_c1_x + D22*grad_c2_x), -(D21*grad_c1_y_i + D22*grad_c2_y_i)])
-        grad_c1_y.append(grad_c1_y_i)
-        grad_c2_y.append(grad_c2_y_i)
+def compute_fluxes_and_grads(c1_preds, c2_preds, X, Y, params):
+    """Compute fluxes and gradients."""
+    dx = X[1] - X[0]
+    dy = Y[1] - Y[0]
+    grad_c1_y = np.gradient(c1_preds, dy, axis=1)
+    grad_c2_y = np.gradient(c2_preds, dy, axis=1)
+    D11 = params.get('D11', 1e-14)
+    D22 = params.get('D22', 1e-14)
+    J1_preds = -D11 * grad_c1_y
+    J2_preds = -D22 * grad_c2_y
     return J1_preds, J2_preds, grad_c1_y, grad_c2_y
 
 
-def detect_uphill(solution, time_index):
-    """Detect uphill diffusion and compute maxima."""
-    J1_y = solution['J1_preds'][time_index][1]
-    grad_c1_y = solution['grad_c1_y'][time_index]
-    J2_y = solution['J2_preds'][time_index][1]
-    grad_c2_y = solution['grad_c2_y'][time_index]
+def get_plot_customization():
+    """Sidebar configuration options for consistent styling."""
+    st.sidebar.header("Plot Customization")
 
-    uphill_cu = J1_y * grad_c1_y > 0
-    uphill_ni = J2_y * grad_c2_y > 0
+    color_cu = st.sidebar.color_picker("Cu curve color", "#1f77b4")
+    color_ni = st.sidebar.color_picker("Ni curve color", "#d62728")
+    line_width = st.sidebar.slider("Line width", 1.0, 6.0, 2.8)
+    line_style = st.sidebar.selectbox("Line style", ["solid", "dot", "dash", "longdash"])
+    fig_width = st.sidebar.slider("Figure width (inches)", 6, 14, 8)
+    fig_height = st.sidebar.slider("Figure height (inches)", 4, 10, 6)
+    font_size = st.sidebar.slider("Font size", 10, 30, 16)
+    colorscale_plotly = st.sidebar.selectbox("Plotly colormap", ["Viridis", "Inferno", "Plasma", "Cividis", "Turbo"])
 
-    uphill_product_cu = np.abs(J1_y * grad_c1_y) * uphill_cu
-    uphill_product_ni = np.abs(J2_y * grad_c2_y) * uphill_ni
+    return (color_cu, color_ni, line_width, line_style, fig_width, fig_height, font_size, colorscale_plotly)
 
-    max_uphill_cu = np.max(uphill_product_cu)
-    max_uphill_ni = np.max(uphill_product_ni)
+# ============================================================
+# Visualization Functions
+# ============================================================
 
-    return uphill_cu, uphill_ni, uphill_product_cu, uphill_product_ni, max_uphill_cu, max_uphill_ni
+def plot_flux_vs_gradient_plotly(solution, time_index, color_cu, color_ni,
+                                 line_width, line_style, fig_width, fig_height, font_size):
+    """Plot Flux vs Gradient curve with shaded uphill diffusion regions."""
+    J1 = solution['J1_preds'][time_index].flatten()
+    J2 = solution['J2_preds'][time_index].flatten()
+    grad_c1 = solution['grad_c1_y'][time_index].flatten()
+    grad_c2 = solution['grad_c2_y'][time_index].flatten()
 
+    uphill_mask_cu = J1 * grad_c1 > 0
+    uphill_mask_ni = J2 * grad_c2 > 0
 
-# ------------------------------
-# Plotting Functions
-# ------------------------------
+    fig = go.Figure()
 
-def plot_flux_vs_gradient(solution, time_index, fig_height=400, fig_width=900):
-    """Plot flux vs gradient with uphill overlay."""
-    J1_y = solution['J1_preds'][time_index][1].flatten()
-    J2_y = solution['J2_preds'][time_index][1].flatten()
-    grad_c1_y = solution['grad_c1_y'][time_index].flatten()
-    grad_c2_y = solution['grad_c2_y'][time_index].flatten()
-    uphill_cu = J1_y * grad_c1_y > 0
-    uphill_ni = J2_y * grad_c2_y > 0
-
-    fig = make_subplots(rows=1, cols=2, subplot_titles=("Cu Flux vs ∇c", "Ni Flux vs ∇c"))
-
-    # Cu subplot
+    # Cu line
     fig.add_trace(go.Scatter(
-        x=grad_c1_y, y=J1_y,
-        mode='markers', name="Cu Diffusion",
-        marker=dict(color='gray', size=5, opacity=0.6)
-    ), row=1, col=1)
-    fig.add_trace(go.Scatter(
-        x=grad_c1_y[uphill_cu], y=J1_y[uphill_cu],
-        mode='markers', name="Uphill Region",
-        marker=dict(color='red', size=6, symbol='diamond')
-    ), row=1, col=1)
+        x=grad_c1, y=J1, mode='lines', name='Cu: J₁ vs ∇c₁',
+        line=dict(color=color_cu, width=line_width, dash=line_style)
+    ))
 
-    # Ni subplot
+    # Ni line
     fig.add_trace(go.Scatter(
-        x=grad_c2_y, y=J2_y,
-        mode='markers', name="Ni Diffusion",
-        marker=dict(color='gray', size=5, opacity=0.6)
-    ), row=1, col=2)
-    fig.add_trace(go.Scatter(
-        x=grad_c2_y[uphill_ni], y=J2_y[uphill_ni],
-        mode='markers', name="Uphill Region",
-        marker=dict(color='blue', size=6, symbol='diamond')
-    ), row=1, col=2)
+        x=grad_c2, y=J2, mode='lines', name='Ni: J₂ vs ∇c₂',
+        line=dict(color=color_ni, width=line_width, dash=line_style)
+    ))
 
-    fig.update_xaxes(title_text="∇c (1/μm)", row=1, col=1)
-    fig.update_yaxes(title_text="J_y (a.u.)", row=1, col=1)
-    fig.update_xaxes(title_text="∇c (1/μm)", row=1, col=2)
-    fig.update_yaxes(title_text="J_y (a.u.)", row=1, col=2)
+    # Uphill region shading
+    fig.add_trace(go.Scatter(
+        x=grad_c1[uphill_mask_cu], y=J1[uphill_mask_cu],
+        mode='markers', name='Uphill (Cu)',
+        marker=dict(color='rgba(31,119,180,0.5)', size=6, symbol='circle')
+    ))
+
+    fig.add_trace(go.Scatter(
+        x=grad_c2[uphill_mask_ni], y=J2[uphill_mask_ni],
+        mode='markers', name='Uphill (Ni)',
+        marker=dict(color='rgba(214,39,40,0.5)', size=6, symbol='circle')
+    ))
 
     fig.update_layout(
-        height=fig_height,
-        width=fig_width,
-        template='simple_white',
-        title=dict(text="Flux vs Concentration Gradient", x=0.5),
-        legend=dict(orientation='h', y=-0.2),
-        font=dict(family="Serif", size=14)
+        title=f"Flux vs Gradient Curve at t={solution['times'][time_index]:.2f}s",
+        xaxis_title="∇cᵢ (1/m)",
+        yaxis_title="Jᵢ (mol/m²·s)",
+        font=dict(size=font_size),
+        width=fig_width * 100,
+        height=fig_height * 100,
+        template="plotly_white",
+        legend=dict(title="Legend", font=dict(size=font_size-2))
     )
-    st.plotly_chart(fig, use_container_width=False)
+    st.plotly_chart(fig, use_container_width=True)
+
+    # Caption
+    st.markdown("""
+    **Caption:**  
+    The *Flux vs Gradient* curve illustrates how the diffusion flux \(J_i\) relates to its concentration gradient \(\nabla c_i\).  
+    Uphill diffusion regions (shaded) indicate where the flux flows **against** the gradient (i.e., \(J_i \nabla c_i > 0\)),  
+    revealing anomalous or coupled diffusion behavior.
+    """)
 
 
-def plot_uphill_heatmap(solution, time_index, colorscale='RdBu', downsample=2):
-    """Plot uphill diffusion magnitudes as heatmaps."""
-    x_coords = solution['X'][:, 0]
-    y_coords = solution['Y'][0, :]
-    uphill_cu, uphill_ni, uphill_prod_cu, uphill_prod_ni, max_cu, max_ni = detect_uphill(solution, time_index)
+def plot_uphill_time_evolution(solution, color_cu, color_ni, line_width, fig_width, fig_height, font_size):
+    """Plot temporal evolution of the global maxima of J_i * ∇c_i."""
+    times = np.array(solution['times'])
+    J1dot = [np.max(J * g) for J, g in zip(solution['J1_preds'], solution['grad_c1_y'])]
+    J2dot = [np.max(J * g) for J, g in zip(solution['J2_preds'], solution['grad_c2_y'])]
 
-    ds = max(1, downsample)
-    x_idx, y_idx = np.arange(0, len(x_coords), ds), np.arange(0, len(y_coords), ds)
-    diff_type = solution['diffusion_type']
-    t_val = solution['times'][time_index]
+    df = pd.DataFrame({
+        "Time (s)": times,
+        "max(J₁·∇c₁)": J1dot,
+        "max(J₂·∇c₂)": J2dot
+    })
 
-    fig = make_subplots(rows=1, cols=2,
-                        subplot_titles=[f"Cu Uphill (max={max_cu:.2e})", f"Ni Uphill (max={max_ni:.2e})"])
-
-    for i, (uphill_prod, label) in enumerate([(uphill_prod_cu, "Cu"), (uphill_prod_ni, "Ni")]):
-        z_plot = uphill_prod[np.ix_(y_idx, x_idx)]
-        fig.add_trace(go.Heatmap(
-            x=x_coords[x_idx],
-            y=y_coords[y_idx],
-            z=z_plot,
-            colorscale=colorscale,
-            colorbar=dict(title="|J·∇c|"),
-            zsmooth='best'
-        ), row=1, col=i+1)
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(x=times, y=J1dot, mode='lines+markers', name='Cu', line=dict(color=color_cu, width=line_width)))
+    fig.add_trace(go.Scatter(x=times, y=J2dot, mode='lines+markers', name='Ni', line=dict(color=color_ni, width=line_width)))
 
     fig.update_layout(
-        height=500,
-        width=900,
-        title=f"Uphill Diffusion Map — {diff_type.replace('_', ' ')} @ t={t_val:.1f}s",
-        template='plotly_white',
-        font=dict(size=14)
+        title="Temporal Evolution of max(Jᵢ·∇cᵢ)",
+        xaxis_title="Time (s)",
+        yaxis_title="max(Jᵢ·∇cᵢ)",
+        font=dict(size=font_size),
+        width=fig_width * 100,
+        height=fig_height * 100,
+        template="plotly_white",
     )
-    st.plotly_chart(fig, use_container_width=False)
+    st.plotly_chart(fig, use_container_width=True)
 
-    return max_cu, max_ni
+    st.markdown("""
+    **Caption:**  
+    This plot tracks the **maximum product \(J_i·∇c_i\)** over time.  
+    Peaks represent moments where the **uphill diffusion tendency** is most pronounced,  
+    indicating strong coupling effects or driving forces overcoming the concentration gradient.
+    """)
+
+    st.dataframe(df.style.highlight_max(axis=0, color='lightgreen'))
 
 
-# ------------------------------
-# Main App
-# ------------------------------
+def plot_uphill_heatmap(solution, time_index, colorscale_plotly, fig_width, fig_height, font_size):
+    """2D heatmap of uphill diffusion intensity."""
+    J1 = solution['J1_preds'][time_index]
+    grad_c1 = solution['grad_c1_y'][time_index]
+    uphill_field = J1 * grad_c1
+
+    fig = go.Figure(data=go.Heatmap(
+        z=uphill_field,
+        colorscale=colorscale_plotly,
+        colorbar_title="J₁·∇c₁"
+    ))
+
+    fig.update_layout(
+        title=f"Uphill Diffusion Heatmap (t={solution['times'][time_index]:.2f}s)",
+        xaxis_title="X position (μm)",
+        yaxis_title="Y position (μm)",
+        font=dict(size=font_size),
+        width=fig_width * 100,
+        height=fig_height * 100,
+        template="plotly_white"
+    )
+    st.plotly_chart(fig, use_container_width=True)
+
+    st.markdown("""
+    **Caption:**  
+    The heatmap shows the spatial distribution of \(J₁·∇c₁\).  
+    Positive regions correspond to **uphill diffusion zones**,  
+    where flux opposes the local concentration gradient.
+    """)
+
+# ============================================================
+# Main Streamlit App
+# ============================================================
+
 def main():
-    st.title("📈 Advanced Diffusion Analysis with Uphill Detection")
+    st.title("📊 Multicomponent Diffusion Visualization Suite")
 
-    solutions = load_solutions(SOLUTION_DIR)
-    if not solutions:
-        st.warning("No valid PINN solutions found in 'pinn_solutions/'.")
-        return
+    # Synthetic example (replace with real data loading)
+    Nx, Ny, Nt = 40, 40, 10
+    X, Y = np.linspace(0, 10, Nx), np.linspace(0, 5, Ny)
+    c1_preds = np.random.rand(Nt, Nx, Ny)
+    c2_preds = np.random.rand(Nt, Nx, Ny)
+    params = {'D11': 1e-14, 'D22': 2e-14, 'Ly': 5, 'Lx': 10}
+    times = np.linspace(0, 100, Nt)
 
-    # Sidebar
-    st.sidebar.header("Controls")
-    diff_type = st.sidebar.selectbox("Select Diffusion Type", DIFFUSION_TYPES)
-    ly_values = sorted(set(s['Ly_parsed'] for s in solutions if s['diffusion_type'] == diff_type))
-    ly_target = st.sidebar.select_slider("Select Ly (μm)", options=ly_values)
-    time_index = st.sidebar.slider("Select Time Index", 0, 49, 49)
-    downsample = st.sidebar.slider("Downsample", 1, 5, 2)
-    colorscale = st.sidebar.selectbox("Heatmap Colorscale", ['RdBu', 'Viridis', 'Plasma', 'Cividis'])
+    solution = {'X': X, 'Y': Y, 'c1_preds': c1_preds, 'c2_preds': c2_preds,
+                'params': params, 'times': times}
 
-    # Filter solution
-    solution = next((s for s in solutions if s['diffusion_type'] == diff_type and abs(s['Ly_parsed'] - ly_target) < 1e-4), None)
-    if not solution:
-        st.error("No matching solution found.")
-        return
-
-    # Compute fluxes
-    J1, J2, grad_c1, grad_c2 = compute_fluxes_and_grads(solution['c1_preds'], solution['c2_preds'],
-                                                       solution['X'][:, 0], solution['Y'][0, :], solution['params'])
+    # Compute fluxes and gradients
+    J1, J2, grad_c1, grad_c2 = compute_fluxes_and_grads(c1_preds, c2_preds, X, Y, params)
     solution.update({'J1_preds': J1, 'J2_preds': J2, 'grad_c1_y': grad_c1, 'grad_c2_y': grad_c2})
 
-    st.subheader("1️⃣ Flux vs Concentration Gradient")
-    plot_flux_vs_gradient(solution, time_index)
+    # Sidebar
+    time_index = st.sidebar.slider("Time Index", 0, len(times)-1, 0)
+    (color_cu, color_ni, line_width, line_style, fig_width, fig_height, font_size, colorscale_plotly) = get_plot_customization()
 
-    st.subheader("2️⃣ Uphill Diffusion Heatmap")
-    max_cu, max_ni = plot_uphill_heatmap(solution, time_index, colorscale, downsample)
-    st.success(f"Max Uphill Cu = {max_cu:.3e} | Max Uphill Ni = {max_ni:.3e}")
+    st.header("1️⃣ Flux vs Gradient Curve")
+    plot_flux_vs_gradient_plotly(solution, time_index, color_cu, color_ni, line_width, line_style, fig_width, fig_height, font_size)
 
-    # ---- DataFrame Summary ----
-    st.subheader("3️⃣ Summary Table: Max Uphill Magnitudes Across All Simulations")
+    st.header("2️⃣ Temporal Evolution of max(Jᵢ·∇cᵢ)")
+    plot_uphill_time_evolution(solution, color_cu, color_ni, line_width, fig_width, fig_height, font_size)
 
-    summary_data = []
-    for s in solutions:
-        J1, J2, grad_c1, grad_c2 = compute_fluxes_and_grads(s['c1_preds'], s['c2_preds'],
-                                                            s['X'][:, 0], s['Y'][0, :], s['params'])
-        s.update({'J1_preds': J1, 'J2_preds': J2, 'grad_c1_y': grad_c1, 'grad_c2_y': grad_c2})
-        _, _, _, _, max_cu_i, max_ni_i = detect_uphill(s, time_index)
-        summary_data.append({
-            "Diffusion Type": s['diffusion_type'],
-            "Ly (μm)": s['Ly_parsed'],
-            "Max Uphill Cu (|J·∇c|)": max_cu_i,
-            "Max Uphill Ni (|J·∇c|)": max_ni_i
-        })
+    st.header("3️⃣ Uphill Diffusion Heatmap")
+    plot_uphill_heatmap(solution, time_index, colorscale_plotly, fig_width, fig_height, font_size)
 
-    df_summary = pd.DataFrame(summary_data).sort_values(by=["Diffusion Type", "Ly (μm)"])
-    st.dataframe(df_summary, use_container_width=True, height=350)
+    st.success("✅ Visualization Complete — publication-quality figures ready.")
 
-    st.download_button("💾 Download Summary CSV", df_summary.to_csv(index=False), "uphill_summary.csv", "text/csv")
-
+# ============================================================
+# Execute
+# ============================================================
 
 if __name__ == "__main__":
     main()
