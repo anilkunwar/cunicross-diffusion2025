@@ -18,6 +18,7 @@ plt.rcParams.update({
     "mathtext.fontset": "dejavusans"
 })
 
+# Directory containing .pkl solution files (ensure exists)
 SOLUTION_DIR = os.path.join(os.path.dirname(__file__), "pinn_solutions")
 os.makedirs(SOLUTION_DIR, exist_ok=True)
 
