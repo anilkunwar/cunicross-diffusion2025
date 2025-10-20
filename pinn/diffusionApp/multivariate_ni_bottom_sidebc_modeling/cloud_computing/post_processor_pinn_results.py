@@ -16,18 +16,14 @@ import re
 # Directory containing .pkl solution files
 SOLUTION_DIR = os.path.join(os.path.dirname(__file__), "pinn_solutions")
 
-# Diffusion types and their boundary conditions
-DIFFUSION_TYPES = {
-    'crossdiffusion': {'C_CU_TOP': 1.59e-3, 'C_NI_BOTTOM': 4.0e-4},
-    'cu_selfdiffusion': {'C_CU_TOP': 1.59e-3, 'C_NI_BOTTOM': 0.0},
-    'ni_selfdiffusion': {'C_CU_TOP': 0.0, 'C_NI_BOTTOM': 4.0e-4}
-}
+# Diffusion types
+DIFFUSION_TYPES = ['crossdiffusion', 'cu_selfdiffusion', 'ni_selfdiffusion']
 
 @st.cache_data
 def load_solutions(solution_dir):
     solutions = []
     load_logs = []
-    metadata = []
+    metadata = []  # Store diffusion type, Ly, filename
 
     for fname in os.listdir(solution_dir):
         if not fname.endswith(".pkl"):
@@ -59,7 +55,7 @@ def load_solutions(solution_dir):
                 load_logs.append(f"{fname}: Failed - unknown diffusion type '{diff_type}'.")
                 continue
 
-            # Validate array shapes and fix orientation
+            # Validate and fix array orientation
             c1_preds = sol['c1_preds']
             c2_preds = sol['c2_preds']
             if not (isinstance(c1_preds, list) and isinstance(c2_preds, list) and len(c1_preds) == len(c2_preds)):
@@ -67,8 +63,8 @@ def load_solutions(solution_dir):
                 continue
 
             if c1_preds[0].shape == (50, 50):
-                # Already (y,x) as expected
-                pass
+                # Already (y,x)
+                sol['orientation_note'] = "c1_preds/c2_preds rows=y, cols=x"
             elif c1_preds[0].shape == (50, 50):
                 # Transpose to (y,x)
                 c1_preds = [c.T for c in c1_preds]
@@ -93,43 +89,46 @@ def load_solutions(solution_dir):
     return solutions, metadata, load_logs
 
 def compute_fluxes(c1_preds, c2_preds, x_coords, y_coords, params):
+    """Compute fluxes J1 and J2 from concentrations using finite differences."""
     D11, D12, D21, D22 = params['D11'], params['D12'], params['D21'], params['D22']
     dx = x_coords[1] - x_coords[0]
     dy = y_coords[1] - y_coords[0]
-
-    J1_preds, J2_preds = [], []
+    
+    J1_preds = []
+    J2_preds = []
     for c1, c2 in zip(c1_preds, c2_preds):
         grad_c1_x = np.gradient(c1, dx, axis=1)
         grad_c1_y = np.gradient(c1, dy, axis=0)
         grad_c2_x = np.gradient(c2, dx, axis=1)
         grad_c2_y = np.gradient(c2, dy, axis=0)
-
+        
         J1_x = -(D11 * grad_c1_x + D12 * grad_c2_x)
         J1_y = -(D11 * grad_c1_y + D12 * grad_c2_y)
         J2_x = -(D21 * grad_c1_x + D22 * grad_c2_x)
         J2_y = -(D21 * grad_c1_y + D22 * grad_c2_y)
-
+        
         J1_preds.append([J1_x, J1_y])
         J2_preds.append([J2_x, J2_y])
-
+    
     return J1_preds, J2_preds
 
 @st.cache_data
-def interpolate_solution(solutions, target_Ly, target_type, sigma=2.5):
-    matching = [s for s in solutions if s['diffusion_type'] == target_type]
+def attention_weighted_interpolation(solutions, lys, ly_target, diff_type, sigma=2.5):
+    """Interpolate solutions for a specific diffusion type and Ly."""
+    matching = [s for s in solutions if s['diffusion_type'] == diff_type]
     if not matching:
         return None
 
-    lys = np.array([s['params']['Ly'] for s in matching])
+    lys = np.array([s['Ly_parsed'] for s in matching])
     if not lys.size:
         return None
 
-    weights = get_interpolation_weights(lys, target_Ly, sigma=2.5)
+    weights = get_interpolation_weights(lys, ly_target, sigma)
 
     Lx = matching[0]['params']['Lx']
     t_max = matching[0]['params']['t_max']
     x_coords = np.linspace(0, Lx, 50)
-    y_coords = np.linspace(0, target_Ly, 50)
+    y_coords = np.linspace(0, ly_target, 50)
     times = np.linspace(0, t_max, 50)
 
     c1_interp = np.zeros((len(times), 50, 50))
@@ -137,35 +136,41 @@ def interpolate_solution(solutions, target_Ly, target_type, sigma=2.5):
 
     for sol, w in zip(matching, weights):
         X_sol = sol['X'][:, 0]
-        Y_sol = sol['Y'][0, :] * (target_Ly / sol['params']['Ly'])
+        Y_sol = sol['Y'][0, :] * (ly_target / sol['params']['Ly'])
         for t_idx in range(len(times)):
-            interp_c1 = RegularGridInterpolator((X_sol, Y_sol), sol['c1_preds'][t_idx],
-                                                method='linear', bounds_error=False, fill_value=0)
-            interp_c2 = RegularGridInterpolator((X_sol, Y_sol), sol['c2_preds'][t_idx],
-                                                method='linear', bounds_error=False, fill_value=0)
+            interp_c1 = RegularGridInterpolator(
+                (X_sol, Y_sol), sol['c1_preds'][t_idx],
+                method='linear', bounds_error=False, fill_value=0
+            )
+            interp_c2 = RegularGridInterpolator(
+                (X_sol, Y_sol), sol['c2_preds'][t_idx],
+                method='linear', bounds_error=False, fill_value=0
+            )
             X_target, Y_target = np.meshgrid(x_coords, y_coords, indexing='ij')
             points = np.column_stack([X_target.ravel(), Y_target.ravel()])
             c1_interp[t_idx] += w * interp_c1(points).reshape(50, 50)
             c2_interp[t_idx] += w * interp_c2(points).reshape(50, 50)
 
     X, Y = np.meshgrid(x_coords, y_coords, indexing='ij')
-    params = matching[0]['params'].copy()
-    params['Ly'] = target_Ly
+    param_set = matching[0]['params'].copy()
+    param_set['Ly'] = ly_target
 
-    J1_preds, J2_preds = compute_fluxes(c1_interp, c2_interp, x_coords, y_coords, params)
+    J1_preds, J2_preds = compute_fluxes(c1_interp, c2_interp, x_coords, y_coords, param_set)
 
     return {
-        'params': params,
-        'X': X, 'Y': Y,
+        'params': param_set,
+        'X': X,
+        'Y': Y,
         'c1_preds': list(c1_interp),
         'c2_preds': list(c2_interp),
         'J1_preds': J1_preds,
         'J2_preds': J2_preds,
         'times': times,
-        'diffusion_type': target_type,
+        'diffusion_type': diff_type,
         'interpolated': True,
         'used_lys': lys.tolist(),
-        'weights': weights.tolist()
+        'attention_weights': weights.tolist(),
+        'orientation_note': "c1_preds and c2_preds are arrays of shape (50,50) where rows (i) correspond to y-coordinates and columns (j) correspond to x-coordinates."
     }
 
 def get_interpolation_weights(lys, ly_target, sigma=2.5):
@@ -177,258 +182,504 @@ def get_interpolation_weights(lys, ly_target, sigma=2.5):
     return weights
 
 @st.cache_data
-def get_solution(solutions, ly_target, diff_type):
-    exact = [s for s in solutions if s['diffusion_type'] == diff_type and abs(s['params']['Ly'] - ly_target) < 1e-3]
+def load_and_interpolate_solution(solutions, diff_type, ly_target, tolerance=1e-4):
+    """Load or interpolate solution for target diffusion type and Ly."""
+    exact = [s for s in solutions if s['diffusion_type'] == diff_type and abs(s['Ly_parsed'] - ly_target) < tolerance]
     if exact:
-        sol = exact[0]
-        if 'J1_preds' not in sol:
-            J1, J2 = compute_fluxes(sol['c1_preds'], sol['c2_preds'],
-                                    sol['X'][:, 0], sol['Y'][0, :], sol['params'])
-            sol['J1_preds'], sol['J2_preds'] = J1, J2
-        sol['interpolated'] = False
-        return sol
-    return interpolate_solution(solutions, ly_target, diff_type)
+        solution = exact[0]
+        solution['interpolated'] = False
+        if 'J1_preds' not in solution or 'J2_preds' not in solution:
+            J1_preds, J2_preds = compute_fluxes(
+                solution['c1_preds'], solution['c2_preds'],
+                solution['X'][:, 0], solution['Y'][0, :], solution['params']
+            )
+            solution['J1_preds'] = J1_preds
+            solution['J2_preds'] = J2_preds
+        return solution
+    return attention_weighted_interpolation(solutions, [s['Ly_parsed'] for s in solutions], ly_target, diff_type)
 
-def plot_concentration_heatmap(solution, time_index, downsample=2):
-    x = solution['X'][:, 0][::downsample]
-    y = solution['Y'][0, :][::downsample]
-    c1 = solution['c1_preds'][time_index][::downsample, ::downsample]
-    c2 = solution['c2_preds'][time_index][::downsample, ::downsample]
-    t = solution['times'][time_index]
-    Lx, Ly = solution['params']['Lx'], solution['params']['Ly']
+def plot_solution(solution, time_index, downsample, title_suffix=""):
+    """Plot concentration fields for a single solution."""
+    x_coords = solution['X'][:, 0]
+    y_coords = solution['Y'][0, :]
+    t_val = solution['times'][time_index]
+    Lx = solution['params']['Lx']
+    Ly = solution['params']['Ly']
 
-    fig = make_subplots(rows=1, cols=2,
-                        subplot_titles=(f"Cu @ t={t:.1f}s", f"Ni @ t={t:.1f}s"))
-    fig.add_trace(go.Heatmap(z=c1, x=x, y=y, colorscale='Viridis',
-                             colorbar=dict(title='Cu (mol/cm³)', x=0.45)), row=1, col=1)
-    fig.add_trace(go.Heatmap(z=c2, x=x, y=y, colorscale='Magma',
-                             colorbar=dict(title='Ni (mol/cm³)', x=1.02)), row=1, col=2)
+    ds = max(1, downsample)
+    x_indices = np.unique(np.linspace(0, len(x_coords)-1, num=len(x_coords)//ds, dtype=int))
+    y_indices = np.unique(np.linspace(0, len(y_coords)-1, num=len(y_coords)//ds, dtype=int))
 
-    fig.update_layout(height=500, title=f"Concentration [{solution['diffusion_type'].replace('_', ' ')}, Ly={Ly:.1f}μm]")
-    fig.update_xaxes(title_text="x (μm)", range=[0, Lx], row=1, col=1)
-    fig.update_yaxes(title_text="y (μm)", range=[0, Ly], row=1, col=1)
-    fig.update_xaxes(title_text="x (μm)", range=[0, Lx], row=1, col=2)
-    fig.update_yaxes(title_text="y (μm)", range=[0, Ly], row=1, col=2)
+    x_ds = x_coords[x_indices]
+    y_ds = y_coords[y_indices]
+    c1 = solution['c1_preds'][time_index][np.ix_(x_indices, y_indices)]
+    c2 = solution['c2_preds'][time_index][np.ix_(x_indices, y_indices)]
+
+    fig = make_subplots(rows=1, cols=2, subplot_titles=(f"Cu @ {t_val:.1f}s", f"Ni @ {t_val:.1f}s"))
+
+    fig.add_trace(go.Heatmap(
+        x=x_ds, y=y_ds, z=c1, colorscale='Viridis',
+        colorbar=dict(title='Cu Conc', x=0.45), zsmooth='best'
+    ), row=1, col=1)
+
+    fig.add_trace(go.Heatmap(
+        x=x_ds, y=y_ds, z=c2, colorscale='Magma',
+        colorbar=dict(title='Ni Conc', x=1.02), zsmooth='best'
+    ), row=1, col=2)
+
+    for col, xref, yref in [(1, 'x', 'y'), (2, 'x2', 'y2')]:
+        for x in x_ds[::2]:
+            fig.add_shape(type='line', x0=x, y0=0, x1=x, y1=Ly, xref=xref, yref=yref,
+                          line=dict(color='gray', width=0.5, dash='dot'))
+        for y in y_ds[::2]:
+            fig.add_shape(type='line', x0=0, y0=y, x1=Lx, y1=y, xref=xref, yref=yref,
+                          line=dict(color='gray', width=0.5, dash='dot'))
+        fig.add_shape(type='line', x0=0, y0=Ly, x1=Lx, y1=Ly, xref=xref, yref=yref,
+                      line=dict(color='black', width=2))
+        fig.add_shape(type='rect', x0=0, y0=0, x1=Lx, y1=Ly, xref=xref, yref=yref,
+                      line=dict(color='black', width=1))
+
+    fig.update_layout(
+        height=500,
+        title=f"Concentration Fields: {Lx}μm × {Ly}μm {title_suffix}",
+        showlegend=False
+    )
+    fig.update_xaxes(title_text="x (μm)", range=[0, Lx], gridcolor='white', zeroline=False, row=1, col=1)
+    fig.update_yaxes(title_text="y (μm)", range=[0, Ly], gridcolor='white', zeroline=False, row=1, col=1)
+    fig.update_xaxes(title_text="x (μm)", range=[0, Lx], gridcolor='white', zeroline=False, row=1, col=2)
+    fig.update_yaxes(title_text="y (μm)", range=[0, Ly], gridcolor='white', zeroline=False, row=1, col=2)
+
     st.plotly_chart(fig, use_container_width=True)
 
-def plot_flux_quiver(solution, time_index, downsample=2):
-    x = solution['X'][:, 0][::downsample]
-    y = solution['Y'][0, :][::downsample]
-    J1_x = solution['J1_preds'][time_index][0][::downsample, ::downsample]
-    J1_y = solution['J1_preds'][time_index][1][::downsample, ::downsample]
-    J2_x = solution['J2_preds'][time_index][0][::downsample, ::downsample]
-    J2_y = solution['J2_preds'][time_index][1][::downsample, ::downsample]
-    t = solution['times'][time_index]
-    Lx, Ly = solution['params']['Lx'], solution['params']['Ly']
+def plot_flux_comparison(solutions, diff_type, ly_values, time_index, downsample):
+    """Plot flux fields for two Ly values for a given diffusion type."""
+    if len(ly_values) != 2:
+        st.error("Please select exactly two Ly values for comparison.")
+        return
 
-    fig = make_subplots(rows=2, cols=2,
-                        subplot_titles=("Cu Flux Magnitude", "Ni Flux Magnitude",
-                                       "Cu J_x", "Ni J_x"),
-                        vertical_spacing=0.15)
+    sol1 = load_and_interpolate_solution(solutions, diff_type, ly_values[0])
+    sol2 = load_and_interpolate_solution(solutions, diff_type, ly_values[1])
+    if not sol1 or not sol2:
+        st.error(f"Could not load solutions for {diff_type}, Ly={ly_values}")
+        return
 
-    # Magnitude plots
-    J1_mag = np.sqrt(J1_x**2 + J1_y**2)
-    J2_mag = np.sqrt(J2_x**2 + J2_y**2)
+    fig = make_subplots(
+        rows=3, cols=4,
+        subplot_titles=(
+            f"Cu Flux Quiver, Ly={ly_values[0]:.1f}", f"Ni Flux Quiver, Ly={ly_values[0]:.1f}",
+            f"Cu Flux Quiver, Ly={ly_values[1]:.1f}", f"Ni Flux Quiver, Ly={ly_values[1]:.1f}",
+            f"Cu J_1x, Ly={ly_values[0]:.1f}", f"Ni J_2x, Ly={ly_values[0]:.1f}",
+            f"Cu J_1x, Ly={ly_values[1]:.1f}", f"Ni J_2x, Ly={ly_values[1]:.1f}",
+            f"Cu J_1y, Ly={ly_values[0]:.1f}", f"Ni J_2y, Ly={ly_values[0]:.1f}",
+            f"Cu J_1y, Ly={ly_values[1]:.1f}", f"Ni J_2y, Ly={ly_values[1]:.1f}"
+        ),
+        vertical_spacing=0.12,
+        horizontal_spacing=0.1
+    )
 
-    fig.add_trace(go.Heatmap(z=np.log10(np.maximum(J1_mag, 1e-10)), x=x, y=y, colorscale='Viridis',
-                             colorbar=dict(title='Log Cu Flux', x=0.45, y=0.85, len=0.4)), row=1, col=1)
-    fig.add_trace(go.Heatmap(z=np.log10(np.maximum(J2_mag, 1e-10)), x=x, y=y, colorscale='Magma',
-                             colorbar=dict(title='Log Ni Flux', x=1.02, y=0.85, len=0.4)), row=1, col=2)
-    fig.add_trace(go.Heatmap(z=J1_x, x=x, y=y, colorscale='RdBu', zmid=0,
-                             colorbar=dict(title='Cu J_x', x=0.45, y=0.35, len=0.4)), row=2, col=1)
-    fig.add_trace(go.Heatmap(z=J2_x, x=x, y=y, colorscale='RdBu', zmid=0,
-                             colorbar=dict(title='Ni J_x', x=1.02, y=0.35, len=0.4)), row=2, col=2)
+    for idx, (sol, Ly) in enumerate([(sol1, ly_values[0]), (sol2, ly_values[1])]):
+        x_coords = sol['X'][:, 0]
+        y_coords = sol['Y'][0, :]
+        t_val = sol['times'][time_index]
+        Lx = sol['params']['Lx']
 
-    # Quiver annotations
-    scale = 0.1 * Lx
-    max_J1 = np.max(J1_mag) + 1e-9
-    max_J2 = np.max(J2_mag) + 1e-9
-    for i in range(0, len(x), 2):
-        for j in range(0, len(y), 2):
-            if J1_mag[i,j] > 1e-10:
-                fig.add_annotation(x=x[i], y=y[j], ax=x[i] + scale*J1_x[i,j]/max_J1, ay=y[j] + scale*J1_y[i,j]/max_J1,
-                                  xref="x", yref="y", axref="x", ayref="y",
-                                  showarrow=True, arrowhead=2, arrowsize=1, arrowwidth=1, arrowcolor='white', row=1, col=1)
-            if J2_mag[i,j] > 1e-10:
-                fig.add_annotation(x=x[i], y=y[j], ax=x[i] + scale*J2_x[i,j]/max_J2, ay=y[j] + scale*J2_y[i,j]/max_J2,
-                                  xref="x2", yref="y2", axref="x2", ayref="y2",
-                                  showarrow=True, arrowhead=2, arrowsize=1, arrowwidth=1, arrowcolor='white', row=1, col=2)
+        ds = max(1, downsample)
+        x_indices = np.unique(np.linspace(0, len(x_coords)-1, num=len(x_coords)//ds, dtype=int))
+        y_indices = np.unique(np.linspace(0, len(y_coords)-1, num=len(y_coords)//ds, dtype=int))
 
-    fig.update_layout(height=800, title=f"Flux Fields @ t={t:.1f}s [{solution['diffusion_type'].replace('_', ' ')}, Ly={Ly:.1f}μm]")
-    for row, col, xref in [(1,1,'x'), (1,2,'x2'), (2,1,'x3'), (2,2,'x4')]:
-        fig.update_xaxes(title_text="x (μm)", range=[0, Lx], row=row, col=col)
-        fig.update_yaxes(title_text="y (μm)", range=[0, Ly], row=row, col=col)
+        x_ds = x_coords[x_indices]
+        y_ds = y_coords[y_indices]
+        X_ds, Y_ds = np.meshgrid(x_ds, y_ds, indexing='ij')
+
+        J1_x = sol['J1_preds'][time_index][0][np.ix_(x_indices, y_indices)]
+        J1_y = sol['J1_preds'][time_index][1][np.ix_(x_indices, y_indices)]
+        J2_x = sol['J2_preds'][time_index][0][np.ix_(x_indices, y_indices)]
+        J2_y = sol['J2_preds'][time_index][1][np.ix_(x_indices, y_indices)]
+        c1 = sol['c1_preds'][time_index][np.ix_(x_indices, y_indices)]
+        c2 = sol['c2_preds'][time_index][np.ix_(x_indices, y_indices)]
+
+        # Quiver plots
+        J1_magnitude = np.sqrt(J1_x**2 + J1_y**2)
+        max_J1 = np.max(J1_magnitude) + 1e-9
+        fig.add_trace(go.Heatmap(
+            x=x_ds, y=y_ds, z=np.log10(np.maximum(J1_magnitude, 1e-10)),
+            colorscale='Viridis', colorbar=dict(title='Log Cu Flux Mag', x=0.22+0.55*idx, len=0.3, y=0.85),
+            zsmooth='best', hovertemplate='x: %{x:.1f} μm<br>y: %{y:.1f} μm<br>Flux: %{z:.2e}'
+        ), row=1, col=1+idx*2)
+
+        scale = 0.1 * Lx
+        annotations_cu = []
+        for i in range(0, len(x_ds), 2):
+            for j in range(0, len(y_ds), 2):
+                if J1_magnitude[i, j] > 1e-10:
+                    annotations_cu.append(dict(
+                        x=x_ds[i], y=y_ds[j], xref=f"x{1+idx*2}", yref=f"y{1+idx*2}",
+                        ax=x_ds[i] + scale * J1_x[i, j] / max_J1, ay=y_ds[j] + scale * J1_y[i, j] / max_J1,
+                        showarrow=True, arrowhead=2, arrowsize=1, arrowwidth=1.2, arrowcolor='white'
+                    ))
+
+        fig.add_trace(go.Contour(
+            z=c1, x=x_ds, y=y_ds, colorscale='Blues', showscale=False, opacity=0.3,
+            contours=dict(showlabels=True, start=np.min(c1), end=np.max(c1), size=(np.max(c1)-np.min(c1))/8),
+            line=dict(width=1)
+        ), row=1, col=1+idx*2)
+
+        J2_magnitude = np.sqrt(J2_x**2 + J2_y**2)
+        max_J2 = np.max(J2_magnitude) + 1e-9
+        fig.add_trace(go.Heatmap(
+            x=x_ds, y=y_ds, z=np.log10(np.maximum(J2_magnitude, 1e-10)),
+            colorscale='Cividis', colorbar=dict(title='Log Ni Flux Mag', x=0.45+0.55*idx, len=0.3, y=0.85),
+            zsmooth='best', hovertemplate='x: %{x:.1f} μm<br>y: %{y:.1f} μm<br>Flux: %{z:.2e}'
+        ), row=1, col=2+idx*2)
+
+        annotations_ni = []
+        for i in range(0, len(x_ds), 2):
+            for j in range(0, len(y_ds), 2):
+                if J2_magnitude[i, j] > 1e-10:
+                    annotations_ni.append(dict(
+                        x=x_ds[i], y=y_ds[j], xref=f"x{2+idx*2}", yref=f"y{2+idx*2}",
+                        ax=x_ds[i] + scale * J2_x[i, j] / max_J2, ay=y_ds[j] + scale * J2_y[i, j] / max_J2,
+                        showarrow=True, arrowhead=2, arrowsize=1, arrowwidth=1.2, arrowcolor='white'
+                    ))
+
+        fig.add_trace(go.Contour(
+            z=c2, x=x_ds, y=y_ds, colorscale='Reds', showscale=False, opacity=0.3,
+            contours=dict(showlabels=True, start=np.min(c2), end=np.max(c2), size=(np.max(c2)-np.min(c2))/8),
+            line=dict(width=1)
+        ), row=1, col=2+idx*2)
+
+        # J_x plots
+        fig.add_trace(go.Heatmap(
+            x=x_ds, y=y_ds, z=J1_x, colorscale='RdBu', zmid=0,
+            colorbar=dict(title='Cu J_1x', x=0.22+0.55*idx, len=0.3, y=0.5),
+            zsmooth='best', hovertemplate='x: %{x:.1f} μm<br>y: %{y:.1f} μm<br>J_1x: %{z:.2e}'
+        ), row=2, col=1+idx*2)
+
+        fig.add_trace(go.Contour(
+            z=c1, x=x_ds, y=y_ds, colorscale='Blues', showscale=False, opacity=0.3,
+            contours=dict(showlabels=True, start=np.min(c1), end=np.max(c1), size=(np.max(c1)-np.min(c1))/8),
+            line=dict(width=1)
+        ), row=2, col=1+idx*2)
+
+        fig.add_trace(go.Heatmap(
+            x=x_ds, y=y_ds, z=J2_x, colorscale='RdBu', zmid=0,
+            colorbar=dict(title='Ni J_2x', x=0.45+0.55*idx, len=0.3, y=0.5),
+            zsmooth='best', hovertemplate='x: %{x:.1f} μm<br>y: %{y:.1f} μm<br>J_2x: %{z:.2e}'
+        ), row=2, col=2+idx*2)
+
+        fig.add_trace(go.Contour(
+            z=c2, x=x_ds, y=y_ds, colorscale='Reds', showscale=False, opacity=0.3,
+            contours=dict(showlabels=True, start=np.min(c2), end=np.max(c2), size=(np.max(c2)-np.min(c2))/8),
+            line=dict(width=1)
+        ), row=2, col=2+idx*2)
+
+        # J_y plots
+        fig.add_trace(go.Heatmap(
+            x=x_ds, y=y_ds, z=J1_y, colorscale='RdBu', zmid=0,
+            colorbar=dict(title='Cu J_1y', x=0.22+0.55*idx, len=0.3, y=0.15),
+            zsmooth='best', hovertemplate='x: %{x:.1f} μm<br>y: %{y:.1f} μm<br>J_1y: %{z:.2e}'
+        ), row=3, col=1+idx*2)
+
+        fig.add_trace(go.Contour(
+            z=c1, x=x_ds, y=y_ds, colorscale='Blues', showscale=False, opacity=0.3,
+            contours=dict(showlabels=True, start=np.min(c1), end=np.max(c1), size=(np.max(c1)-np.min(c1))/8),
+            line=dict(width=1)
+        ), row=3, col=1+idx*2)
+
+        fig.add_trace(go.Heatmap(
+            x=x_ds, y=y_ds, z=J2_y, colorscale='RdBu', zmid=0,
+            colorbar=dict(title='Ni J_2y', x=0.45+0.55*idx, len=0.3, y=0.15),
+            zsmooth='best', hovertemplate='x: %{x:.1f} μm<br>y: %{y:.1f} μm<br>J_2y: %{z:.2e}'
+        ), row=3, col=2+idx*2)
+
+        fig.add_trace(go.Contour(
+            z=c2, x=x_ds, y=y_ds, colorscale='Reds', showscale=False, opacity=0.3,
+            contours=dict(showlabels=True, start=np.min(c2), end=np.max(c2), size=(np.max(c2)-np.min(c2))/8),
+            line=dict(width=1)
+        ), row=3, col=2+idx*2)
+
+        for row, col, xref, yref in [
+            (1, 1+idx*2, f'x{1+idx*2}', f'y{1+idx*2}'), (1, 2+idx*2, f'x{2+idx*2}', f'y{2+idx*2}'),
+            (2, 1+idx*2, f'x{5+idx*2}', f'y{5+idx*2}'), (2, 2+idx*2, f'x{6+idx*2}', f'y{6+idx*2}'),
+            (3, 1+idx*2, f'x{9+idx*2}', f'y{9+idx*2}'), (3, 2+idx*2, f'x{10+idx*2}', f'y{10+idx*2}')
+        ]:
+            for x in x_ds[::2]:
+                fig.add_shape(type='line', x0=x, y0=0, x1=x, y1=Ly, xref=xref, yref=yref,
+                              line=dict(color='gray', width=0.5, dash='dot'))
+            for y in y_ds[::2]:
+                fig.add_shape(type='line', x0=0, y0=y, x1=Lx, y1=y, xref=xref, yref=yref,
+                              line=dict(color='gray', width=0.5, dash='dot'))
+            fig.add_shape(type='line', x0=0, y0=Ly, x1=Lx, y1=Ly, xref=xref, yref=yref,
+                          line=dict(color='black', width=2))
+            fig.add_shape(type='rect', x0=0, y0=0, x1=Lx, y1=Ly, xref=xref, yref=yref,
+                          line=dict(color='black', width=1))
+
+    fig.update_layout(
+        height=1000,
+        margin=dict(l=20, r=20, t=100, b=20),
+        title=f"Flux Fields Comparison: {diff_type.replace('_', ' ')} @ t={t_val:.1f}s",
+        annotations=annotations_cu + annotations_ni,
+        showlegend=False
+    )
+
+    for row, col, xref in [(1,1,'x1'), (1,2,'x2'), (1,3,'x3'), (1,4,'x4'),
+                           (2,1,'x5'), (2,2,'x6'), (2,3,'x7'), (2,4,'x8'),
+                           (3,1,'x9'), (3,2,'x10'), (3,3,'x11'), (3,4,'x12')]:
+        fig.update_xaxes(title_text="x (μm)", range=[0, Lx], gridcolor='white', zeroline=False, row=row, col=col)
+        fig.update_yaxes(title_text="y (μm)", range=[0, max(ly_values)], gridcolor='white', zeroline=False, row=row, col=col)
+
     st.plotly_chart(fig, use_container_width=True)
 
-def plot_central_line_profiles(solutions, time_index, ly_target, diff_types):
-    """Compare central line profiles across diffusion types."""
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 5), dpi=150)
-    colors = plt.cm.tab10(np.linspace(0, 1, len(diff_types)))
+def plot_line_comparison(solutions, diff_type, ly_values, time_index):
+    """Plot central line profiles for two Ly values for a given diffusion type."""
+    if len(ly_values) != 2:
+        st.error("Please select exactly two Ly values for comparison.")
+        return
 
-    for diff_type, color in zip(diff_types, colors):
-        sol = get_solution(solutions, ly_target, diff_type)
-        if not sol:
-            continue
+    sol1 = load_and_interpolate_solution(solutions, diff_type, ly_values[0])
+    sol2 = load_and_interpolate_solution(solutions, diff_type, ly_values[1])
+    if not sol1 or not sol2:
+        st.error(f"Could not load solutions for {diff_type}, Ly={ly_values}")
+        return
 
-        x_idx = len(sol['X'][:, 0]) // 2
+    plt.style.use('ggplot')
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 6), dpi=300)
+
+    for sol, Ly, linestyle in [(sol1, ly_values[0], '-'), (sol2, ly_values[1], '--')]:
+        x_idx = len(sol['X'][:, 0]) // 2  # x = Lx/2
         y_coords = sol['Y'][0, :]
         c1_center = sol['c1_preds'][time_index][:, x_idx]
         c2_center = sol['c2_preds'][time_index][:, x_idx]
-        t = sol['times'][time_index]
+        t_val = sol['times'][time_index]
 
-        label = f"{diff_type.replace('_', ' ')} (Ly={ly_target:.1f})"
-        ax1.plot(c1_center, y_coords, label=label, color=color)
-        ax2.plot(c2_center, y_coords, label=label, color=color)
+        ax1.plot(c1_center, y_coords, label=f'Ly = {Ly:.1f} μm', linestyle=linestyle, linewidth=2)
+        ax2.plot(c2_center, y_coords, label=f'Ly = {Ly:.1f} μm', linestyle=linestyle, linewidth=2)
 
-    ax1.set_xlabel('Cu Concentration (mol/cm³)')
-    ax1.set_ylabel('y (μm)')
-    ax1.set_title(f'Cu @ x=30μm, t={t:.1f}s')
-    ax1.grid(True, alpha=0.3)
-    ax1.legend()
+    ax1.set_xlabel('Cu Concentration (mol/cm³)', fontsize=14)
+    ax1.set_ylabel('y (μm)', fontsize=14)
+    ax1.set_title(f'Cu @ x=30μm, t={t_val:.1f}s', fontsize=16)
+    ax1.grid(True, which="both", ls="--", alpha=0.7)
+    ax1.legend(fontsize=12)
 
-    ax2.set_xlabel('Ni Concentration (mol/cm³)')
-    ax2.set_title(f'Ni @ x=30μm, t={t:.1f}s')
-    ax2.grid(True, alpha=0.3)
-    ax2.legend()
+    ax2.set_xlabel('Ni Concentration (mol/cm³)', fontsize=14)
+    ax2.set_ylabel('y (μm)', fontsize=14)
+    ax2.set_title(f'Ni @ x=30μm, t={t_val:.1f}s', fontsize=16)
+    ax2.grid(True, which="both", ls="--", alpha=0.7)
+    ax2.legend(fontsize=12)
 
-    plt.tight_layout()
+    plt.suptitle(f"Central Line Profiles: {diff_type.replace('_', ' ')}", fontsize=18)
+    plt.tight_layout(rect=[0, 0, 1, 0.95])
     st.pyplot(fig)
     plt.close()
 
-def plot_center_point_evolution(solutions, ly_target, diff_types):
-    """Compare center point evolution across diffusion types."""
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 5), dpi=150)
-    colors = plt.cm.tab10(np.linspace(0, 1, len(diff_types)))
+def compute_center_concentrations(solutions, diff_type, ly_values):
+    """Compute Cu and Ni concentrations at the center point for given Ly values."""
+    center_concentrations = []
+    Lx = solutions[0]['params']['Lx']
+    center_x = Lx / 2
+    center_idx = 25  # For 50x50 grid
 
-    for diff_type, color in zip(diff_types, colors):
-        sol = get_solution(solutions, ly_target, diff_type)
+    for ly in ly_values:
+        sol = load_and_interpolate_solution(solutions, diff_type, ly)
         if not sol:
             continue
-
-        x_idx = len(sol['X'][:, 0]) // 2
-        y_idx = len(sol['Y'][0, :]) // 2
+        center_y = ly / 2
         times = sol['times']
-        c1_center = [c[y_idx, x_idx] for c in sol['c1_preds']]
-        c2_center = [c[y_idx, x_idx] for c in sol['c2_preds']]
+        c1_center = []
+        c2_center = []
+        for c1, c2 in zip(sol['c1_preds'], sol['c2_preds']):
+            c1_center.append(c1[center_idx, center_idx])
+            c2_center.append(c2[center_idx, center_idx])
+        center_concentrations.append({
+            'Ly': ly,
+            'times': times,
+            'c1_center': np.array(c1_center),
+            'c2_center': np.array(c2_center)
+        })
 
-        label = f"{diff_type.replace('_', ' ')} (Ly={ly_target:.1f})"
-        ax1.plot(times, c1_center, label=label, color=color)
-        ax2.plot(times, c2_center, label=label, color=color)
+    return center_concentrations
 
-    ax1.set_xlabel('Time (s)')
-    ax1.set_ylabel('Cu Concentration (mol/cm³)')
-    ax1.set_title(f'Center Point Cu (x=30, y={ly_target/2:.1f})')
-    ax1.grid(True, alpha=0.3)
-    ax1.legend()
+def plot_center_concentrations(center_concentrations, diff_type):
+    """Plot center point concentrations for two Ly values."""
+    plt.style.use('ggplot')
+    colors = plt.cm.tab20([0, 0.5])
 
-    ax2.set_xlabel('Time (s)')
-    ax2.set_ylabel('Ni Concentration (mol/cm³)')
-    ax2.set_title(f'Center Point Ni (x=30, y={ly_target/2:.1f})')
-    ax2.grid(True, alpha=0.3)
-    ax2.legend()
+    fig1, ax1 = plt.subplots(figsize=(10, 6), dpi=300)
+    fig2, ax2 = plt.subplots(figsize=(10, 6), dpi=300)
 
-    plt.tight_layout()
-    st.pyplot(fig)
-    plt.close()
+    for conc, color in zip(center_concentrations, colors):
+        ax1.plot(conc['times'], conc['c1_center'], label=f'Ly = {conc["Ly"]:.1f} μm',
+                 linewidth=2, color=color)
+        ax2.plot(conc['times'], conc['c2_center'], label=f'Ly = {conc["Ly"]:.1f} μm',
+                 linewidth=2, color=color)
+
+    ax1.set_xlabel('Time (s)', fontsize=14)
+    ax1.set_ylabel('Cu Concentration (mol/cm³)', fontsize=14)
+    ax1.set_title(f'Cu Concentration at Center (x=30μm, y=Ly/2)', fontsize=16)
+    ax1.grid(True, which="both", ls="--", alpha=0.7)
+    ax1.legend(fontsize=12)
+
+    ax2.set_xlabel('Time (s)', fontsize=14)
+    ax2.set_ylabel('Ni Concentration (mol/cm³)', fontsize=14)
+    ax2.set_title(f'Ni Concentration at Center (x=30μm, y=Ly/2)', fontsize=16)
+    ax2.grid(True, which="both", ls="--", alpha=0.7)
+    ax2.legend(fontsize=12)
+
+    plt.suptitle(f"Center Point Evolution: {diff_type.replace('_', ' ')}", fontsize=18)
+    fig1.tight_layout(rect=[0, 0, 1, 0.95])
+    fig2.tight_layout(rect=[0, 0, 1, 0.95])
+    st.pyplot(fig1)
+    st.pyplot(fig2)
+    plt.close(fig1)
+    plt.close(fig2)
 
 def download_data(solution, time_index, all_times=False):
-    X = solution['X']
-    Y = solution['Y']
+    """Generate CSV or ZIP file for download."""
+    x_coords = solution['X'][:, 0]
+    y_coords = solution['Y'][0, :]
+    X, Y = np.meshgrid(x_coords, y_coords, indexing='ij')
+
     if not all_times:
+        t_val = solution['times'][time_index]
+        c1 = solution['c1_preds'][time_index]
+        c2 = solution['c2_preds'][time_index]
+        J1_x = solution['J1_preds'][time_index][0]
+        J1_y = solution['J1_preds'][time_index][1]
+        J2_x = solution['J2_preds'][time_index][0]
+        J2_y = solution['J2_preds'][time_index][1]
+
         df = pd.DataFrame({
-            'x': X.flatten(),
-            'y': Y.flatten(),
-            'Cu': np.array(solution['c1_preds'][time_index]).flatten(),
-            'Ni': np.array(solution['c2_preds'][time_index]).flatten(),
-            'J_Cu_x': solution['J1_preds'][time_index][0].flatten(),
-            'J_Cu_y': solution['J1_preds'][time_index][1].flatten(),
-            'J_Ni_x': solution['J2_preds'][time_index][0].flatten(),
-            'J_Ni_y': solution['J2_preds'][time_index][1].flatten(),
+            'x': X.flatten(), 'y': Y.flatten(),
+            'c1': c1.flatten(), 'c2': c2.flatten(),
+            'J1_x': J1_x.flatten(), 'J1_y': J1_y.flatten(),
+            'J2_x': J2_x.flatten(), 'J2_y': J2_y.flatten()
         })
-        csv = df.to_csv(index=False).encode()
-        return csv, f"data_{solution['diffusion_type']}_ly_{solution['params']['Ly']:.1f}_t_{solution['times'][time_index]:.1f}.csv"
+
+        csv_buffer = io.StringIO()
+        df.to_csv(csv_buffer, index=False)
+        csv_bytes = csv_buffer.getvalue().encode('utf-8')
+        return csv_bytes, f"data_{solution['diffusion_type']}_ly_{solution['params']['Ly']:.1f}_t_{t_val:.1f}s.csv"
+
     else:
-        buffer = io.BytesIO()
-        with zipfile.ZipFile(buffer, 'w', zipfile.ZIP_DEFLATED) as z:
-            for t_idx, t in enumerate(solution['times']):
+        zip_buffer = io.BytesIO()
+        with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zip_file:
+            for ti, t_val in enumerate(solution['times']):
+                c1 = solution['c1_preds'][ti]
+                c2 = solution['c2_preds'][ti]
+                J1_x = solution['J1_preds'][ti][0]
+                J1_y = solution['J1_preds'][ti][1]
+                J2_x = solution['J2_preds'][ti][0]
+                J2_y = solution['J2_preds'][ti][1]
+
                 df = pd.DataFrame({
-                    't': t, 'x': X.flatten(), 'y': Y.flatten(),
-                    'Cu': np.array(solution['c1_preds'][t_idx]).flatten(),
-                    'Ni': np.array(solution['c2_preds'][t_idx]).flatten(),
+                    't': t_val * np.ones(X.size),
+                    'x': X.flatten(), 'y': Y.flatten(),
+                    'c1': c1.flatten(), 'c2': c2.flatten(),
+                    'J1_x': J1_x.flatten(), 'J1_y': J1_y.flatten(),
+                    'J2_x': J2_x.flatten(), 'J2_y': J2_y.flatten()
                 })
-                z.writestr(f"t_{t:.1f}s.csv", df.to_csv(index=False))
-        return buffer.getvalue(), f"all_times_{solution['diffusion_type']}_ly_{solution['params']['Ly']:.1f}.zip"
+
+                csv_buffer = io.StringIO()
+                df.to_csv(csv_buffer, index=False)
+                zip_file.writestr(f"data_t_{t_val:.1f}s.csv", csv_buffer.getvalue())
+
+        zip_buffer.seek(0)
+        return zip_buffer.getvalue(), f"data_{solution['diffusion_type']}_ly_{solution['params']['Ly']:.1f}_all_times.zip"
 
 def main():
-    st.title("PINN Diffusion Post-Processor: Cross vs. Self Diffusion")
+    st.title("Cross-Diffusion 2D Visualization with Ly Comparison")
 
     solutions, metadata, load_logs = load_solutions(SOLUTION_DIR)
 
+    if load_logs:
+        st.subheader("Solution Load Log")
+        selected_log = st.selectbox("View load status for solutions", load_logs, index=0)
+        st.write(selected_log)
+
     if not solutions:
-        st.error("No valid .pkl files found in pinn_solutions directory.")
+        st.error("No valid solution files found in pinn_solutions directory.")
         st.write("Expected files:")
-        st.write("- solution_crossdiffusion_ly_90.0_tmax_200.pkl")
         st.write("- solution_crossdiffusion_ly_50.0_tmax_200.pkl")
-        st.write("- solution_cu_selfdiffusion_ly_90.0_tmax_200.pkl")
+        st.write("- solution_crossdiffusion_ly_90.0_tmax_200.pkl")
         st.write("- solution_cu_selfdiffusion_ly_50.0_tmax_200.pkl")
+        st.write("- solution_cu_selfdiffusion_ly_90.0_tmax_200.pkl")
         st.write("- solution_ni_selfdiffusion_ly_50.0_tmax_200.pkl")
-        st.subheader("Load Log")
-        for log in load_logs:
-            st.write(log)
         return
 
     # Sidebar
-    st.sidebar.header("Simulation Selector")
-    diff_type = st.sidebar.selectbox("Diffusion Type", options=list(DIFFUSION_TYPES.keys()),
-                                     format_func=lambda x: x.replace('_', ' ').title())
-    ly_target = st.sidebar.selectbox("Domain Height Ly (μm)", options=[50.0, 90.0], format_func=lambda x: f"{x:.1f}")
-
-    solution = get_solution(solutions, ly_target, diff_type)
-    if not solution:
-        st.error(f"No solution for {diff_type}, Ly={ly_target}. Check load log.")
-        st.subheader("Load Log")
-        for log in load_logs:
-            st.write(log)
+    st.sidebar.header("Simulation Parameters")
+    diff_type = st.sidebar.selectbox(
+        "Select Diffusion Type",
+        options=DIFFUSION_TYPES,
+        format_func=lambda x: x.replace('_', ' ').title()
+    )
+    available_lys = sorted(set(s['Ly_parsed'] for s in solutions if s['diffusion_type'] == diff_type))
+    if len(available_lys) < 2:
+        st.sidebar.error(f"Not enough Ly values for {diff_type}. Need at least two.")
         return
+    ly_values = st.sidebar.multiselect(
+        "Select Two Ly Values for Comparison (μm)",
+        options=available_lys,
+        default=available_lys[:2] if len(available_lys) >= 2 else available_lys,
+        format_func=lambda x: f"{x:.1f}",
+        max_selections=2
+    )
 
-    st.success(f"Loaded: **{diff_type.replace('_', ' ')}**, Ly={solution['params']['Ly']:.1f}μm "
-               f"{'(Interpolated)' if solution.get('interpolated') else ''}")
-
-    time_index = st.slider("Time Step", 0, len(solution['times'])-1, len(solution['times'])//2)
-    downsample = st.slider("Downsample Grid", 1, 5, 2)
+    time_index = st.sidebar.slider("Select Time", 0, len(solutions[0]['times'])-1, len(solutions[0]['times'])-1)
+    downsample = st.sidebar.slider("Detail Level", 1, 5, 2)
 
     # Tabs
-    tab1, tab2, tab3, tab4 = st.tabs(["Concentration", "Flux", "Central Line", "Center Point Evolution"])
+    tab1, tab2, tab3, tab4 = st.tabs(["Concentration", "Flux Comparison", "Central Line Comparison", "Center Point Comparison"])
 
     with tab1:
-        st.subheader("2D Concentration Fields")
-        plot_concentration_heatmap(solution, time_index, downsample)
+        st.subheader("Concentration Fields")
+        for ly in ly_values:
+            solution = load_and_interpolate_solution(solutions, diff_type, ly)
+            if solution:
+                plot_solution(solution, time_index, downsample, title_suffix=f"[{diff_type.replace('_', ' ')}, Ly={ly:.1f}]")
+            else:
+                st.error(f"No solution for {diff_type}, Ly={ly:.1f}")
 
     with tab2:
-        st.subheader("Flux Fields")
-        plot_flux_quiver(solution, time_index, downsample)
+        st.subheader("Flux Fields Comparison")
+        plot_flux_comparison(solutions, diff_type, ly_values, time_index, downsample)
 
     with tab3:
-        st.subheader("Central Line Profile (x = Lx/2)")
-        diff_types = st.multiselect("Compare Diffusion Types", options=list(DIFFUSION_TYPES.keys()),
-                                    default=[diff_type], format_func=lambda x: x.replace('_', ' ').title())
-        plot_central_line_profiles(solutions, time_index, ly_target, diff_types)
+        st.subheader("Central Line Profiles Comparison")
+        plot_line_comparison(solutions, diff_type, ly_values, time_index)
 
     with tab4:
-        st.subheader("Center Point Time Evolution")
-        diff_types = st.multiselect("Compare Diffusion Types", options=list(DIFFUSION_TYPES.keys()),
-                                    default=[diff_type], format_func=lambda x: x.replace('_', ' ').title())
-        plot_center_point_evolution(solutions, ly_target, diff_types)
+        st.subheader("Center Point Concentration Comparison")
+        center_concentrations = compute_center_concentrations(solutions, diff_type, ly_values)
+        if center_concentrations:
+            plot_center_concentrations(center_concentrations, diff_type)
+        else:
+            st.error(f"Could not compute center concentrations for {diff_type}, Ly={ly_values}")
 
     # Download
     st.subheader("Download Data")
-    col1, col2 = st.columns(2)
-    with col1:
-        csv_data, fname = download_data(solution, time_index)
-        st.download_button("Download CSV (Selected Time)", csv_data, fname, "text/csv")
-    with col2:
-        zip_data, zipname = download_data(solution, time_index, all_times=True)
-        st.download_button("Download ZIP (All Times)", zip_data, zipname, "application/zip")
+    for ly in ly_values:
+        solution = load_and_interpolate_solution(solutions, diff_type, ly)
+        if not solution:
+            continue
+        st.write(f"Data for Ly = {ly:.1f} μm")
+        col1, col2 = st.columns(2)
+        with col1:
+            data_bytes, filename = download_data(solution, time_index, all_times=False)
+            st.download_button(
+                label=f"Download CSV (t={solution['times'][time_index]:.1f}s, Ly={ly:.1f})",
+                data=data_bytes,
+                file_name=filename,
+                mime="text/csv"
+            )
+        with col2:
+            data_bytes, filename = download_data(solution, time_index, all_times=True)
+            st.download_button(
+                label=f"Download ZIP (All Times, Ly={ly:.1f})",
+                data=data_bytes,
+                file_name=filename,
+                mime="application/zip"
+            )
 
 if __name__ == "__main__":
     main()
