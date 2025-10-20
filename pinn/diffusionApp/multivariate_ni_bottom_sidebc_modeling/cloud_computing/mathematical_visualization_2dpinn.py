@@ -32,7 +32,8 @@ DIFFUSION_TYPES = ['crossdiffusion', 'cu_selfdiffusion', 'ni_selfdiffusion']
 def load_solutions(solution_dir):
     solutions, metadata, load_logs = [], [], []
     for fname in os.listdir(solution_dir):
-        if not fname.endswith(".pkl"): continue
+        if not fname.endswith(".pkl"): 
+            continue
         filepath = os.path.join(solution_dir, fname)
         try:
             with open(filepath, "rb") as f:
@@ -41,20 +42,32 @@ def load_solutions(solution_dir):
             if not all(key in sol for key in required):
                 load_logs.append(f"{fname}: Missing keys {set(required)-set(sol.keys())}")
                 continue
-            # Parse diffusion type and Ly
-            match = re.match(r"(\w+)_ly_([\d.]+)_tmax_([\d.]+)\.pkl", fname)
-            if not match: 
+
+            # --- FIXED: parse filename correctly ---
+            match = re.match(r"solution_(\w+)_ly_([\d.]+)_tmax_([\d.]+)\.pkl", fname)
+            if not match:
                 load_logs.append(f"{fname}: Invalid filename format")
                 continue
-            diff_type, ly_val, _ = match.groups()
+
+            raw_type, ly_val, _ = match.groups()
             ly_val = float(ly_val)
-            diff_type = diff_type.lower()
-            type_map = {'cross':'crossdiffusion','cu_self':'cu_selfdiffusion','ni_self':'ni_selfdiffusion',
-                        'cucross':'crossdiffusion','nicross':'crossdiffusion','self_cu':'cu_selfdiffusion','self_ni':'ni_selfdiffusion'}
+
+            # Normalize diffusion type
+            diff_type = raw_type.lower()
+            type_map = {
+                'crossdiffusion': 'crossdiffusion',
+                'cu_selfdiffusion': 'cu_selfdiffusion',
+                'ni_selfdiffusion': 'ni_selfdiffusion',
+                'cross': 'crossdiffusion',
+                'cu_self': 'cu_selfdiffusion',
+                'ni_self': 'ni_selfdiffusion'
+            }
             diff_type = type_map.get(diff_type, diff_type)
             if diff_type not in DIFFUSION_TYPES:
                 load_logs.append(f"{fname}: Unknown diffusion type '{diff_type}'")
                 continue
+            # --- END FIX ---
+
             # Ensure predictions are 50x50
             c1_preds, c2_preds = sol['c1_preds'], sol['c2_preds']
             if c1_preds[0].shape != (50,50):
