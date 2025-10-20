@@ -797,7 +797,7 @@ def main():
     line_y_tick_interval = st.sidebar.slider("Line Y Tick Interval (μm)", 5, 50, 10)
     center_time_tick_interval = st.sidebar.slider("Center Time Tick Interval (s)", 10, 100, 50)
     center_conc_y_tick_interval = st.sidebar.slider("Center Conc Y Tick Interval (mol/cm³)", 0.0001, 0.001, 0.001, step=0.0001, format="%.4f")
-    center_flux_y_tick_interval = st.sidebar.slider("Center Flux Y Tick Interval", 0.0001, 0.001, 0.0001, step=0.0001, format="%.4f")
+    center_flux_y_tick_interval = st.sidebar.slider("Center Flux Y Tick Interval", 0.0001, 0.001, 0.00005, step=0.0001, format="%.4f")
 
     # Tabs
     tab1, tab2, tab3, tab4 = st.tabs(["Concentration", "Flux Comparison", "Central Line Comparison", "Center Point Comparison"])
