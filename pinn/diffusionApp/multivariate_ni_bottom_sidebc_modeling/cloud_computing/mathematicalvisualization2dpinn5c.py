@@ -6,6 +6,7 @@ import streamlit as st
 import matplotlib.pyplot as plt
 import matplotlib as mpl
 from matplotlib.colors import Normalize
+from mpl_toolkits.axes_grid1 import make_axes_locatable
 from io import BytesIO
 import re
 
@@ -166,9 +167,12 @@ def plot_flux_vs_gradient_matplotlib(solution, time_index,
     return fig
 
 
+
+
 def plot_uphill_heatmap_matplotlib(solution, time_index, cmap='viridis', vmin=None, vmax=None,
                                    figsize=(10,4), colorbar=True, cbar_label='J·∇c',
-                                   label_fontsize=12, title_fontsize=14, downsample=1):
+                                   label_fontsize=12, title_fontsize=14, downsample=1,
+                                   cbar_pad=0.05, cbar_width=0.03):
     x_coords = solution['X'][:,0] if solution['X'].ndim==2 else solution['X']
     y_coords = solution['Y'][0,:] if solution['Y'].ndim==2 else solution['Y']
     t_val = solution['times'][time_index]
@@ -183,38 +187,28 @@ def plot_uphill_heatmap_matplotlib(solution, time_index, cmap='viridis', vmin=No
     x_ds = x_coords[::downsample]
     y_ds = y_coords[::downsample]
 
-    # Create figure with adjusted subplot widths to accommodate colorbar
-    fig, axes = plt.subplots(1, 2, figsize=figsize, 
-                            gridspec_kw={'width_ratios': [1, 1], 'wspace': 0.4})
+    fig, axes = plt.subplots(1, 2, figsize=figsize)
 
-    im1 = axes[0].imshow(z1, origin='lower', aspect='auto',
-                         extent=(x_ds[0], x_ds[-1], y_ds[0], y_ds[-1]),
-                         cmap=cmap, vmin=vmin, vmax=vmax)
-    axes[0].set_title(f'Cu Uphill (max={max_pos_cu:.3e})', fontsize=title_fontsize)
-    axes[0].set_xlabel('x (μm)', fontsize=label_fontsize)
-    axes[0].set_ylabel('y (μm)', fontsize=label_fontsize)
+    for ax, z, name, max_val in zip(axes, [z1, z2], ['Cu', 'Ni'], [max_pos_cu, max_pos_ni]):
+        im = ax.imshow(z, origin='lower', aspect='auto',
+                       extent=(x_ds[0], x_ds[-1], y_ds[0], y_ds[-1]),
+                       cmap=cmap, vmin=vmin, vmax=vmax)
+        ax.set_title(f'{name} Uphill (max={max_val:.3e})', fontsize=title_fontsize)
+        ax.set_xlabel('x (μm)', fontsize=label_fontsize)
+        if name == 'Cu':
+            ax.set_ylabel('y (μm)', fontsize=label_fontsize)
+        else:
+            ax.set_ylabel('')
 
-    im2 = axes[1].imshow(z2, origin='lower', aspect='auto',
-                         extent=(x_ds[0], x_ds[-1], y_ds[0], y_ds[-1]),
-                         cmap=cmap, vmin=vmin, vmax=vmax)
-    axes[1].set_title(f'Ni Uphill (max={max_pos_ni:.3e})', fontsize=title_fontsize)
-    axes[1].set_xlabel('x (μm)', fontsize=label_fontsize)
-    axes[1].set_ylabel('')
-
-    if colorbar:
-        # Create a dedicated axes for the colorbar with proper positioning
-        cbar_ax = fig.add_axes([0.92, 0.15, 0.02, 0.7])  # [left, bottom, width, height]
-        cbar = fig.colorbar(im2, cax=cbar_ax)
-        cbar.set_label(cbar_label, fontsize=label_fontsize)
-        cbar.ax.tick_params(labelsize=label_fontsize-2)
-
-    for ax in axes:
-        ax.tick_params(axis='both', which='major', labelsize=label_fontsize-2)
+        if colorbar:
+            divider = make_axes_locatable(ax)
+            cax = divider.append_axes("right", size=cbar_width, pad=cbar_pad)
+            fig.colorbar(im, cax=cax, label=cbar_label).ax.tick_params(labelsize=label_fontsize-2)
 
     fig.suptitle(f'Uphill Diffusion (positive J·∇c) @ t={t_val:.2f}s', fontsize=title_fontsize+1)
-    fig.tight_layout(rect=[0, 0.03, 0.9, 0.95])  # Adjust right boundary to 0.9 to make space for colorbar
-
+    fig.tight_layout(rect=[0, 0.03, 1, 0.95])
     return fig, max_pos_cu, max_pos_ni, frac_cu, frac_ni
+
 
 
 def plot_uphill_over_time_matplotlib(solution, figsize=(8,3), linewidth=1.6, marker_size=6,
