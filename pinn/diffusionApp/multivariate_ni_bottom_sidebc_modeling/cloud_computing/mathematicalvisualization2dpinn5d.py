@@ -185,12 +185,7 @@ def plot_uphill_heatmap_matplotlib(solution, time_index, cmap='viridis', vmin=No
                                    label_fontsize=12, title_fontsize=14, downsample=1,
                                    cbar_position='top', cbar_size=0.15):
     """
-    Publication-ready heatmap plot with FLEXIBLE colorbar positioning:
-    - 'top': Horizontal colorbar above heatmaps
-    - 'right': Vertical colorbar on right (traditional)
-    - 'left': Vertical colorbar on left (flipped)
-    
-    All preserve aspect='equal' for true physical proportions!
+    Publication-ready heatmap plot with PERFECT spacing for ALL colorbar positions!
     """
     import matplotlib.gridspec as gridspec
     
@@ -212,20 +207,22 @@ def plot_uphill_heatmap_matplotlib(solution, time_index, cmap='viridis', vmin=No
     # Create figure
     fig = plt.figure(figsize=figsize)
     
-    # ========== COLORBAR POSITION LOGIC ==========
+    # ========== COLORBAR POSITION LOGIC WITH PROPER SPACING ==========
     if cbar_position == 'top':
         # 2 rows: Heatmaps (row 0), Horizontal colorbar (row 1)
         gs = gridspec.GridSpec(2, 2, figure=fig, 
-                              height_ratios=[1, 0.12],  # Heatmaps tall, cbar thin
-                              hspace=0.25, wspace=0.3)
+                              height_ratios=[1, 0.12], 
+                              hspace=0.3,  # ✅ INCREASED: More space below heatmaps
+                              wspace=0.3)
         ax1 = fig.add_subplot(gs[0, 0])
         ax2 = fig.add_subplot(gs[0, 1])
-        cbar_ax = fig.add_subplot(gs[1, :])  # Span both columns
+        cbar_ax = fig.add_subplot(gs[1, :])
         
     elif cbar_position == 'left':
         # 1 row, 3 columns: cbar | heatmap1 | heatmap2
         gs = gridspec.GridSpec(1, 3, figure=fig, 
-                              width_ratios=[cbar_size, 1, 1], wspace=0.35)
+                              width_ratios=[cbar_size, 1, 1], 
+                              wspace=0.4)  # ✅ INCREASED: More space between cbar & heatmaps
         cbar_ax = fig.add_subplot(gs[0, 0])
         ax1 = fig.add_subplot(gs[0, 1])
         ax2 = fig.add_subplot(gs[0, 2])
@@ -233,14 +230,14 @@ def plot_uphill_heatmap_matplotlib(solution, time_index, cmap='viridis', vmin=No
     else:  # 'right' (default/traditional)
         # 1 row, 3 columns: heatmap1 | heatmap2 | cbar
         gs = gridspec.GridSpec(1, 3, figure=fig, 
-                              width_ratios=[1, 1, cbar_size], wspace=0.35)
+                              width_ratios=[1, 1, cbar_size], 
+                              wspace=0.35)
         ax1 = fig.add_subplot(gs[0, 0])
         ax2 = fig.add_subplot(gs[0, 1])
         cbar_ax = fig.add_subplot(gs[0, 2])
     
-    # ========== PLOT HEATMAPS (ASPECT='EQUAL' PRESERVED!) ==========
-    # Cu heatmap
-    im1 = ax1.imshow(z1, origin='lower', aspect='equal',  # ✅ TRUE PHYSICAL PROPORTIONS
+    # ========== PLOT HEATMAPS ==========
+    im1 = ax1.imshow(z1, origin='lower', aspect='equal',
                      extent=(x_ds[0], x_ds[-1], y_ds[0], y_ds[-1]),
                      cmap=cmap, vmin=vmin, vmax=vmax)
     ax1.set_title(f'Cu Uphill (max={max_pos_cu:.3e})', 
@@ -248,8 +245,7 @@ def plot_uphill_heatmap_matplotlib(solution, time_index, cmap='viridis', vmin=No
     ax1.set_xlabel('x (μm)', fontsize=label_fontsize)
     ax1.set_ylabel('y (μm)', fontsize=label_fontsize)
 
-    # Ni heatmap
-    im2 = ax2.imshow(z2, origin='lower', aspect='equal',  # ✅ TRUE PHYSICAL PROPORTIONS
+    im2 = ax2.imshow(z2, origin='lower', aspect='equal',
                      extent=(x_ds[0], x_ds[-1], y_ds[0], y_ds[-1]),
                      cmap=cmap, vmin=vmin, vmax=vmax)
     ax2.set_title(f'Ni Uphill (max={max_pos_ni:.3e})', 
@@ -257,25 +253,28 @@ def plot_uphill_heatmap_matplotlib(solution, time_index, cmap='viridis', vmin=No
     ax2.set_xlabel('x (μm)', fontsize=label_fontsize)
     ax2.set_ylabel('')
 
-    # ========== COLORBAR (POSITION-SPECIFIC) ==========
+    # ========== COLORBAR WITH POSITION-SPECIFIC PADDING ==========
     if colorbar:
         if cbar_position == 'top':
-            # 🔝 HORIZONTAL COLORBAR
+            # 🔝 HORIZONTAL: Extra padding
             cbar = fig.colorbar(im2, cax=cbar_ax, orientation='horizontal', 
-                               shrink=0.8, pad=0.05, aspect=20)
-            cbar.set_label(cbar_label, fontsize=label_fontsize, labelpad=10)
+                               shrink=0.85, pad=0.08, aspect=25)  # ✅ INCREASED pad
+            cbar.set_label(cbar_label, fontsize=label_fontsize, labelpad=12)
             cbar.ax.tick_params(labelsize=label_fontsize-2, rotation=45)
             
-        else:  # 'left' or 'right' - VERTICAL COLORBAR
-            # Vertical colorbar with proper rotation
+        elif cbar_position == 'left':
+            # ⬅️ LEFT: Extra left padding
+            cbar = fig.colorbar(im2, cax=cbar_ax, aspect=35, pad=0.05, shrink=0.95)  # ✅ INCREASED pad
+            cbar.set_label(cbar_label, fontsize=label_fontsize, rotation=90, labelpad=20)  # ✅ Extra labelpad
+            cbar.ax.tick_params(labelsize=label_fontsize-2)
+            
+        else:  # RIGHT
+            # ➡️ RIGHT: Original (already perfect)
             cbar = fig.colorbar(im2, cax=cbar_ax, aspect=35, pad=0.02, shrink=0.95)
-            rotation = 90 if cbar_position == 'left' else 270
-            labelpad = 15 if cbar_position == 'left' else 18
-            cbar.set_label(cbar_label, fontsize=label_fontsize, 
-                          rotation=rotation, labelpad=labelpad)
+            cbar.set_label(cbar_label, fontsize=label_fontsize, rotation=270, labelpad=18)
             cbar.ax.tick_params(labelsize=label_fontsize-2)
 
-    # ========== PUBLICATION-STYLE FORMATTING ==========
+    # ========== AXIS FORMATTING ==========
     for ax in [ax1, ax2]:
         ax.tick_params(axis='both', which='major', labelsize=label_fontsize-2)
         ax.xaxis.set_ticks_position('both')
@@ -284,19 +283,24 @@ def plot_uphill_heatmap_matplotlib(solution, time_index, cmap='viridis', vmin=No
         ax.spines['right'].set_visible(False)
         ax.grid(True, alpha=0.3, linestyle='-', linewidth=0.5)
 
-    # ========== LAYOUT ADJUSTMENTS (POSITION-SPECIFIC) ==========
+    # ========== POSITION-SPECIFIC LAYOUT FIXES ==========
     if cbar_position == 'top':
-        # More bottom space for horizontal colorbar
-        fig.subplots_adjust(left=0.08, right=0.92, top=0.88, bottom=0.18, 
-                          wspace=0.3, hspace=0.25)
-    else:
-        # Standard for vertical colorbars
+        # ✅ TOP: Extra bottom space + reduced top for suptitle
+        fig.subplots_adjust(left=0.08, right=0.92, top=0.85, bottom=0.20,  # ✅ bottom=0.20
+                          wspace=0.3, hspace=0.3)
+    elif cbar_position == 'left':
+        # ✅ LEFT: Extra left space + adjusted right
+        fig.subplots_adjust(left=0.15, right=0.88, top=0.88, bottom=0.12,  # ✅ left=0.15
+                          wspace=0.4, hspace=0.02)
+    else:  # RIGHT
+        # ✅ RIGHT: Original (perfect)
         fig.subplots_adjust(left=0.08, right=0.88, top=0.88, bottom=0.12, 
                           wspace=0.35, hspace=0.02)
     
-    # Suptitle
+    # Suptitle with position-specific y-position
+    suptitle_y = 0.94 if cbar_position != 'top' else 0.92  # Less space when cbar is on top
     fig.suptitle(f'Uphill Diffusion (positive J·∇c) @ t={t_val:.2f}s', 
-                fontsize=title_fontsize+1, y=0.96)
+                fontsize=title_fontsize+1, y=suptitle_y)
     
     return fig, max_pos_cu, max_pos_ni, frac_cu, frac_ni
 
