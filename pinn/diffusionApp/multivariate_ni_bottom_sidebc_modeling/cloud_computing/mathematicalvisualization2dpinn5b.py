@@ -166,7 +166,6 @@ def plot_flux_vs_gradient_matplotlib(solution, time_index,
     return fig
 
 
-
 def plot_uphill_heatmap_matplotlib(solution, time_index, cmap='viridis', vmin=None, vmax=None,
                                    figsize=(10,4), colorbar=True, cbar_label='J·∇c',
                                    label_fontsize=12, title_fontsize=14, downsample=1):
@@ -214,57 +213,44 @@ def plot_uphill_heatmap_matplotlib(solution, time_index, cmap='viridis', vmin=No
     return fig, max_pos_cu, max_pos_ni, frac_cu, frac_ni
 
 
+def plot_uphill_over_time_matplotlib(solution, figsize=(8,3), linewidth=1.6, marker_size=6,
+                                     label_fontsize=12, title_fontsize=14):
+    times = np.array(solution['times'])
+    max_pos_cu_list = []
+    max_pos_ni_list = []
+    frac_cu_list = []
+    frac_ni_list = []
 
+    Nt = len(times)
+    for t_idx in range(Nt):
+        (_, _, _, _, max_pos_cu, max_pos_ni, frac_cu, frac_ni) = detect_uphill(solution, t_idx)
+        max_pos_cu_list.append(max_pos_cu)
+        max_pos_ni_list.append(max_pos_ni)
+        frac_cu_list.append(frac_cu)
+        frac_ni_list.append(frac_ni)
 
-def plot_uphill_heatmap_matplotlib(solution, time_index, cmap='viridis', vmin=None, vmax=None,
-                                   figsize=(10,4), colorbar=True, cbar_label='J·∇c',
-                                   label_fontsize=12, title_fontsize=14, downsample=1):
-    x_coords = solution['X'][:,0] if solution['X'].ndim==2 else solution['X']
-    y_coords = solution['Y'][0,:] if solution['Y'].ndim==2 else solution['Y']
-    t_val = solution['times'][time_index]
-    (uphill_cu, uphill_ni,
-     uphill_prod_cu_pos, uphill_prod_ni_pos,
-     max_pos_cu, max_pos_ni,
-     frac_cu, frac_ni) = detect_uphill(solution, time_index)
+    fig, ax = plt.subplots(figsize=figsize)
+    ax.plot(times, max_pos_cu_list, marker='o', markersize=marker_size, linewidth=linewidth, label='Max positive J·∇c (Cu)')
+    ax.plot(times, max_pos_ni_list, marker='s', markersize=marker_size, linewidth=linewidth, label='Max positive J·∇c (Ni)')
+    ax.set_xlabel('Time (s)', fontsize=label_fontsize)
+    ax.set_ylabel('Max positive J·∇c', fontsize=label_fontsize)
+    ax.set_title('Temporal Evolution of Global Positive Max (J·∇c)', fontsize=title_fontsize)
+    ax.legend(fontsize=label_fontsize-2)
+    ax.grid(True, which='both', linestyle='--', linewidth=0.3)
+    fig.tight_layout()
 
-    # optionally downsample for speed
-    z1 = uphill_prod_cu_pos[::downsample, ::downsample]
-    z2 = uphill_prod_ni_pos[::downsample, ::downsample]
-    x_ds = x_coords[::downsample]
-    y_ds = y_coords[::downsample]
+    # small subplot for fraction evolution
+    fig2, ax2 = plt.subplots(figsize=(8,2.5))
+    ax2.plot(times, frac_cu_list, label='Uphill fraction Cu', linewidth=linewidth)
+    ax2.plot(times, frac_ni_list, label='Uphill fraction Ni', linewidth=linewidth)
+    ax2.set_xlabel('Time (s)', fontsize=label_fontsize)
+    ax2.set_ylabel('Fraction of grid points', fontsize=label_fontsize)
+    ax2.set_title('Uphill fraction vs Time', fontsize=title_fontsize-2)
+    ax2.legend(fontsize=label_fontsize-2)
+    ax2.grid(True, which='both', linestyle='--', linewidth=0.3)
+    fig2.tight_layout()
 
-    # Create figure with adjusted subplot widths to accommodate colorbar
-    fig, axes = plt.subplots(1, 2, figsize=figsize, 
-                            gridspec_kw={'width_ratios': [1, 1], 'wspace': 0.4})
-
-    im1 = axes[0].imshow(z1, origin='lower', aspect='auto',
-                         extent=(x_ds[0], x_ds[-1], y_ds[0], y_ds[-1]),
-                         cmap=cmap, vmin=vmin, vmax=vmax)
-    axes[0].set_title(f'Cu Uphill (max={max_pos_cu:.3e})', fontsize=title_fontsize)
-    axes[0].set_xlabel('x (μm)', fontsize=label_fontsize)
-    axes[0].set_ylabel('y (μm)', fontsize=label_fontsize)
-
-    im2 = axes[1].imshow(z2, origin='lower', aspect='auto',
-                         extent=(x_ds[0], x_ds[-1], y_ds[0], y_ds[-1]),
-                         cmap=cmap, vmin=vmin, vmax=vmax)
-    axes[1].set_title(f'Ni Uphill (max={max_pos_ni:.3e})', fontsize=title_fontsize)
-    axes[1].set_xlabel('x (μm)', fontsize=label_fontsize)
-    axes[1].set_ylabel('')
-
-    if colorbar:
-        # Create a dedicated axes for the colorbar with proper positioning
-        cbar_ax = fig.add_axes([0.92, 0.15, 0.02, 0.7])  # [left, bottom, width, height]
-        cbar = fig.colorbar(im2, cax=cbar_ax)
-        cbar.set_label(cbar_label, fontsize=label_fontsize)
-        cbar.ax.tick_params(labelsize=label_fontsize-2)
-
-    for ax in axes:
-        ax.tick_params(axis='both', which='major', labelsize=label_fontsize-2)
-
-    fig.suptitle(f'Uphill Diffusion (positive J·∇c) @ t={t_val:.2f}s', fontsize=title_fontsize+1)
-    fig.tight_layout(rect=[0, 0.03, 0.9, 0.95])  # Adjust right boundary to 0.9 to make space for colorbar
-
-    return fig, max_pos_cu, max_pos_ni, frac_cu, frac_ni
+    return fig, fig2
 
 # ------------------------------
 # Summary DataFrame across all solutions (unchanged)
