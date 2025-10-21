@@ -212,7 +212,7 @@ def plot_uphill_heatmap_matplotlib(solution, time_index, cmap='viridis', vmin=No
         # 2 rows: Heatmaps (row 0), Horizontal colorbar (row 1)
         gs = gridspec.GridSpec(2, 2, figure=fig, 
                               height_ratios=[1, 0.12], 
-                              hspace=0.5,  # ✅ INCREASED: More space below heatmaps
+                              hspace=0.35,  # ✅ INCREASED: More space for suptitle
                               wspace=0.3)
         ax1 = fig.add_subplot(gs[0, 0])
         ax2 = fig.add_subplot(gs[0, 1])
@@ -222,7 +222,7 @@ def plot_uphill_heatmap_matplotlib(solution, time_index, cmap='viridis', vmin=No
         # 1 row, 3 columns: cbar | heatmap1 | heatmap2
         gs = gridspec.GridSpec(1, 3, figure=fig, 
                               width_ratios=[cbar_size, 1, 1], 
-                              wspace=0.6)  # ✅ INCREASED: More space between cbar & heatmaps
+                              wspace=0.4)
         cbar_ax = fig.add_subplot(gs[0, 0])
         ax1 = fig.add_subplot(gs[0, 1])
         ax2 = fig.add_subplot(gs[0, 2])
@@ -258,18 +258,18 @@ def plot_uphill_heatmap_matplotlib(solution, time_index, cmap='viridis', vmin=No
         if cbar_position == 'top':
             # 🔝 HORIZONTAL: Extra padding
             cbar = fig.colorbar(im2, cax=cbar_ax, orientation='horizontal', 
-                               shrink=0.85, pad=0.08, aspect=25)  # ✅ INCREASED pad
+                               shrink=0.85, pad=0.08, aspect=25)
             cbar.set_label(cbar_label, fontsize=label_fontsize, labelpad=12)
             cbar.ax.tick_params(labelsize=label_fontsize-2, rotation=45)
             
         elif cbar_position == 'left':
             # ⬅️ LEFT: Extra left padding
-            cbar = fig.colorbar(im2, cax=cbar_ax, aspect=35, pad=0.05, shrink=0.95)  # ✅ INCREASED pad
-            cbar.set_label(cbar_label, fontsize=label_fontsize, rotation=90, labelpad=20)  # ✅ Extra labelpad
+            cbar = fig.colorbar(im2, cax=cbar_ax, aspect=35, pad=0.05, shrink=0.95)
+            cbar.set_label(cbar_label, fontsize=label_fontsize, rotation=90, labelpad=20)
             cbar.ax.tick_params(labelsize=label_fontsize-2)
             
         else:  # RIGHT
-            # ➡️ RIGHT: Original (already perfect)
+            # ➡️ RIGHT: Original (perfect)
             cbar = fig.colorbar(im2, cax=cbar_ax, aspect=35, pad=0.02, shrink=0.95)
             cbar.set_label(cbar_label, fontsize=label_fontsize, rotation=270, labelpad=18)
             cbar.ax.tick_params(labelsize=label_fontsize-2)
@@ -285,25 +285,25 @@ def plot_uphill_heatmap_matplotlib(solution, time_index, cmap='viridis', vmin=No
 
     # ========== POSITION-SPECIFIC LAYOUT FIXES ==========
     if cbar_position == 'top':
-        # ✅ TOP: Extra bottom space + reduced top for suptitle
-        fig.subplots_adjust(left=0.08, right=0.92, top=0.85, bottom=0.20,  # ✅ bottom=0.20
-                          wspace=0.3, hspace=0.3)
+        # ✅ TOP: More space above heatmaps for suptitle
+        fig.subplots_adjust(left=0.08, right=0.92, top=0.82, bottom=0.20,  # ✅ top=0.82 (was 0.85)
+                          wspace=0.3, hspace=0.35)
     elif cbar_position == 'left':
-        # ✅ LEFT: Extra left space + adjusted right
-        fig.subplots_adjust(left=0.15, right=0.88, top=0.88, bottom=0.12,  # ✅ left=0.15
+        # ✅ LEFT: Extra left space
+        fig.subplots_adjust(left=0.15, right=0.88, top=0.88, bottom=0.12, 
                           wspace=0.4, hspace=0.02)
     else:  # RIGHT
         # ✅ RIGHT: Original (perfect)
         fig.subplots_adjust(left=0.08, right=0.88, top=0.88, bottom=0.12, 
                           wspace=0.35, hspace=0.02)
     
-    # Suptitle with position-specific y-position
-    #suptitle_y = 0.94 if cbar_position != 'top' else 0.92  # Less space when cbar is on top
-    suptitle_y = 0.88 if cbar_position != 'top' else 0.92  # Less space when cbar is on top
+    # Suptitle with adjusted y-position
+    suptitle_y = 0.94 if cbar_position != 'top' else 0.90  # ✅ LOWERED: y=0.90 (was 0.92)
     fig.suptitle(f'Uphill Diffusion (positive J·∇c) @ t={t_val:.2f}s', 
                 fontsize=title_fontsize+1, y=suptitle_y)
     
     return fig, max_pos_cu, max_pos_ni, frac_cu, frac_ni
+
 
 
 def plot_uphill_over_time_matplotlib(solution, figsize=(8,3), linewidth=1.6, marker_size=6,
