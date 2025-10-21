@@ -164,6 +164,7 @@ Concentration Fields, Flux and Others:
 interactive [![meaningtowords](https://img.shields.io/badge/selfcrossdiffmath5a-streamlit-red)](https://mathematicalvisualization-crossdiffusion2dpinn5a.streamlit.app/) 
 static [![meaningtowords](https://img.shields.io/badge/selfcrossdiffmath5b-streamlit-red)](https://mathematicalvisualization-crossdiffusion2dpinn5b.streamlit.app/) 
 [![meaningtowords](https://img.shields.io/badge/selfcrossdiffmath5c-streamlit-red)](https://mathematicalvisualization-crossdiffusion2dpinn5c.streamlit.app/)
+[![meaningtowords](https://img.shields.io/badge/selfcrossdiffmath5d-streamlit-red)](https://mathematicalvisualization-crossdiffusion2dpinn5d.streamlit.app/)
 
 [![meaningtowords](https://img.shields.io/badge/selfcrossdiffmath6a-streamlit-red)](https://mathematicalvisualization-crossdiffusion2dpinn6.streamlit.app/)  (Not fully analyzed)
 
