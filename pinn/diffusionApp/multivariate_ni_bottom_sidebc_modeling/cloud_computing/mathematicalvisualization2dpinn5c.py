@@ -141,23 +141,42 @@ def plot_flux_vs_gradient_matplotlib(solution, time_index,
     uphill_ni = J2_y * grad_c2_y > 0
 
     fig, axes = plt.subplots(1, 2, figsize=figsize)
+    
+    # Plot Cu
     axes[0].scatter(grad_c1_y, J1_y, s=marker_size, alpha=scatter_alpha, edgecolors='none', label='Cu (all)')
     if uphill_cu.any():
         axes[0].scatter(grad_c1_y[uphill_cu], J1_y[uphill_cu], s=marker_size*1.1,
                         edgecolors='k', linewidths=marker_edgewidth, label='Uphill (Cu)')
+    
+    # Dynamic tick spacing to avoid overlap
+    grad_range_cu = grad_c1_y.ptp()  # peak-to-peak range
+    flux_range_cu = J1_y.ptp()
+    n_ticks = 5  # desired number of ticks
+    
     axes[0].set_xlabel('∇c (y)', fontsize=label_fontsize)
     axes[0].set_ylabel('J_y', fontsize=label_fontsize)
     axes[0].set_title('Cu Flux vs ∇c', fontsize=title_fontsize)
     axes[0].grid(True, which='both', linestyle='--', linewidth=0.3)
+    
+    # Set dynamic tick locators
+    from matplotlib.ticker import MaxNLocator
+    axes[0].xaxis.set_major_locator(MaxNLocator(nbins=n_ticks, prune='both'))
+    axes[0].yaxis.set_major_locator(MaxNLocator(nbins=n_ticks, prune='both'))
 
+    # Plot Ni
     axes[1].scatter(grad_c2_y, J2_y, s=marker_size, alpha=scatter_alpha, edgecolors='none', label='Ni (all)')
     if uphill_ni.any():
         axes[1].scatter(grad_c2_y[uphill_ni], J2_y[uphill_ni], s=marker_size*1.1,
                         edgecolors='k', linewidths=marker_edgewidth, label='Uphill (Ni)')
+    
     axes[1].set_xlabel('∇c (y)', fontsize=label_fontsize)
     axes[1].set_ylabel('J_y', fontsize=label_fontsize)
     axes[1].set_title('Ni Flux vs ∇c', fontsize=title_fontsize)
     axes[1].grid(True, which='both', linestyle='--', linewidth=0.3)
+    
+    # Dynamic tick spacing for Ni subplot
+    axes[1].xaxis.set_major_locator(MaxNLocator(nbins=n_ticks, prune='both'))
+    axes[1].yaxis.set_major_locator(MaxNLocator(nbins=n_ticks, prune='both'))
 
     for ax in axes:
         ax.tick_params(axis='both', which='major', labelsize=label_fontsize-2)
