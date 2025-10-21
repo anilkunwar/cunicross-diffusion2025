@@ -299,7 +299,7 @@ def plot_uphill_heatmap_matplotlib(solution, time_index, cmap='viridis', vmin=No
     
     # Suptitle with position-specific y-position
     #suptitle_y = 0.94 if cbar_position != 'top' else 0.92  # Less space when cbar is on top
-    suptitle_y = 0.98 if cbar_position != 'top' else 0.92  # Less space when cbar is on top
+    suptitle_y = 0.88 if cbar_position != 'top' else 0.92  # Less space when cbar is on top
     fig.suptitle(f'Uphill Diffusion (positive J·∇c) @ t={t_val:.2f}s', 
                 fontsize=title_fontsize+1, y=suptitle_y)
     
