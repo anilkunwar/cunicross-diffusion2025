@@ -199,18 +199,18 @@ def plot_uphill_heatmap_matplotlib(solution, time_index, cmap='viridis', vmin=No
     x_ds = x_coords[::downsample]
     y_ds = y_coords[::downsample]
 
-    # Create figure with GridSpec for precise control
+    # Create figure with GridSpec for precise control (FIXED)
     import matplotlib.gridspec as gridspec
     
-    # Total width ratio: 1:1 for heatmaps + 0.15 for colorbar
+    # FIXED: 1 row, 3 columns with proper width ratios
     fig = plt.figure(figsize=figsize)
-    gs = gridspec.GridSpec(1, 13, figure=fig, width_ratios=[5, 5, 0.75], wspace=0.3)
+    gs = gridspec.GridSpec(1, 3, figure=fig, width_ratios=[1, 1, 0.15], wspace=0.3)
     
-    # Heatmap subplots
+    # Heatmap subplots (first 2 columns)
     ax1 = fig.add_subplot(gs[0, 0])
     ax2 = fig.add_subplot(gs[0, 1])
     
-    # Colorbar subplot (spans both heatmap rows)
+    # Colorbar subplot (3rd column, spans full height)
     cbar_ax = fig.add_subplot(gs[0, 2])
 
     # Plot Cu heatmap
@@ -231,8 +231,8 @@ def plot_uphill_heatmap_matplotlib(solution, time_index, cmap='viridis', vmin=No
 
     if colorbar:
         # Create colorbar with proper sizing
-        cbar = fig.colorbar(im2, cax=cbar_ax, aspect=25, pad=0.02)
-        cbar.set_label(cbar_label, fontsize=label_fontsize, rotation=270, labelpad=20)
+        cbar = fig.colorbar(im2, cax=cbar_ax, aspect=30, pad=0.02)
+        cbar.set_label(cbar_label, fontsize=label_fontsize, rotation=270, labelpad=15)
         cbar.ax.tick_params(labelsize=label_fontsize-2)
 
     # Style axes
