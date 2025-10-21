@@ -182,70 +182,45 @@ def plot_flux_vs_gradient_matplotlib(solution, time_index,
     fig.tight_layout()
     return fig
 
-def plot_uphill_heatmap_matplotlib(solution, time_index, cmap='viridis', vmin=None, vmax=None,
-                                   figsize=(10,4), colorbar=True, cbar_label='J·∇c',
-                                   label_fontsize=12, title_fontsize=14, downsample=1):
-    x_coords = solution['X'][:,0] if solution['X'].ndim==2 else solution['X']
-    y_coords = solution['Y'][0,:] if solution['Y'].ndim==2 else solution['Y']
-    t_val = solution['times'][time_index]
-    (uphill_cu, uphill_ni,
-     uphill_prod_cu_pos, uphill_prod_ni_pos,
-     max_pos_cu, max_pos_ni,
-     frac_cu, frac_ni) = detect_uphill(solution, time_index)
+Ah, I see exactly what’s happening here. The issue stems from this part in your plot_uphill_heatmap_matplotlib function:
 
-    # optionally downsample for speed
-    z1 = uphill_prod_cu_pos[::downsample, ::downsample]
-    z2 = uphill_prod_ni_pos[::downsample, ::downsample]
-    x_ds = x_coords[::downsample]
-    y_ds = y_coords[::downsample]
+im1 = ax1.imshow(..., aspect='auto', ...)
+im2 = ax2.imshow(..., aspect='auto', ...)
 
-    # Create figure with GridSpec for precise control (FIXED)
-    import matplotlib.gridspec as gridspec
-    
-    # FIXED: 1 row, 3 columns with proper width ratios
-    fig = plt.figure(figsize=figsize)
-    gs = gridspec.GridSpec(1, 3, figure=fig, width_ratios=[1, 1, 0.15], wspace=0.3)
-    
-    # Heatmap subplots (first 2 columns)
-    ax1 = fig.add_subplot(gs[0, 0])
-    ax2 = fig.add_subplot(gs[0, 1])
-    
-    # Colorbar subplot (3rd column, spans full height)
-    cbar_ax = fig.add_subplot(gs[0, 2])
 
-    # Plot Cu heatmap
-    im1 = ax1.imshow(z1, origin='lower', aspect='auto',
-                     extent=(x_ds[0], x_ds[-1], y_ds[0], y_ds[-1]),
-                     cmap=cmap, vmin=vmin, vmax=vmax)
-    ax1.set_title(f'Cu Uphill (max={max_pos_cu:.3e})', fontsize=title_fontsize)
-    ax1.set_xlabel('x (μm)', fontsize=label_fontsize)
-    ax1.set_ylabel('y (μm)', fontsize=label_fontsize)
+When you use aspect='auto', Matplotlib stretches or compresses the heatmap to fill the axes. That’s why the heatmap’s aspect ratio is distorted when you allocate extra space for the colorbar using GridSpec. The colorbar itself is placed perfectly, but the heatmap no longer respects the real x:y proportions.
 
-    # Plot Ni heatmap
-    im2 = ax2.imshow(z2, origin='lower', aspect='auto',
-                     extent=(x_ds[0], x_ds[-1], y_ds[0], y_ds[-1]),
-                     cmap=cmap, vmin=vmin, vmax=vmax)
-    ax2.set_title(f'Ni Uphill (max={max_pos_ni:.3e})', fontsize=title_fontsize)
-    ax2.set_xlabel('x (μm)', fontsize=label_fontsize)
-    ax2.set_ylabel('')
+✅ Solution
 
-    if colorbar:
-        # Create colorbar with proper sizing
-        cbar = fig.colorbar(im2, cax=cbar_ax, aspect=30, pad=0.02)
-        cbar.set_label(cbar_label, fontsize=label_fontsize, rotation=270, labelpad=15)
-        cbar.ax.tick_params(labelsize=label_fontsize-2)
+If you want both the correct colorbar placement and the correct heatmap aspect ratio:
 
-    # Style axes
-    for ax in [ax1, ax2]:
-        ax.tick_params(axis='both', which='major', labelsize=label_fontsize-2)
+Set aspect='equal' for imshow.
 
-    fig.suptitle(f'Uphill Diffusion (positive J·∇c) @ t={t_val:.2f}s', 
-                fontsize=title_fontsize+1, y=0.95)
-    
-    # Adjust layout to prevent clipping
-    fig.tight_layout()
-    
-    return fig, max_pos_cu, max_pos_ni, frac_cu, frac_ni
+Let the axes adjust size naturally (don’t force it with tight_layout in combination with GridSpec width ratios, or adjust manually).
+
+Here’s a minimal fix in your code:
+
+# Heatmap subplots
+im1 = ax1.imshow(z1, origin='lower', aspect='equal',  # <<<< fixed
+                 extent=(x_ds[0], x_ds[-1], y_ds[0], y_ds[-1]),
+                 cmap=cmap, vmin=vmin, vmax=vmax)
+
+im2 = ax2.imshow(z2, origin='lower', aspect='equal',  # <<<< fixed
+                 extent=(x_ds[0], x_ds[-1], y_ds[0], y_ds[-1]),
+                 cmap=cmap, vmin=vmin, vmax=vmax)
+
+Optional adjustments for layout
+
+Replace fig.tight_layout() with plt.subplots_adjust() to avoid Matplotlib stretching your axes:
+
+fig.subplots_adjust(left=0.08, right=0.85, top=0.9, bottom=0.12, wspace=0.3)
+
+
+Keep your colorbar axes fixed as in your GridSpec definition; it won’t distort the heatmap anymore.
+
+If you want, I can rewrite your plot_uphill_heatmap_matplotlib fully publication-ready, with correct aspect ratio and perfectly aligned colorbar, keeping your GridSpec approach. This would fix the stretching permanently.
+
+Do you want me to do that?
 
 
 
