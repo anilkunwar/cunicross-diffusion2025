@@ -286,7 +286,7 @@ def plot_uphill_heatmap_matplotlib(solution, time_index, cmap='viridis', vmin=No
     # ========== POSITION-SPECIFIC LAYOUT FIXES ==========
     if cbar_position == 'top':
         # ✅ TOP: More space above heatmaps for suptitle
-        fig.subplots_adjust(left=0.08, right=0.92, top=0.82, bottom=0.20,  # ✅ top=0.82 (was 0.85)
+        fig.subplots_adjust(left=0.08, right=0.92, top=0.75, bottom=0.20,  # ✅ top=0.82 (was 0.85)
                           wspace=0.3, hspace=0.35)
     elif cbar_position == 'left':
         # ✅ LEFT: Extra left space
