@@ -161,7 +161,8 @@ Concentration Fields, Flux and Others:
 [![meaningtowords](https://img.shields.io/badge/selfcrossdiffmath4-streamlit-red)](https://mathematicalvisualization-crossdiffusion2dpinn4.streamlit.app/) 
 
 [![meaningtowords](https://img.shields.io/badge/selfcrossdiffmath5-streamlit-red)](https://mathematicalvisualization-crossdiffusion2dpinn5.streamlit.app/) (Quantification of the maxima of Uphill diffusion |J_i.\nabla c_i|)
-[![meaningtowords](https://img.shields.io/badge/selfcrossdiffmath5a-streamlit-red)](https://mathematicalvisualization-crossdiffusion2dpinn5a.streamlit.app/) 
+interactive [![meaningtowords](https://img.shields.io/badge/selfcrossdiffmath5a-streamlit-red)](https://mathematicalvisualization-crossdiffusion2dpinn5a.streamlit.app/) 
+static [![meaningtowords](https://img.shields.io/badge/selfcrossdiffmath5b-streamlit-red)](https://mathematicalvisualization-crossdiffusion2dpinn5b.streamlit.app/) 
 
 [![meaningtowords](https://img.shields.io/badge/selfcrossdiffmath6a-streamlit-red)](https://mathematicalvisualization-crossdiffusion2dpinn6.streamlit.app/)  (Not fully analyzed)
 
