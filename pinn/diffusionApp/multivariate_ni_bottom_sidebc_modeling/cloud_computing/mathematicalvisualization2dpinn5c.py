@@ -182,13 +182,9 @@ def plot_flux_vs_gradient_matplotlib(solution, time_index,
     fig.tight_layout()
     return fig
 
-
-
-
 def plot_uphill_heatmap_matplotlib(solution, time_index, cmap='viridis', vmin=None, vmax=None,
                                    figsize=(10,4), colorbar=True, cbar_label='J·∇c',
-                                   label_fontsize=12, title_fontsize=14, downsample=1,
-                                   cbar_pad=0.05, cbar_width=0.03):
+                                   label_fontsize=12, title_fontsize=14, downsample=1):
     x_coords = solution['X'][:,0] if solution['X'].ndim==2 else solution['X']
     y_coords = solution['Y'][0,:] if solution['Y'].ndim==2 else solution['Y']
     t_val = solution['times'][time_index]
@@ -203,26 +199,52 @@ def plot_uphill_heatmap_matplotlib(solution, time_index, cmap='viridis', vmin=No
     x_ds = x_coords[::downsample]
     y_ds = y_coords[::downsample]
 
-    fig, axes = plt.subplots(1, 2, figsize=figsize)
+    # Create figure with GridSpec for precise control
+    import matplotlib.gridspec as gridspec
+    
+    # Total width ratio: 1:1 for heatmaps + 0.15 for colorbar
+    fig = plt.figure(figsize=figsize)
+    gs = gridspec.GridSpec(1, 13, figure=fig, width_ratios=[5, 5, 0.75], wspace=0.3)
+    
+    # Heatmap subplots
+    ax1 = fig.add_subplot(gs[0, 0])
+    ax2 = fig.add_subplot(gs[0, 1])
+    
+    # Colorbar subplot (spans both heatmap rows)
+    cbar_ax = fig.add_subplot(gs[0, 2])
 
-    for ax, z, name, max_val in zip(axes, [z1, z2], ['Cu', 'Ni'], [max_pos_cu, max_pos_ni]):
-        im = ax.imshow(z, origin='lower', aspect='auto',
-                       extent=(x_ds[0], x_ds[-1], y_ds[0], y_ds[-1]),
-                       cmap=cmap, vmin=vmin, vmax=vmax)
-        ax.set_title(f'{name} Uphill (max={max_val:.3e})', fontsize=title_fontsize)
-        ax.set_xlabel('x (μm)', fontsize=label_fontsize)
-        if name == 'Cu':
-            ax.set_ylabel('y (μm)', fontsize=label_fontsize)
-        else:
-            ax.set_ylabel('')
+    # Plot Cu heatmap
+    im1 = ax1.imshow(z1, origin='lower', aspect='auto',
+                     extent=(x_ds[0], x_ds[-1], y_ds[0], y_ds[-1]),
+                     cmap=cmap, vmin=vmin, vmax=vmax)
+    ax1.set_title(f'Cu Uphill (max={max_pos_cu:.3e})', fontsize=title_fontsize)
+    ax1.set_xlabel('x (μm)', fontsize=label_fontsize)
+    ax1.set_ylabel('y (μm)', fontsize=label_fontsize)
 
-        if colorbar:
-            divider = make_axes_locatable(ax)
-            cax = divider.append_axes("right", size=cbar_width, pad=cbar_pad)
-            fig.colorbar(im, cax=cax, label=cbar_label).ax.tick_params(labelsize=label_fontsize-2)
+    # Plot Ni heatmap
+    im2 = ax2.imshow(z2, origin='lower', aspect='auto',
+                     extent=(x_ds[0], x_ds[-1], y_ds[0], y_ds[-1]),
+                     cmap=cmap, vmin=vmin, vmax=vmax)
+    ax2.set_title(f'Ni Uphill (max={max_pos_ni:.3e})', fontsize=title_fontsize)
+    ax2.set_xlabel('x (μm)', fontsize=label_fontsize)
+    ax2.set_ylabel('')
 
-    fig.suptitle(f'Uphill Diffusion (positive J·∇c) @ t={t_val:.2f}s', fontsize=title_fontsize+1)
-    fig.tight_layout(rect=[0, 0.03, 1, 0.95])
+    if colorbar:
+        # Create colorbar with proper sizing
+        cbar = fig.colorbar(im2, cax=cbar_ax, aspect=25, pad=0.02)
+        cbar.set_label(cbar_label, fontsize=label_fontsize, rotation=270, labelpad=20)
+        cbar.ax.tick_params(labelsize=label_fontsize-2)
+
+    # Style axes
+    for ax in [ax1, ax2]:
+        ax.tick_params(axis='both', which='major', labelsize=label_fontsize-2)
+
+    fig.suptitle(f'Uphill Diffusion (positive J·∇c) @ t={t_val:.2f}s', 
+                fontsize=title_fontsize+1, y=0.95)
+    
+    # Adjust layout to prevent clipping
+    fig.tight_layout()
+    
     return fig, max_pos_cu, max_pos_ni, frac_cu, frac_ni
 
 
