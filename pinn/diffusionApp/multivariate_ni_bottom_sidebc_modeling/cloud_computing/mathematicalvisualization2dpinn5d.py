@@ -212,7 +212,7 @@ def plot_uphill_heatmap_matplotlib(solution, time_index, cmap='viridis', vmin=No
         # 2 rows: Heatmaps (row 0), Horizontal colorbar (row 1)
         gs = gridspec.GridSpec(2, 2, figure=fig, 
                               height_ratios=[1, 0.12], 
-                              hspace=0.6,  # ✅ INCREASED: More space for suptitle
+                              hspace=0.9,  # ✅ INCREASED: More space for suptitle
                               wspace=0.3)
         ax1 = fig.add_subplot(gs[0, 0])
         ax2 = fig.add_subplot(gs[0, 1])
