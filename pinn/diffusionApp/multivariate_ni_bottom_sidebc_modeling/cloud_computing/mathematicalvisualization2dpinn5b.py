@@ -166,6 +166,7 @@ def plot_flux_vs_gradient_matplotlib(solution, time_index,
     return fig
 
 
+
 def plot_uphill_heatmap_matplotlib(solution, time_index, cmap='viridis', vmin=None, vmax=None,
                                    figsize=(10,4), colorbar=True, cbar_label='J·∇c',
                                    label_fontsize=12, title_fontsize=14, downsample=1):
@@ -200,9 +201,7 @@ def plot_uphill_heatmap_matplotlib(solution, time_index, cmap='viridis', vmin=No
     axes[1].set_ylabel('')
 
     if colorbar:
-        #cbar = fig.colorbar(im2, ax=axes.ravel().tolist(), orientation='vertical', fraction=0.046, pad=0.04)
-        cbar = fig.colorbar(im2, ax=axes.ravel().tolist(),
-                    orientation='vertical', fraction=0.046, pad=0.1)
+        cbar = fig.colorbar(im2, ax=axes.ravel().tolist(), orientation='vertical', fraction=0.046, pad=0.04)
         cbar.set_label(cbar_label, fontsize=label_fontsize)
         cbar.ax.tick_params(labelsize=label_fontsize-2)
 
@@ -213,6 +212,8 @@ def plot_uphill_heatmap_matplotlib(solution, time_index, cmap='viridis', vmin=No
     fig.tight_layout(rect=[0, 0.03, 1, 0.95])
 
     return fig, max_pos_cu, max_pos_ni, frac_cu, frac_ni
+
+
 
 
 def plot_uphill_heatmap_matplotlib(solution, time_index, cmap='viridis', vmin=None, vmax=None,
