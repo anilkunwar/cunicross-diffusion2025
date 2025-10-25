@@ -286,8 +286,8 @@ def create_flux_fig(sol, Ly, diff_type, t_val, time_index, downsample, font_size
             "Cu J_1x", "Ni J_2x",
             "Cu J_1y", "Ni J_2y"
         ),
-        vertical_spacing=0.12,
-        horizontal_spacing=0.18  # increased spacing to avoid overlap
+        vertical_spacing=0.15,  # increased vertical spacing
+        horizontal_spacing=0.20  # increased horizontal spacing
     )
 
     annotations_all = []
@@ -318,8 +318,7 @@ def create_flux_fig(sol, Ly, diff_type, t_val, time_index, downsample, font_size
     fig.add_trace(go.Heatmap(
         x=x_ds, y=y_ds, z=np.log10(np.maximum(J1_magnitude, 1e-10)),
         colorscale='viridis',
-        #colorbar=dict(title=dict(text='Log Cu Flux Mag', side='top'), x=1.05, len=0.3, y=0.85),
-        colorbar=dict(title=dict(text='Log |JCu|', side='top'), x=1.05, len=0.3, y=0.85),
+        colorbar=dict(title=dict(text='Log |JCu|', side='top', font=dict(size=font_size - 2)), x=1.05, len=0.25, y=0.85),
         zsmooth='best', hovertemplate='x: %{x:.1f} μm<br>y: %{y:.1f} μm<br>Flux: %{z:.2e}'
     ), row=1, col=1)
 
@@ -334,8 +333,7 @@ def create_flux_fig(sol, Ly, diff_type, t_val, time_index, downsample, font_size
     fig.add_trace(go.Heatmap(
         x=x_ds, y=y_ds, z=np.log10(np.maximum(J2_magnitude, 1e-10)),
         colorscale='cividis',
-        #colorbar=dict(title=dict(text='Log Ni Flux Mag', side='top'), x=1.25, len=0.3, y=0.85),
-        colorbar=dict(title=dict(text='Log |JNi|', side='top'), x=1.25, len=0.3, y=0.85),
+        colorbar=dict(title=dict(text='Log |JNi|', side='top', font=dict(size=font_size - 2)), x=1.3, len=0.25, y=0.85),
         zsmooth='best', hovertemplate='x: %{x:.1f} μm<br>y: %{y:.1f} μm<br>Flux: %{z:.2e}'
     ), row=1, col=2)
 
@@ -348,7 +346,7 @@ def create_flux_fig(sol, Ly, diff_type, t_val, time_index, downsample, font_size
     # Jx components (row 2)
     fig.add_trace(go.Heatmap(
         x=x_ds, y=y_ds, z=J1_x, colorscale='rdbu', zmid=0,
-        colorbar=dict(title=dict(text='Cu J_1x', side='top'), x=1.05, len=0.3, y=0.5),
+        colorbar=dict(title=dict(text='Cu J_1x', side='top', font=dict(size=font_size - 2)), x=1.05, len=0.25, y=0.5),
         zsmooth='best', hovertemplate='x: %{x:.1f} μm<br>y: %{y:.1f} μm<br>J_1x: %{z:.2e}'
     ), row=2, col=1)
     fig.add_trace(go.Contour(
@@ -357,7 +355,7 @@ def create_flux_fig(sol, Ly, diff_type, t_val, time_index, downsample, font_size
 
     fig.add_trace(go.Heatmap(
         x=x_ds, y=y_ds, z=J2_x, colorscale='rdbu', zmid=0,
-        colorbar=dict(title=dict(text='Ni J_2x', side='top'), x=1.25, len=0.3, y=0.5),
+        colorbar=dict(title=dict(text='Ni J_2x', side='top', font=dict(size=font_size - 2)), x=1.3, len=0.25, y=0.5),
         zsmooth='best', hovertemplate='x: %{x:.1f} μm<br>y: %{y:.1f} μm<br>J_2x: %{z:.2e}'
     ), row=2, col=2)
     fig.add_trace(go.Contour(
@@ -367,7 +365,7 @@ def create_flux_fig(sol, Ly, diff_type, t_val, time_index, downsample, font_size
     # Jy components (row 3)
     fig.add_trace(go.Heatmap(
         x=x_ds, y=y_ds, z=J1_y, colorscale='rdbu', zmid=0,
-        colorbar=dict(title=dict(text='Cu J_1y', side='top'), x=1.05, len=0.3, y=0.15),
+        colorbar=dict(title=dict(text='Cu J_1y', side='top', font=dict(size=font_size - 2)), x=1.05, len=0.25, y=0.15),
         zsmooth='best', hovertemplate='x: %{x:.1f} μm<br>y: %{y:.1f} μm<br>J_1y: %{z:.2e}'
     ), row=3, col=1)
     fig.add_trace(go.Contour(
@@ -376,7 +374,7 @@ def create_flux_fig(sol, Ly, diff_type, t_val, time_index, downsample, font_size
 
     fig.add_trace(go.Heatmap(
         x=x_ds, y=y_ds, z=J2_y, colorscale='rdbu', zmid=0,
-        colorbar=dict(title=dict(text='Ni J_2y', side='top'), x=1.25, len=0.3, y=0.15),
+        colorbar=dict(title=dict(text='Ni J_2y', side='top', font=dict(size=font_size - 2)), x=1.3, len=0.25, y=0.15),
         zsmooth='best', hovertemplate='x: %{x:.1f} μm<br>y: %{y:.1f} μm<br>J_2y: %{z:.2e}'
     ), row=3, col=2)
     fig.add_trace(go.Contour(
@@ -433,7 +431,7 @@ def create_flux_fig(sol, Ly, diff_type, t_val, time_index, downsample, font_size
     fig.update_layout(
         height=height,
         width=width,
-        margin=dict(l=30, r=200, t=120, b=30),  # Increased right margin for colorbars
+        margin=dict(l=30, r=250, t=150, b=30),  # Increased right and top margin for colorbars and titles
         title=f"Flux Fields: {diff_type.replace('_', ' ')} @ t={t_val:.1f}s, Ly={Ly:.1f}μm",
         annotations=annotations_all,
         showlegend=False,
@@ -778,9 +776,9 @@ def main():
     legend_loc = st.sidebar.selectbox("Legend Location", options=['upper left', 'upper right', 'lower left', 'lower right', 'best'], index=1)
     rotate_ticks = st.sidebar.checkbox("Rotate Tick Labels", value=False)
     height_multiplier = st.sidebar.slider("Height Multiplier", 1, 10, 5)
-    base_height = st.sidebar.slider("Base Height", 100, 500, 200)
+    base_height = st.sidebar.slider("Base Height", 0, 500, 0)
     width_multiplier = st.sidebar.slider("Width Multiplier", 1, 10, 5)
-    base_width = st.sidebar.slider("Base Width", 100, 500, 200)
+    base_width = st.sidebar.slider("Base Width", 0, 500, 0)
     cu_x_label = st.sidebar.text_input("Cu X Label", "Cu Concentration (mol/cm³)")
     cu_y_label = st.sidebar.text_input("Cu Y Label", "y (μm)")
     ni_x_label = st.sidebar.text_input("Ni X Label", "Ni Concentration (mol/cm³)")
