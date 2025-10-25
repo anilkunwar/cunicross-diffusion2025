@@ -318,7 +318,8 @@ def create_flux_fig(sol, Ly, diff_type, t_val, time_index, downsample, font_size
     fig.add_trace(go.Heatmap(
         x=x_ds, y=y_ds, z=np.log10(np.maximum(J1_magnitude, 1e-10)),
         colorscale='viridis',
-        colorbar=dict(title=dict(text='Log Cu Flux Mag', side='top'), x=1.05, len=0.3, y=0.85),
+        #colorbar=dict(title=dict(text='Log Cu Flux Mag', side='top'), x=1.05, len=0.3, y=0.85),
+        colorbar=dict(title=dict(text='Log |JCu|', side='top'), x=1.05, len=0.3, y=0.85),
         zsmooth='best', hovertemplate='x: %{x:.1f} μm<br>y: %{y:.1f} μm<br>Flux: %{z:.2e}'
     ), row=1, col=1)
 
