@@ -318,7 +318,7 @@ def create_flux_fig(sol, Ly, diff_type, t_val, time_index, downsample, font_size
     fig.add_trace(go.Heatmap(
         x=x_ds, y=y_ds, z=np.log10(np.maximum(J1_magnitude, 1e-10)),
         colorscale='viridis',
-        colorbar=dict(title='Log Cu Flux Mag', x=1.05, len=0.3, y=0.85, titleside='top'),
+        colorbar=dict(title=dict(text='Log Cu Flux Mag', side='top'), x=1.05, len=0.3, y=0.85),
         zsmooth='best', hovertemplate='x: %{x:.1f} μm<br>y: %{y:.1f} μm<br>Flux: %{z:.2e}'
     ), row=1, col=1)
 
@@ -333,7 +333,7 @@ def create_flux_fig(sol, Ly, diff_type, t_val, time_index, downsample, font_size
     fig.add_trace(go.Heatmap(
         x=x_ds, y=y_ds, z=np.log10(np.maximum(J2_magnitude, 1e-10)),
         colorscale='cividis',
-        colorbar=dict(title='Log Ni Flux Mag', x=1.25, len=0.3, y=0.85, titleside='top'),
+        colorbar=dict(title=dict(text='Log Ni Flux Mag', side='top'), x=1.25, len=0.3, y=0.85),
         zsmooth='best', hovertemplate='x: %{x:.1f} μm<br>y: %{y:.1f} μm<br>Flux: %{z:.2e}'
     ), row=1, col=2)
 
@@ -346,7 +346,7 @@ def create_flux_fig(sol, Ly, diff_type, t_val, time_index, downsample, font_size
     # Jx components (row 2)
     fig.add_trace(go.Heatmap(
         x=x_ds, y=y_ds, z=J1_x, colorscale='rdbu', zmid=0,
-        colorbar=dict(title='Cu J_1x', x=1.05, len=0.3, y=0.5, titleside='top'),
+        colorbar=dict(title=dict(text='Cu J_1x', side='top'), x=1.05, len=0.3, y=0.5),
         zsmooth='best', hovertemplate='x: %{x:.1f} μm<br>y: %{y:.1f} μm<br>J_1x: %{z:.2e}'
     ), row=2, col=1)
     fig.add_trace(go.Contour(
@@ -355,7 +355,7 @@ def create_flux_fig(sol, Ly, diff_type, t_val, time_index, downsample, font_size
 
     fig.add_trace(go.Heatmap(
         x=x_ds, y=y_ds, z=J2_x, colorscale='rdbu', zmid=0,
-        colorbar=dict(title='Ni J_2x', x=1.25, len=0.3, y=0.5, titleside='top'),
+        colorbar=dict(title=dict(text='Ni J_2x', side='top'), x=1.25, len=0.3, y=0.5),
         zsmooth='best', hovertemplate='x: %{x:.1f} μm<br>y: %{y:.1f} μm<br>J_2x: %{z:.2e}'
     ), row=2, col=2)
     fig.add_trace(go.Contour(
@@ -365,7 +365,7 @@ def create_flux_fig(sol, Ly, diff_type, t_val, time_index, downsample, font_size
     # Jy components (row 3)
     fig.add_trace(go.Heatmap(
         x=x_ds, y=y_ds, z=J1_y, colorscale='rdbu', zmid=0,
-        colorbar=dict(title='Cu J_1y', x=1.05, len=0.3, y=0.15, titleside='top'),
+        colorbar=dict(title=dict(text='Cu J_1y', side='top'), x=1.05, len=0.3, y=0.15),
         zsmooth='best', hovertemplate='x: %{x:.1f} μm<br>y: %{y:.1f} μm<br>J_1y: %{z:.2e}'
     ), row=3, col=1)
     fig.add_trace(go.Contour(
@@ -374,7 +374,7 @@ def create_flux_fig(sol, Ly, diff_type, t_val, time_index, downsample, font_size
 
     fig.add_trace(go.Heatmap(
         x=x_ds, y=y_ds, z=J2_y, colorscale='rdbu', zmid=0,
-        colorbar=dict(title='Ni J_2y', x=1.25, len=0.3, y=0.15, titleside='top'),
+        colorbar=dict(title=dict(text='Ni J_2y', side='top'), x=1.25, len=0.3, y=0.15),
         zsmooth='best', hovertemplate='x: %{x:.1f} μm<br>y: %{y:.1f} μm<br>J_2y: %{z:.2e}'
     ), row=3, col=2)
     fig.add_trace(go.Contour(
