@@ -59,6 +59,8 @@ with training datasets for 0 BCs (Transformer-inspired Attention): [![meaningtow
  
   [![meaningtowords](https://img.shields.io/badge/uphilldiffusion2-streamlit-red)](https://attention-prediction-uphill-diffusion2.streamlit.app/)
 
+  [![meaningtowords](https://img.shields.io/badge/uphilldiffusion3-streamlit-red)](https://attention-prediction-uphill-diffusion3.streamlit.app/)
+
  debugging interpolation errors and making it inline with pinn solutions
  [![meaningtowords](https://img.shields.io/badge/debugerrorcloudComp-streamlit-red)]( https://pinninterpolation-error-debugging.streamlit.app/)   
 
