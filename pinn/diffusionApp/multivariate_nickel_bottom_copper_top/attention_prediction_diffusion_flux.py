@@ -229,8 +229,8 @@ def load_and_interpolate_solution(solutions, params_list, ly_target, c_cu_target
     return interpolator(solutions, params_list, ly_target, c_cu_target, c_ni_target)
 
 def plot_2d_concentration(solution, time_index, output_dir="figures", cmap_cu='viridis', cmap_ni='magma', vmin_cu=None, vmax_cu=None, vmin_ni=None, vmax_ni=None):
-    x_coords = solution['X'][:, 0]
-    y_coords = solution['Y'][0, :]
+    x_coords = solution['X'][:, 0] if solution['X'].ndim == 2 else solution['X']
+    y_coords = solution['Y'][0, :] if solution['Y'].ndim == 2 else solution['Y']
     t_val = solution['times'][time_index]
     Lx = solution['params']['Lx']
     Ly = solution['params']['Ly']
@@ -296,11 +296,11 @@ def plot_centerline_curves(
         tick_major_length=4.0, fig_width=8.0, fig_height=6.0, curve_linewidth=1.0,
         grid_alpha=0.3, grid_linestyle='--', legend_frameon=True, legend_framealpha=0.8
 ):
-    x_coords = solution['X'][:, 0]
-    y_coords = solution['Y'][0, :]
+    x_coords = solution['X'][:, 0] if solution['X'].ndim == 2 else solution['X']
+    y_coords = solution['Y'][0, :] if solution['Y'].ndim == 2 else solution['Y']
     Lx = solution['params']['Lx']
     Ly = solution['params']['Ly']
-    center_idx = 25  # x = Lx/2
+    center_idx = len(x_coords) // 2  # Robust
     times = solution['times']
 
     # Prepare sidebar data
@@ -359,14 +359,14 @@ def plot_centerline_curves(
 
     ax1.set_xlabel('y (μm)', fontsize=label_size)
     ax1.set_ylabel('Cu Conc. (mol/cc)', fontsize=label_size)
-    ax1.set_title(f'Cu at x = {Lx/2:.1f} μm', fontsize=title_size)
+    ax1.set_title(f'Cu at x = {x_coords[center_idx]:.1f} μm', fontsize=title_size)
     ax1.legend(fontsize=8, loc=legend_params['loc'], bbox_to_anchor=legend_params['bbox'],
                frameon=legend_frameon, framealpha=legend_framealpha)
     ax1.ticklabel_format(style='sci', axis='y', scilimits=(0, 0))
 
     ax2.set_xlabel('y (μm)', fontsize=label_size)
     ax2.set_ylabel('Ni Conc. (mol/cc)', fontsize=label_size)
-    ax2.set_title(f'Ni at x = {Lx/2:.1f} μm', fontsize=title_size)
+    ax2.set_title(f'Ni at x = {x_coords[center_idx]:.1f} μm', fontsize=title_size)
     ax2.legend(fontsize=8, loc=legend_params['loc'], bbox_to_anchor=legend_params['bbox'],
                frameon=legend_frameon, framealpha=legend_framealpha)
     ax2.ticklabel_format(style='sci', axis='y', scilimits=(0, 0))
@@ -430,7 +430,7 @@ def plot_parameter_sweep(
     for idx, (sol, params) in enumerate(zip(solutions, params_list)):
         ly, c_cu, c_ni = params
         if params in selected_params:
-            y_coords = sol['Y'][0, :]
+            y_coords = sol['Y'][0, :] if sol['Y'].ndim == 2 else sol['Y']
             c1 = sol['c1_preds'][time_index][:, center_idx]
             c2 = sol['c2_preds'][time_index][:, center_idx]
             label = f'$L_y$={ly:.1f}, $C_{{Cu}}$={c_cu:.1e}, $C_{{Ni}}$={c_ni:.1e}'
@@ -502,23 +502,57 @@ def plot_parameter_sweep(
     plt.close()
     return fig, base_filename
 
-# Added functions for uphill diffusion detection and visualization
+def compute_fluxes_and_grads(c1_preds, c2_preds, X, Y, params):
+    """
+    Safely compute gradients and fluxes for any grid shape.
+    X, Y: 2D arrays (meshgrid) or 1D vectors.
+    """
+    # Convert to 2D if 1D
+    if X.ndim == 1:
+        X = X.reshape(-1, 1)
+    if Y.ndim == 1:
+        Y = Y.reshape(1, -1)
+    if X.shape != Y.shape:
+        raise ValueError("X and Y must have same shape")
 
-def compute_fluxes_and_grads(c1_preds, c2_preds, x_coords, y_coords, params):
-    D11, D12, D21, D22 = params.get('D11', 1.0), params.get('D12', 0.0), params.get('D21', 0.0), params.get('D22', 1.0)  # Assume defaults if not present
-    dy = y_coords[1] - y_coords[0] if len(y_coords) > 1 else 1.0
-    J1_preds, J2_preds, grad_c1_y, grad_c2_y = [], [], [], []
+    x_coords = X[:, 0]
+    y_coords = Y[0, :]
+
+    # Ensure dy > 0
+    if len(y_coords) < 2:
+        dy = 1.0
+    else:
+        dy = y_coords[1] - y_coords[0]
+        if dy <= 0:
+            dy = np.mean(np.diff(y_coords))
+            if dy <= 0:
+                dy = 1.0
+
+    D11 = params.get('D11', 1.0)
+    D12 = params.get('D12', 0.0)
+    D21 = params.get('D21', 0.0)
+    D22 = params.get('D22', 1.0)
+
+    J1_list, J2_list, grad1_list, grad2_list = [], [], [], []
+
     for c1, c2 in zip(c1_preds, c2_preds):
-        grad_c1_y_i = np.gradient(c1, dy, axis=0)
-        grad_c2_y_i = np.gradient(c2, dy, axis=0)
-        J1_y = -(D11 * grad_c1_y_i + D12 * grad_c2_y_i)
-        J2_y = -(D21 * grad_c1_y_i + D22 * grad_c2_y_i)
-        J1_preds.append([None, J1_y])
-        J2_preds.append([None, J2_y])
-        grad_c1_y.append(grad_c1_y_i)
-        grad_c2_y.append(grad_c2_y_i)
+        c1 = np.asarray(c1)
+        c2 = np.asarray(c2)
+        if c1.shape != X.shape or c2.shape != X.shape:
+            raise ValueError(f"Concentration shape {c1.shape} != grid {X.shape}")
 
-    return J1_preds, J2_preds, grad_c1_y, grad_c2_y
+        grad_c1_y = np.gradient(c1, dy, axis=0)
+        grad_c2_y = np.gradient(c2, dy, axis=0)
+
+        J1_y = -(D11 * grad_c1_y + D12 * grad_c2_y)
+        J2_y = -(D21 * grad_c1_y + D22 * grad_c2_y)
+
+        J1_list.append([None, J1_y])
+        J2_list.append([None, J2_y])
+        grad1_list.append(grad_c1_y)
+        grad2_list.append(grad_c2_y)
+
+    return J1_list, J2_list, grad1_list, grad2_list
 
 def detect_uphill(solution, time_index):
     J1_y = solution['J1_preds'][time_index][1]
@@ -565,50 +599,50 @@ def plot_flux_vs_gradient(solution, time_index,
                           figsize=(6,3), marker_size=12, linewidth=1.2,
                           label_fontsize=12, title_fontsize=14, scatter_alpha=0.6,
                           marker_edgewidth=0.2, output_dir="figures"):
-    J1_y = solution['J1_preds'][time_index][1].flatten()
-    J2_y = solution['J2_preds'][time_index][1].flatten()
-    grad_c1_y = solution['grad_c1_y'][time_index].flatten()
-    grad_c2_y = solution['grad_c2_y'][time_index].flatten()
+    # Safe access
+    J1_y = np.array(solution['J1_preds'][time_index][1]).flatten()
+    J2_y = np.array(solution['J2_preds'][time_index][1]).flatten()
+    grad_c1_y = np.array(solution['grad_c1_y'][time_index]).flatten()
+    grad_c2_y = np.array(solution['grad_c2_y'][time_index]).flatten()
 
     uphill_cu = J1_y * grad_c1_y > 0
     uphill_ni = J2_y * grad_c2_y > 0
 
     fig, axes = plt.subplots(1, 2, figsize=figsize)
-    axes[0].scatter(grad_c1_y, J1_y, s=marker_size, alpha=scatter_alpha, edgecolors='none', label='Cu (all)')
+    axes[0].scatter(grad_c1_y, J1_y, s=marker_size, alpha=scatter_alpha, edgecolors='none', label='All')
     if uphill_cu.any():
         axes[0].scatter(grad_c1_y[uphill_cu], J1_y[uphill_cu], s=marker_size*1.1,
-                        edgecolors='k', linewidths=marker_edgewidth, label='Uphill (Cu)')
-    axes[0].set_xlabel('∇c (y)', fontsize=label_fontsize)
-    axes[0].set_ylabel('J_y', fontsize=label_fontsize)
-    axes[0].set_title('Cu Flux vs ∇c', fontsize=title_fontsize)
-    axes[0].grid(True, which='both', linestyle='--', linewidth=0.3)
+                        edgecolors='k', linewidths=marker_edgewidth, label='Uphill')
+    axes[0].set_xlabel('∇c₁ (y)', fontsize=label_fontsize)
+    axes[0].set_ylabel('J₁', fontsize=label_fontsize)
+    axes[0].set_title('Cu', fontsize=title_fontsize)
+    axes[0].grid(True, linestyle='--', alpha=0.3)
+    axes[0].legend(fontsize=label_fontsize-2)
 
-    axes[1].scatter(grad_c2_y, J2_y, s=marker_size, alpha=scatter_alpha, edgecolors='none', label='Ni (all)')
+    axes[1].scatter(grad_c2_y, J2_y, s=marker_size, alpha=scatter_alpha, edgecolors='none', label='All')
     if uphill_ni.any():
         axes[1].scatter(grad_c2_y[uphill_ni], J2_y[uphill_ni], s=marker_size*1.1,
-                        edgecolors='k', linewidths=marker_edgewidth, label='Uphill (Ni)')
-    axes[1].set_xlabel('∇c (y)', fontsize=label_fontsize)
-    axes[1].set_ylabel('J_y', fontsize=label_fontsize)
-    axes[1].set_title('Ni Flux vs ∇c', fontsize=title_fontsize)
-    axes[1].grid(True, which='both', linestyle='--', linewidth=0.3)
+                        edgecolors='k', linewidths=marker_edgewidth, label='Uphill')
+    axes[1].set_xlabel('∇c₂ (y)', fontsize=label_fontsize)
+    axes[1].set_ylabel('J₂', fontsize=label_fontsize)
+    axes[1].set_title('Ni', fontsize=title_fontsize)
+    axes[1].grid(True, linestyle='--', alpha=0.3)
+    axes[1].legend(fontsize=label_fontsize-2)
 
-    for ax in axes:
-        ax.tick_params(axis='both', which='major', labelsize=label_fontsize-2)
-        ax.legend(fontsize=label_fontsize-2)
-
-    Ly = solution['params']['Ly']
     t_val = solution['times'][time_index]
-    base_filename = f"flux_vs_grad_t_{t_val:.1f}_ly_{Ly:.1f}_ccu_{solution['params']['C_Cu']:.1e}_cni_{solution['params']['C_Ni']:.1e}"
-    plt.savefig(os.path.join(output_dir, f"{base_filename}.png"), dpi=300, bbox_inches='tight')
-    plt.savefig(os.path.join(output_dir, f"{base_filename}.pdf"), bbox_inches='tight')
-    plt.close()
+    Ly = solution['params']['Ly']
+    base_filename = f"flux_vs_grad_t_{t_val:.1f}_ly_{Ly:.1f}"
+    os.makedirs(output_dir, exist_ok=True)
+    for fmt in ['png', 'pdf']:
+        fig.savefig(os.path.join(output_dir, f"{base_filename}.{fmt}"), dpi=300, bbox_inches='tight')
+    plt.close(fig)
     return fig, base_filename
 
 def plot_uphill_heatmap(solution, time_index, cmap='viridis', vmin=None, vmax=None,
                         figsize=(10,4), colorbar=True, cbar_label='J·∇c',
                         label_fontsize=12, title_fontsize=14, downsample=1, output_dir="figures"):
-    x_coords = solution['X'][:,0]
-    y_coords = solution['Y'][0,:]
+    x_coords = solution['X'][:,0] if solution['X'].ndim == 2 else solution['X']
+    y_coords = solution['Y'][0,:] if solution['Y'].ndim == 2 else solution['Y']
     t_val = solution['times'][time_index]
     (uphill_cu, uphill_ni,
      uphill_prod_cu_pos, uphill_prod_ni_pos,
@@ -726,17 +760,18 @@ def plot_uphill_over_time(solution, figsize=(8,3), linewidth=1.6, marker_size=6,
 
     Ly = solution['params']['Ly']
     base_filename = f"uphill_over_time_ly_{Ly:.1f}_ccu_{solution['params']['C_Cu']:.1e}_cni_{solution['params']['C_Ni']:.1e}"
-    plt.savefig(os.path.join(output_dir, f"{base_filename}_max.png"), dpi=300, bbox_inches='tight')
-    plt.savefig(os.path.join(output_dir, f"{base_filename}_max.pdf"), bbox_inches='tight')
+    os.makedirs(output_dir, exist_ok=True)
+    fig.savefig(os.path.join(output_dir, f"{base_filename}_max.png"), dpi=300, bbox_inches='tight')
+    fig.savefig(os.path.join(output_dir, f"{base_filename}_max.pdf"), dpi=300, bbox_inches='tight')
     plt.close(fig)
-    plt.savefig(os.path.join(output_dir, f"{base_filename}_avg.png"), dpi=300, bbox_inches='tight')
-    plt.savefig(os.path.join(output_dir, f"{base_filename}_avg.pdf"), bbox_inches='tight')
+    fig_avg.savefig(os.path.join(output_dir, f"{base_filename}_avg.png"), dpi=300, bbox_inches='tight')
+    fig_avg.savefig(os.path.join(output_dir, f"{base_filename}_avg.pdf"), dpi=300, bbox_inches='tight')
     plt.close(fig_avg)
-    plt.savefig(os.path.join(output_dir, f"{base_filename}_frac.png"), dpi=300, bbox_inches='tight')
-    plt.savefig(os.path.join(output_dir, f"{base_filename}_frac.pdf"), bbox_inches='tight')
+    fig_frac.savefig(os.path.join(output_dir, f"{base_filename}_frac.png"), dpi=300, bbox_inches='tight')
+    fig_frac.savefig(os.path.join(output_dir, f"{base_filename}_frac.pdf"), dpi=300, bbox_inches='tight')
     plt.close(fig_frac)
-    plt.savefig(os.path.join(output_dir, f"{base_filename}_intensity.png"), dpi=300, bbox_inches='tight')
-    plt.savefig(os.path.join(output_dir, f"{base_filename}_intensity.pdf"), bbox_inches='tight')
+    fig_intensity.savefig(os.path.join(output_dir, f"{base_filename}_intensity.png"), dpi=300, bbox_inches='tight')
+    fig_intensity.savefig(os.path.join(output_dir, f"{base_filename}_intensity.pdf"), dpi=300, bbox_inches='tight')
     plt.close(fig_intensity)
 
     return fig, fig_avg, fig_frac, fig_intensity, base_filename
@@ -749,7 +784,10 @@ def compute_summary_dataframe(all_solutions, time_index_for_summary=0):
             x_coords = s['X'][:, 0] if s['X'].ndim == 2 else s['X']
             y_coords = s['Y'][0, :] if s['Y'].ndim == 2 else s['Y']
             J1, J2, grad_c1, grad_c2 = compute_fluxes_and_grads(s['c1_preds'], s['c2_preds'], x_coords, y_coords, s['params'])
-            s.update({'J1_preds': J1, 'J2_preds': J2, 'grad_c1_y': grad_c1, 'grad_c2_y': grad_c2})
+            s['J1_preds'] = J1
+            s['J2_preds'] = J2
+            s['grad_c1_y'] = grad_c1
+            s['grad_c2_y'] = grad_c2
         try:
             (_, _, _, _, max_pos_cu, max_pos_ni, frac_cu, frac_ni, avg_pos_cu, avg_pos_ni, total_intensity_cu, total_intensity_ni) = detect_uphill(s, time_index_for_summary)
         except Exception:
@@ -849,11 +887,11 @@ def main():
         with col1:
             st.write("**Cu Concentration Limits**")
             custom_cu_min = st.number_input("Cu Min", value=0.0, format="%.2e", key="cu_min")
-            custom_cu_max = st.number_input("Cu Max", value=float(np.max([np.max(sol['c1_preds']) for sol in solutions if 'c1_preds' in sol])), format="%.2e", key="cu_max")
+            custom_cu_max = st.number_input("Cu Max", value=1.0, format="%.2e", key="cu_max")
         with col2:
             st.write("**Ni Concentration Limits**")
             custom_ni_min = st.number_input("Ni Min", value=0.0, format="%.2e", key="ni_min")
-            custom_ni_max = st.number_input("Ni Max", value=float(np.max([np.max(sol['c2_preds']) for sol in solutions if 'c2_preds' in sol])), format="%.2e", key="ni_max")
+            custom_ni_max = st.number_input("Ni Max", value=1.0, format="%.2e", key="ni_max")
 
     # Validate color scale limits
     if custom_cu_min is not None and custom_cu_max is not None and custom_cu_min >= custom_cu_max:
@@ -911,13 +949,22 @@ def main():
 
     # Compute fluxes and gradients if not present
     if 'J1_preds' not in solution:
-        x_coords = solution['X'][:, 0] if solution['X'].ndim == 2 else solution['X']
-        y_coords = solution['Y'][0, :] if solution['Y'].ndim == 2 else solution['Y']
-        J1, J2, grad_c1, grad_c2 = compute_fluxes_and_grads(solution['c1_preds'], solution['c2_preds'], x_coords, y_coords, solution['params'])
-        solution['J1_preds'] = J1
-        solution['J2_preds'] = J2
-        solution['grad_c1_y'] = grad_c1
-        solution['grad_c2_y'] = grad_c2
+        st.info("Computing fluxes and gradients...")
+        try:
+            J1, J2, grad_c1, grad_c2 = compute_fluxes_and_grads(
+                solution['c1_preds'],
+                solution['c2_preds'],
+                solution['X'],
+                solution['Y'],
+                solution['params']
+            )
+            solution['J1_preds'] = J1
+            solution['J2_preds'] = J2
+            solution['grad_c1_y'] = grad_c1
+            solution['grad_c2_y'] = grad_c2
+        except Exception as e:
+            st.error(f"Failed to compute fluxes: {e}")
+            return
 
     # Display solution details
     st.subheader("Solution Details")
