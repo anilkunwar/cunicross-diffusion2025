@@ -53,6 +53,10 @@ with training datasets for 0 BCs (Transformer-inspired Attention): [![meaningtow
  [![meaningtowords](https://img.shields.io/badge/broadRangeConcAttnSideBC-streamlit-red)](https://attentiveinterpolator-physicsawaresidebc.streamlit.app/) 
 
  [![meaningtowords](https://img.shields.io/badge/advBroadRangeConcAttnSideBC-streamlit-red)](https://advanced-attentive-concentration-interpolator.streamlit.app/) 
+
+
+ [![meaningtowords](https://img.shields.io/badge/uphilldiffusion1-streamlit-red)](https://attention-prediction-uphill-diffusion.streamlit.app/) (self-attentive code for uphill diffusion)
+ 
  
 
  debugging interpolation errors and making it inline with pinn solutions
