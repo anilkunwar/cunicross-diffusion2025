@@ -504,6 +504,320 @@ def plot_parameter_sweep(
     plt.close()
     return fig, base_filename
 
+def compute_fluxes_and_grads(c1_preds, c2_preds, X, Y, params):
+    """
+    Safely compute gradients and fluxes for any grid shape.
+    X, Y: 2D arrays (meshgrid) or 1D vectors.
+    """
+    # Convert to 2D if 1D
+    if X.ndim == 1:
+        X = X.reshape(-1, 1)
+    if Y.ndim == 1:
+        Y = Y.reshape(1, -1)
+    if X.shape != Y.shape:
+        raise ValueError("X and Y must have same shape")
+
+    x_coords = X[:, 0]
+    y_coords = Y[0, :]
+
+    # Ensure dy > 0
+    if len(y_coords) < 2:
+        dy = 1.0
+    else:
+        dy = y_coords[1] - y_coords[0]
+        if dy <= 0:
+            dy = np.mean(np.diff(y_coords))
+            if dy <= 0:
+                dy = 1.0
+
+    D11 = params.get('D11', 1.0)
+    D12 = params.get('D12', 0.0)
+    D21 = params.get('D21', 0.0)
+    D22 = params.get('D22', 1.0)
+
+    J1_list, J2_list, grad1_list, grad2_list = [], [], [], []
+
+    for c1, c2 in zip(c1_preds, c2_preds):
+        c1 = np.asarray(c1)
+        c2 = np.asarray(c2)
+        if c1.shape != X.shape or c2.shape != X.shape:
+            raise ValueError(f"Concentration shape {c1.shape} != grid {X.shape}")
+
+        grad_c1_y = np.gradient(c1, dy, axis=0)
+        grad_c2_y = np.gradient(c2, dy, axis=0)
+
+        J1_y = -(D11 * grad_c1_y + D12 * grad_c2_y)
+        J2_y = -(D21 * grad_c1_y + D22 * grad_c2_y)
+
+        J1_list.append([None, J1_y])
+        J2_list.append([None, J2_y])
+        grad1_list.append(grad_c1_y)
+        grad2_list.append(grad_c2_y)
+
+    return J1_list, J2_list, grad1_list, grad2_list
+
+def detect_uphill(solution, time_index):
+    J1_y = solution['J1_preds'][time_index][1]
+    grad_c1_y = solution['grad_c1_y'][time_index]
+    J2_y = solution['J2_preds'][time_index][1]
+    grad_c2_y = solution['grad_c2_y'][time_index]
+
+    prod_cu = J1_y * grad_c1_y
+    prod_ni = J2_y * grad_c2_y
+
+    uphill_cu = prod_cu > 0
+    uphill_ni = prod_ni > 0
+
+    uphill_prod_cu_pos = np.where(uphill_cu, prod_cu, 0.0)
+    uphill_prod_ni_pos = np.where(uphill_ni, prod_ni, 0.0)
+
+    max_pos_cu = float(np.max(uphill_prod_cu_pos)) if np.any(uphill_cu) else 0.0
+    max_pos_ni = float(np.max(uphill_prod_ni_pos)) if np.any(uphill_ni) else 0.0
+
+    total_cells = prod_cu.size
+    frac_uphill_cu = float(np.count_nonzero(uphill_cu) / total_cells)
+    frac_uphill_ni = float(np.count_nonzero(uphill_ni) / total_cells)
+
+    # Expanded metrics: average positive product, total uphill intensity
+    avg_pos_cu = np.mean(uphill_prod_cu_pos[uphill_prod_cu_pos > 0]) if np.any(uphill_cu) else 0.0
+    avg_pos_ni = np.mean(uphill_prod_ni_pos[uphill_prod_ni_pos > 0]) if np.any(uphill_ni) else 0.0
+    total_intensity_cu = np.sum(uphill_prod_cu_pos)
+    total_intensity_ni = np.sum(uphill_prod_ni_pos)
+
+    return (uphill_cu, uphill_ni,
+            uphill_prod_cu_pos, uphill_prod_ni_pos,
+            max_pos_cu, max_pos_ni,
+            frac_uphill_cu, frac_uphill_ni,
+            avg_pos_cu, avg_pos_ni,
+            total_intensity_cu, total_intensity_ni)
+
+def fig_to_bytes(fig, fmt='png'):
+    buf = BytesIO()
+    fig.savefig(buf, format=fmt, bbox_inches='tight')
+    buf.seek(0)
+    return buf
+
+def plot_flux_vs_gradient(solution, time_index,
+                          figsize=(6,3), marker_size=12, linewidth=1.2,
+                          label_fontsize=12, title_fontsize=14, scatter_alpha=0.6,
+                          marker_edgewidth=0.2, output_dir="figures"):
+    # Safe access
+    J1_y = np.array(solution['J1_preds'][time_index][1]).flatten()
+    J2_y = np.array(solution['J2_preds'][time_index][1]).flatten()
+    grad_c1_y = np.array(solution['grad_c1_y'][time_index]).flatten()
+    grad_c2_y = np.array(solution['grad_c2_y'][time_index]).flatten()
+
+    uphill_cu = J1_y * grad_c1_y > 0
+    uphill_ni = J2_y * grad_c2_y > 0
+
+    fig, axes = plt.subplots(1, 2, figsize=(12, 5))  # Increased figsize for better spacing
+    axes[0].scatter(grad_c1_y, J1_y, s=marker_size, alpha=scatter_alpha, edgecolors='none', label='Cu (all)')
+    if uphill_cu.any():
+        axes[0].scatter(grad_c1_y[uphill_cu], J1_y[uphill_cu], s=marker_size*1.1,
+                        edgecolors='k', linewidths=marker_edgewidth, label='Uphill (Cu)')
+    axes[0].set_xlabel('∇c (y)', fontsize=label_fontsize)
+    axes[0].set_ylabel('J_y', fontsize=label_fontsize)
+    axes[0].set_title('Cu Flux vs ∇c', fontsize=title_fontsize)
+    axes[0].grid(True, which='both', linestyle='--', linewidth=0.3)
+
+    axes[1].scatter(grad_c2_y, J2_y, s=marker_size, alpha=scatter_alpha, edgecolors='none', label='Ni (all)')
+    if uphill_ni.any():
+        axes[1].scatter(grad_c2_y[uphill_ni], J2_y[uphill_ni], s=marker_size*1.1,
+                        edgecolors='k', linewidths=marker_edgewidth, label='Uphill (Ni)')
+    axes[1].set_xlabel('∇c (y)', fontsize=label_fontsize)
+    axes[1].set_ylabel('J_y', fontsize=label_fontsize)
+    axes[1].set_title('Ni Flux vs ∇c', fontsize=title_fontsize)
+    axes[1].grid(True, which='both', linestyle='--', linewidth=0.3)
+
+    for ax in axes:
+        ax.tick_params(axis='both', which='major', labelsize=label_fontsize-2)
+        ax.legend(fontsize=label_fontsize-2)
+
+    fig.subplots_adjust(wspace=0.3)  # Add space between subplots
+
+    Ly = solution['params']['Ly']
+    t_val = solution['times'][time_index]
+    base_filename = f"flux_vs_grad_t_{t_val:.1f}_ly_{Ly:.1f}_ccu_{solution['params']['C_Cu']:.1e}_cni_{solution['params']['C_Ni']:.1e}"
+    plt.savefig(os.path.join(output_dir, f"{base_filename}.png"), dpi=300, bbox_inches='tight')
+    plt.savefig(os.path.join(output_dir, f"{base_filename}.pdf"), bbox_inches='tight')
+    plt.close()
+    return fig, base_filename
+
+def plot_uphill_heatmap(solution, time_index, cmap='viridis', vmin=None, vmax=None,
+                        figsize=(12,5), colorbar=True, cbar_label='J·∇c',
+                        label_fontsize=12, title_fontsize=14, downsample=1, output_dir="figures"):
+    x_coords = solution['X'][:,0] if solution['X'].ndim == 2 else solution['X']
+    y_coords = solution['Y'][0,:] if solution['Y'].ndim == 2 else solution['Y']
+    t_val = solution['times'][time_index]
+    (uphill_cu, uphill_ni,
+     uphill_prod_cu_pos, uphill_prod_ni_pos,
+     max_pos_cu, max_pos_ni,
+     frac_cu, frac_ni,
+     avg_pos_cu, avg_pos_ni,
+     total_intensity_cu, total_intensity_ni) = detect_uphill(solution, time_index)
+
+    # optionally downsample for speed
+    z1 = uphill_prod_cu_pos[::downsample, ::downsample]
+    z2 = uphill_prod_ni_pos[::downsample, ::downsample]
+    x_ds = x_coords[::downsample]
+    y_ds = y_coords[::downsample]
+
+    fig, axes = plt.subplots(1,2, figsize=figsize)
+
+    im1 = axes[0].imshow(z1, origin='lower', aspect='auto',
+                         extent=(x_ds[0], x_ds[-1], y_ds[0], y_ds[-1]),
+                         cmap=cmap, vmin=vmin, vmax=vmax)
+    axes[0].set_title(f'Cu Uphill (max={max_pos_cu:.3e}, avg={avg_pos_cu:.3e})', fontsize=title_fontsize)
+    axes[0].set_xlabel('x (μm)', fontsize=label_fontsize)
+    axes[0].set_ylabel('y (μm)', fontsize=label_fontsize)
+
+    im2 = axes[1].imshow(z2, origin='lower', aspect='auto',
+                         extent=(x_ds[0], x_ds[-1], y_ds[0], y_ds[-1]),
+                         cmap=cmap, vmin=vmin, vmax=vmax)
+    axes[1].set_title(f'Ni Uphill (max={max_pos_ni:.3e}, avg={avg_pos_ni:.3e})', fontsize=title_fontsize)
+    axes[1].set_xlabel('x (μm)', fontsize=label_fontsize)
+    axes[1].set_ylabel('')
+
+    if colorbar:
+        cbar = fig.colorbar(im2, ax=axes.ravel().tolist(), orientation='vertical', fraction=0.046, pad=0.04)
+        cbar.set_label(cbar_label, fontsize=label_fontsize)
+        cbar.ax.tick_params(labelsize=label_fontsize-2)
+
+    for ax in axes:
+        ax.tick_params(axis='both', which='major', labelsize=label_fontsize-2)
+
+    fig.suptitle(f'Uphill Diffusion (positive J·∇c) @ t={t_val:.2f}s', fontsize=title_fontsize+1)
+    fig.tight_layout(rect=[0, 0.03, 1, 0.95])
+    fig.subplots_adjust(wspace=0.3)  # Add space between subplots
+
+    Ly = solution['params']['Ly']
+    base_filename = f"uphill_heatmap_t_{t_val:.1f}_ly_{Ly:.1f}_ccu_{solution['params']['C_Cu']:.1e}_cni_{solution['params']['C_Ni']:.1e}"
+    plt.savefig(os.path.join(output_dir, f"{base_filename}.png"), dpi=300, bbox_inches='tight')
+    plt.savefig(os.path.join(output_dir, f"{base_filename}.pdf"), bbox_inches='tight')
+    plt.close()
+    return fig, max_pos_cu, max_pos_ni, frac_cu, frac_ni, avg_pos_cu, avg_pos_ni, total_intensity_cu, total_intensity_ni, base_filename
+
+def plot_uphill_over_time(solution, figsize=(8,3), linewidth=1.6, marker_size=6,
+                          label_fontsize=12, title_fontsize=14, output_dir="figures"):
+    times = np.array(solution['times'])
+    max_pos_cu_list = []
+    max_pos_ni_list = []
+    frac_cu_list = []
+    frac_ni_list = []
+    avg_pos_cu_list = []
+    avg_pos_ni_list = []
+    total_intensity_cu_list = []
+    total_intensity_ni_list = []
+
+    Nt = len(times)
+    for t_idx in range(Nt):
+        (_, _, _, _, max_pos_cu, max_pos_ni, frac_cu, frac_ni, avg_pos_cu, avg_pos_ni, total_intensity_cu, total_intensity_ni) = detect_uphill(solution, t_idx)
+        max_pos_cu_list.append(max_pos_cu)
+        max_pos_ni_list.append(max_pos_ni)
+        frac_cu_list.append(frac_cu)
+        frac_ni_list.append(frac_ni)
+        avg_pos_cu_list.append(avg_pos_cu)
+        avg_pos_ni_list.append(avg_pos_ni)
+        total_intensity_cu_list.append(total_intensity_cu)
+        total_intensity_ni_list.append(total_intensity_ni)
+
+    fig, ax = plt.subplots(figsize=figsize)
+    ax.plot(times, max_pos_cu_list, marker='o', markersize=marker_size, linewidth=linewidth, label='Max positive J·∇c (Cu)')
+    ax.plot(times, max_pos_ni_list, marker='s', markersize=marker_size, linewidth=linewidth, label='Max positive J·∇c (Ni)')
+    ax.set_xlabel('Time (s)', fontsize=label_fontsize)
+    ax.set_ylabel('Max positive J·∇c', fontsize=label_fontsize)
+    ax.set_title('Temporal Evolution of Global Positive Max (J·∇c)', fontsize=title_fontsize)
+    ax.legend(fontsize=label_fontsize-2)
+    ax.grid(True, which='both', linestyle='--', linewidth=0.3)
+    fig.tight_layout()
+
+    # Additional plot for average
+    fig_avg, ax_avg = plt.subplots(figsize=figsize)
+    ax_avg.plot(times, avg_pos_cu_list, marker='o', markersize=marker_size, linewidth=linewidth, label='Avg positive J·∇c (Cu)')
+    ax_avg.plot(times, avg_pos_ni_list, marker='s', markersize=marker_size, linewidth=linewidth, label='Avg positive J·∇c (Ni)')
+    ax_avg.set_xlabel('Time (s)', fontsize=label_fontsize)
+    ax_avg.set_ylabel('Avg positive J·∇c', fontsize=label_fontsize)
+    ax_avg.set_title('Temporal Evolution of Average Positive (J·∇c)', fontsize=title_fontsize)
+    ax_avg.legend(fontsize=label_fontsize-2)
+    ax_avg.grid(True, which='both', linestyle='--', linewidth=0.3)
+    fig_avg.tight_layout()
+
+    # small subplot for fraction evolution
+    fig_frac, ax2 = plt.subplots(figsize=(8,2.5))
+    ax2.plot(times, frac_cu_list, label='Uphill fraction Cu', linewidth=linewidth)
+    ax2.plot(times, frac_ni_list, label='Uphill fraction Ni', linewidth=linewidth)
+    ax2.set_xlabel('Time (s)', fontsize=label_fontsize)
+    ax2.set_ylabel('Fraction of grid points', fontsize=label_fontsize)
+    ax2.set_title('Uphill fraction vs Time', fontsize=title_fontsize-2)
+    ax2.legend(fontsize=label_fontsize-2)
+    ax2.grid(True, which='both', linestyle='--', linewidth=0.3)
+    fig_frac.tight_layout()
+
+    # New: total intensity plot
+    fig_intensity, ax_intensity = plt.subplots(figsize=figsize)
+    ax_intensity.plot(times, total_intensity_cu_list, marker='o', markersize=marker_size, linewidth=linewidth, label='Total intensity (Cu)')
+    ax_intensity.plot(times, total_intensity_ni_list, marker='s', markersize=marker_size, linewidth=linewidth, label='Total intensity (Ni)')
+    ax_intensity.set_xlabel('Time (s)', fontsize=label_fontsize)
+    ax_intensity.set_ylabel('Total positive J·∇c', fontsize=label_fontsize)
+    ax_intensity.set_title('Temporal Evolution of Total Uphill Intensity', fontsize=title_fontsize)
+    ax_intensity.legend(fontsize=label_fontsize-2)
+    ax_intensity.grid(True, which='both', linestyle='--', linewidth=0.3)
+    fig_intensity.tight_layout()
+
+    Ly = solution['params']['Ly']
+    base_filename = f"uphill_over_time_ly_{Ly:.1f}_ccu_{solution['params']['C_Cu']:.1e}_cni_{solution['params']['C_Ni']:.1e}"
+    os.makedirs(output_dir, exist_ok=True)
+    fig.savefig(os.path.join(output_dir, f"{base_filename}_max.png"), dpi=300, bbox_inches='tight')
+    fig.savefig(os.path.join(output_dir, f"{base_filename}_max.pdf"), dpi=300, bbox_inches='tight')
+    plt.close(fig)
+    fig_avg.savefig(os.path.join(output_dir, f"{base_filename}_avg.png"), dpi=300, bbox_inches='tight')
+    fig_avg.savefig(os.path.join(output_dir, f"{base_filename}_avg.pdf"), dpi=300, bbox_inches='tight')
+    plt.close(fig_avg)
+    fig_frac.savefig(os.path.join(output_dir, f"{base_filename}_frac.png"), dpi=300, bbox_inches='tight')
+    fig_frac.savefig(os.path.join(output_dir, f"{base_filename}_frac.pdf"), dpi=300, bbox_inches='tight')
+    plt.close(fig_frac)
+    fig_intensity.savefig(os.path.join(output_dir, f"{base_filename}_intensity.png"), dpi=300, bbox_inches='tight')
+    fig_intensity.savefig(os.path.join(output_dir, f"{base_filename}_intensity.pdf"), dpi=300, bbox_inches='tight')
+    plt.close(fig_intensity)
+
+    return fig, fig_avg, fig_frac, fig_intensity, base_filename
+
+@st.cache_data
+def compute_summary_dataframe(all_solutions, time_index_for_summary=0):
+    rows = []
+    for s in all_solutions:
+        if 'J1_preds' not in s:
+            x_coords = s['X'][:, 0] if s['X'].ndim == 2 else s['X']
+            y_coords = s['Y'][0, :] if s['Y'].ndim == 2 else s['Y']
+            J1, J2, grad_c1, grad_c2 = compute_fluxes_and_grads(s['c1_preds'], s['c2_preds'], x_coords, y_coords, s['params'])
+            s['J1_preds'] = J1
+            s['J2_preds'] = J2
+            s['grad_c1_y'] = grad_c1
+            s['grad_c2_y'] = grad_c2
+        try:
+            (_, _, _, _, max_pos_cu, max_pos_ni, frac_cu, frac_ni, avg_pos_cu, avg_pos_ni, total_intensity_cu, total_intensity_ni) = detect_uphill(s, time_index_for_summary)
+        except Exception:
+            max_pos_cu, max_pos_ni, frac_cu, frac_ni, avg_pos_cu, avg_pos_ni, total_intensity_cu, total_intensity_ni = 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0
+        rows.append({
+            "filename": s.get('filename', s.get('params', {}).get('Ly', '')),
+            "diffusion_type": s.get('diffusion_type', 'crossdiffusion'),
+            "Ly (μm)": s.get('params', {}).get('Ly', np.nan),
+            "C_Cu": s.get('params', {}).get('C_Cu', np.nan),
+            "C_Ni": s.get('params', {}).get('C_Ni', np.nan),
+            "time_index": time_index_for_summary,
+            "max_pos_JdotGrad_Cu": max_pos_cu,
+            "max_pos_JdotGrad_Ni": max_pos_ni,
+            "uphill_frac_Cu": frac_cu,
+            "uphill_frac_Ni": frac_ni,
+            "avg_pos_JdotGrad_Cu": avg_pos_cu,
+            "avg_pos_JdotGrad_Ni": avg_pos_ni,
+            "total_intensity_Cu": total_intensity_cu,
+            "total_intensity_Ni": total_intensity_ni
+        })
+    df = pd.DataFrame(rows)
+    df = df.sort_values(['diffusion_type', 'Ly (μm)'])
+    return df
+
 def main():
     st.title("Publication-Quality Concentration Profiles with Uphill Diffusion Analysis")
 
