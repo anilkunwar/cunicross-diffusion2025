@@ -66,8 +66,12 @@ with training datasets for 0 BCs (Transformer-inspired Attention): [![meaningtow
    Understanding the Attention Weights and Engineering Applications 
 
  [![meaningtowords](https://img.shields.io/badge/numericalattnmech-streamlit-red)](https://attention-mechanism-numerical-illustration.streamlit.app/)
+ 
 
  [![meaningtowords](https://img.shields.io/badge/enggapplications-streamlit-red)](https://attention-mechanism-engineering-applications.streamlit.app/)
+
+  [![meaningtowords](https://img.shields.io/badge/enggapplications2-streamlit-red)](https://attention-mechanism-engineering-applications2.streamlit.app/)
+ 
 
  
 
