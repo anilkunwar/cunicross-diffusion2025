@@ -140,12 +140,12 @@ if st.button("Run Attention Inference", type="primary"):
         tgt = results['norm_target']
         ax.scatter(src[:, 0], src[:, 1], c=src[:, 2], s=100, cmap='plasma', label='Sources', edgecolors='k')
         ax.scatter(tgt[0], tgt[1], c=tgt[2], s=300, marker='*', cmap='plasma', edgecolors='red', label='Target')
-        ax.set_xlabel("Norm. \(L_y\)")
-        ax.set_ylabel("Norm. \(C_{Cu}\)")
+        ax.set_xlabel("Norm. $L_y$)")
+        ax.set_ylabel("Norm. $C_{Cu}$")
         ax.set_title("Parameter Space")
         ax.legend()
         cbar = plt.colorbar(ax.collections[0], ax=ax)
-        cbar.set_label("Norm. \(C_{Ni}\)")
+        cbar.set_label("Norm. $C_{Ni}$")
         st.pyplot(fig)
 
     with col2:
