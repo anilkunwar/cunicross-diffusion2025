@@ -11,3 +11,4 @@ langchain-openai
 langchain-core
 langchain-community
 openai
+openllm
