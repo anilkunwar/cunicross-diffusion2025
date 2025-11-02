@@ -7,3 +7,4 @@ seaborn
 kaleido
 transformers
 langchain
+openai
