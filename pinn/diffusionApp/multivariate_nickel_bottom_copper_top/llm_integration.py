@@ -6,26 +6,38 @@ st.set_page_config(page_title="Lightweight LLM Integration Demo")
 
 st.title("Lightweight LLM Text Generation for Engineering Insights")
 
-# Sidebar to input OpenAI API key securely
+# Sidebar: secure API key input
 openai_api_key = st.sidebar.text_input("Enter your OpenAI API Key", type="password")
 
 if not openai_api_key:
     st.warning("Please enter your OpenAI API key in the sidebar to activate the LLM.")
     st.stop()
 
-# Input prompt for inference
-prompt = st.text_area("Enter prompt for Engineering Insight generation:", 
-                      "Generate engineering insights on Cu-Ni interdiffusion and IMC growth based on attention model outputs.")
+# User prompt input
+prompt = st.text_area(
+    "Enter prompt for Engineering Insight generation:",
+    "Generate engineering insights on Cu-Ni interdiffusion and IMC growth based on attention model outputs."
+)
 
+# Run inference
 if st.button("Generate Insights"):
     if prompt.strip():
-        # Initialize the lightweight ChatOpenAI model with user's API key
-        llm = ChatOpenAI(model="gpt-3.5-turbo", temperature=0.7, openai_api_key=openai_api_key)
+        try:
+            # Initialize the LLM
+            llm = ChatOpenAI(
+                model="gpt-3.5-turbo",  # or "gpt-4o-mini" if available
+                temperature=0.7,
+                openai_api_key=openai_api_key
+            )
 
-        # Sending prompt as a human message and getting response
-        response = llm([HumanMessage(content=prompt)])
+            # Use the correct method for message-based input
+            response = llm.invoke([HumanMessage(content=prompt)])
 
-        st.subheader("Generated Engineering Insights:")
-        st.write(response.content)
+            # Display results
+            st.subheader("Generated Engineering Insights:")
+            st.write(response.content)
+
+        except Exception as e:
+            st.error(f"Error generating insights: {e}")
     else:
         st.error("Please enter a prompt to generate insights.")
