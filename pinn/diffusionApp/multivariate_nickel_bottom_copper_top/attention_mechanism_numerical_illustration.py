@@ -200,7 +200,7 @@ st.markdown(f"```mermaid\n{mermaid_code}\n```")
 # ——————————————————————————————————————————————————————
 # 7. Appendix-Ready LaTeX Output
 # ——————————————————————————————————————————————————————
-with st.expander("Export LaTeX for Manuscript Appendix"):
+with st.expander("Export the Attention Weights"):
     latex_code = f"""
 \\appendix
 \\section{{Numerical Example of Attention Weights}}
