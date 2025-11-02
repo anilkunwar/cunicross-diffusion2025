@@ -23,13 +23,25 @@ DB_DIR = os.path.join(os.path.dirname(__file__), "nlp_information")
 DB_FILENAME = "description_of_experiment.db"
 DB_PATH = os.path.join(DB_DIR, DB_FILENAME)
 
+EXPERIMENTAL_DESCRIPTION = ""
+
 if os.path.exists(DB_PATH):
-    with open(DB_PATH, 'r', encoding='utf-8') as f:
-        EXPERIMENTAL_DESCRIPTION = f.read().strip()
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
+        # Example: if your table is named 'experiments' and has a column 'description'
+        cursor.execute("SELECT description FROM experiments LIMIT 1;")
+        row = cursor.fetchone()
+        if row:
+            EXPERIMENTAL_DESCRIPTION = row[0]
+        else:
+            st.warning("No description found in the database.")
+        conn.close()
+    except Exception as e:
+        st.error(f"Error reading database: {e}")
 else:
     st.error(f"Database file not found: `{DB_PATH}`\n\n"
              "Please ensure the file exists in the `nlp_information/` directory.")
-    EXPERIMENTAL_DESCRIPTION = ""
 
 # === Paraphrasing Model ===
 @st.cache_resource
