@@ -1,337 +1,242 @@
-# --------------------------------------------------------------
-#  IMPORTS
-# --------------------------------------------------------------
-import os
+import streamlit as st
 import numpy as np
 import torch
 import torch.nn as nn
 import matplotlib.pyplot as plt
-import matplotlib.cm as cm
-from scipy.interpolate import RegularGridInterpolator
-from io import BytesIO
-import streamlit as st
-import pandas as pd
+import seaborn as sns
+from matplotlib.patches import Rectangle
 
-# --------------------------------------------------------------
-#  CONFIG / STUBS (replace with your real data loader)
-# --------------------------------------------------------------
-SOLUTION_DIR = "pinn_solutions"          # <-- put your .pkl files here
-COLORMAPS = ['viridis', 'plasma', 'inferno', 'magma', 'cividis', 'turbo']
+# Set page config
+st.set_page_config(page_title="Attention Interpolator Demo", layout="wide")
+st.title("Transformer-Inspired Attention Interpolator for Diffusion Fields")
 
-# Minimal loader – replace with your own logic that returns:
-#   solutions, params_list, lys, c_cus, c_nis, load_logs
-def load_solutions(directory):
-    # ---- Dummy data for demo (remove in production) ----
-    source_params = [
-        (30, 1.5e-3, 1.0e-4),   # θ1
-        (60, 2.0e-3, 5.0e-4),   # θ2
-        (90, 2.5e-3, 1.5e-3)    # θ3
-    ]
+st.markdown("""
+Interactive demonstration of the **multi-parameter attention mechanism** used to interpolate 
+diffusion concentration profiles across domain length \(L_y\) and boundary conditions \(C_{\\text{Cu}}\), \(C_{\\text{Ni}}\).
+""")
 
-    class DummySolution(dict):
-        def __init__(self, Ly):
-            super().__init__()
-            self['params'] = {'Ly': Ly, 'Lx': 50, 't_max': 100,
-                               'C_Cu': 0.0, 'C_Ni': 0.0}
-            X, Y = np.meshgrid(np.linspace(0, 50, 50), np.linspace(0, Ly, 50))
-            self['X'] = X
-            self['Y'] = Y
-            self['c1_preds'] = [np.random.rand(50, 50)]
-            self['c2_preds'] = [np.random.rand(50, 50)]
-            self['times'] = [50.0]
-
-        def __getitem__(self, key):
-            return super().get(key)
-
-    solutions = [DummySolution(p[0]) for p in source_params]
-    params_list = source_params
-    lys = [p[0] for p in source_params]
-    c_cus = [p[1] for p in source_params]
-    c_nis = [p[2] for p in source_params]
-    load_logs = [f"Loaded dummy solution for Ly={p[0]}" for p in source_params]
-    return solutions, params_list, lys, c_cus, c_nis, load_logs
-
-# --------------------------------------------------------------
-#  DUMMY SOLUTION CLASS (kept for compatibility)
-# --------------------------------------------------------------
-class DummySolution(dict):
-    def __init__(self, Ly):
-        super().__init__()
-        self['params'] = {'Ly': Ly, 'Lx': 50, 't_max': 100,
-                          'C_Cu': 0.0, 'C_Ni': 0.0}
-        X, Y = np.meshgrid(np.linspace(0, 50, 50), np.linspace(0, Ly, 50))
-        self['X'] = X
-        self['Y'] = Y
-        self['c1_preds'] = [np.random.rand(50, 50)]
-        self['c2_preds'] = [np.random.rand(50, 50)]
-        self['times'] = [50.0]
-
-    def __getitem__(self, key):
-        return super().get(key)
-
-# --------------------------------------------------------------
-#  ATTENTION-BASED INTERPOLATOR
-# --------------------------------------------------------------
+# ——————————————————————————————————————————————————————
+# 1. Model Definition (same as your code)
+# ——————————————————————————————————————————————————————
 class MultiParamAttentionInterpolator(nn.Module):
     def __init__(self, sigma=0.2, num_heads=4, d_head=8):
         super().__init__()
         self.sigma = sigma
         self.num_heads = num_heads
         self.d_head = d_head
-        self.W_q = nn.Linear(3, self.num_heads * self.d_head)
-        self.W_k = nn.Linear(3, self.num_heads * self.d_head)
+        self.W_q = nn.Linear(3, num_heads * d_head, bias=False)
+        self.W_k = nn.Linear(3, num_heads * d_head, bias=False)
 
-    def forward(self, solutions, params_list, ly_target, c_cu_target, c_ni_target):
-        if not solutions or not params_list:
-            raise ValueError("No solutions or parameters available for interpolation.")
+    def normalize_params(self, params, is_target=False):
+        if is_target:
+            ly, c_cu, c_ni = params
+            ly_norm = (ly - 30.0) / (120.0 - 30.0)
+            c_cu_norm = c_cu / 2.9e-3
+            c_ni_norm = c_ni / 1.8e-3
+            return np.array([ly_norm, c_cu_norm, c_ni_norm])
+        else:
+            params = np.array(params)
+            ly_norm = (params[:, 0] - 30.0) / (120.0 - 30.0)
+            c_cu_norm = params[:, 1] / 2.9e-3
+            c_ni_norm = params[:, 2] / 1.8e-3
+            return np.stack([ly_norm, c_cu_norm, c_ni_norm], axis=1)
 
-        # ---- Normalise parameters (updated ranges) ----
-        lys = np.array([p[0] for p in params_list])
-        c_cus = np.array([p[1] for p in params_list])
-        c_nis = np.array([p[2] for p in params_list])
+    def compute_weights(self, params_list, ly_target, c_cu_target, c_ni_target):
+        norm_sources = self.normalize_params(params_list)
+        norm_target = self.normalize_params((ly_target, c_cu_target, c_ni_target), is_target=True)
 
-        ly_norm = (lys - 30.0) / (120.0 - 30.0)
-        c_cu_norm = c_cus / 2.9e-3                     # 0 → 2.9e-3
-        c_ni_norm = c_nis / 1.8e-3                     # 0 → 1.8e-3
+        params_tensor = torch.tensor(norm_sources, dtype=torch.float32)
+        target_tensor = torch.tensor(norm_target, dtype=torch.float32).unsqueeze(0)
 
-        target_ly_norm = (ly_target - 30.0) / (120.0 - 30.0)
-        target_c_cu_norm = c_cu_target / 2.9e-3
-        target_c_ni_norm = c_ni_target / 1.8e-3
+        queries = self.W_q(target_tensor).view(1, self.num_heads, self.d_head)
+        keys = self.W_k(params_tensor).view(len(params_list), self.num_heads, self.d_head)
 
-        # ---- Tensors ----
-        params_tensor = torch.tensor(np.stack([ly_norm, c_cu_norm, c_ni_norm], axis=1),
-                                    dtype=torch.float32)               # [N,3]
-        target_tensor = torch.tensor([[target_ly_norm, target_c_cu_norm, target_c_ni_norm]],
-                                     dtype=torch.float32)               # [1,3]
+        attn_logits = torch.einsum('nhd,mhd->nmh', keys, queries) / np.sqrt(self.d_head)
+        attn_weights = torch.softmax(attn_logits, dim=0).mean(dim=2).squeeze(1)
 
-        # ---- Attention ----
-        Q = self.W_q(target_tensor).view(1, self.num_heads, self.d_head)
-        K = self.W_k(params_tensor).view(len(params_list), self.num_heads, self.d_head)
-
-        attn_logits = torch.einsum('bhd,nhd->bnh', K, Q) / np.sqrt(self.d_head)   # [N,1,num_heads]
-        attn_weights = torch.softmax(attn_logits, dim=0)
-        attn_weights = attn_weights.mean(dim=2).squeeze(1)                      # [N]
-
-        # ---- Gaussian spatial weights ----
-        dist = torch.sqrt(
-            ((torch.tensor(ly_norm) - target_ly_norm) / self.sigma) ** 2 +
-            ((torch.tensor(c_cu_norm) - target_c_cu_norm) / self.sigma) ** 2 +
-            ((torch.tensor(c_ni_norm) - target_c_ni_norm) / self.sigma) ** 2
+        scaled_distances = torch.sqrt(
+            ((params_tensor[:, 0] - norm_target[0]) / self.sigma)**2 +
+            ((params_tensor[:, 1] - norm_target[1]) / self.sigma)**2 +
+            ((params_tensor[:, 2] - norm_target[2]) / self.sigma)**2
         )
-        spatial_weights = torch.exp(-dist ** 2 / 2)
-        spatial_weights = spatial_weights / spatial_weights.sum()
+        spatial_weights = torch.exp(-scaled_distances**2 / 2)
+        spatial_weights /= spatial_weights.sum() + 1e-8
 
-        # ---- Combine ----
-        combined = attn_weights * spatial_weights
-        combined = combined / combined.sum()
-        weights_np = combined.detach().cpu().numpy()
-
-        return self._physics_aware_interpolation(solutions, weights_np,
-                                                ly_target, c_cu_target, c_ni_target)
-
-    # ------------------------------------------------------------------
-    def _physics_aware_interpolation(self, solutions, weights, ly_target,
-                                     c_cu_target, c_ni_target):
-        Lx = solutions[0]['params']['Lx']
-        t_max = solutions[0]['params']['t_max']
-        x_coords = np.linspace(0, Lx, 50)
-        y_coords = np.linspace(0, ly_target, 50)
-        times = np.linspace(0, t_max, 50)
-        X, Y = np.meshgrid(x_coords, y_coords, indexing='ij')
-
-        n_times = len(times)
-        c1_interp = np.zeros((n_times, 50, 50))
-        c2_interp = np.zeros((n_times, 50, 50))
-
-        for t_idx in range(n_times):
-            for sol, w in zip(solutions, weights):
-                scale = ly_target / sol['params']['Ly']
-                Y_src = sol['Y'][0, :] * scale
-
-                interp_c1 = RegularGridInterpolator(
-                    (sol['X'][:, 0], Y_src), sol['c1_preds'][t_idx],
-                    method='linear', bounds_error=False, fill_value=0)
-                interp_c2 = RegularGridInterpolator(
-                    (sol['X'][:, 0], Y_src), sol['c2_preds'][t_idx],
-                    method='linear', bounds_error=False, fill_value=0)
-
-                pts = np.stack([X.ravel(), Y.ravel()], axis=1)
-                c1_interp[t_idx] += w * interp_c1(pts).reshape(50, 50)
-                c2_interp[t_idx] += w * interp_c2(pts).reshape(50, 50)
-
-        # ---- Enforce BCs ----
-        c1_interp[:, :, 0] = c_cu_target
-        c2_interp[:, :, -1] = c_ni_target
-
-        param_set = solutions[0]['params'].copy()
-        param_set.update({'Ly': ly_target, 'C_Cu': c_cu_target, 'C_Ni': c_ni_target})
+        combined_weights = attn_weights * spatial_weights
+        combined_weights /= combined_weights.sum() + 1e-8
 
         return {
-            'params': param_set,
-            'X': X,
-            'Y': Y,
-            'c1_preds': list(c1_interp),
-            'c2_preds': list(c2_interp),
-            'times': times,
-            'interpolated': True,
-            'attention_weights': weights.tolist()
+            'W_q': self.W_q.weight.data.numpy(),
+            'W_k': self.W_k.weight.data.numpy(),
+            'attention_weights': attn_weights.detach().numpy(),
+            'spatial_weights': spatial_weights.detach().numpy(),
+            'combined_weights': combined_weights.detach().numpy(),
+            'norm_sources': norm_sources,
+            'norm_target': norm_target
         }
 
-# --------------------------------------------------------------
-#  CACHING & INTERPOLATION WRAPPER
-# --------------------------------------------------------------
-@st.cache_data
-def load_and_interpolate_solution(solutions, params_list,
-                                  ly_target, c_cu_target, c_ni_target,
-                                  tolerance_ly=0.1, tolerance_c=1e-5):
-    for sol, p in zip(solutions, params_list):
-        ly, c_cu, c_ni = p
-        if (abs(ly - ly_target) < tolerance_ly and
-                abs(c_cu - c_cu_target) < tolerance_c and
-                abs(c_ni - c_ni_target) < tolerance_c):
-            sol['interpolated'] = False
-            return sol
+# ——————————————————————————————————————————————————————
+# 2. Sidebar: User Input
+# ——————————————————————————————————————————————————————
+with st.sidebar:
+    st.header("Source Solutions (Precomputed)")
+    num_sources = st.slider("Number of Source Solutions", 2, 6, 3)
 
-    if not solutions:
-        raise ValueError("No solutions available for interpolation.")
-    interp = MultiParamAttentionInterpolator(sigma=0.2)
-    return interp(solutions, params_list, ly_target, c_cu_target, c_ni_target)
+    params_list = []
+    for i in range(num_sources):
+        st.subheader(f"Source {i+1}")
+        ly = st.number_input(f"L_y (μm)", 30.0, 120.0, 30.0 + i*30.0, 0.1, key=f"ly_{i}")
+        c_cu = st.number_input(f"C_Cu (mol/cc)", 0.0, 2.9e-3, 1.5e-3 + i*0.5e-3, 0.1e-3, format="%.2e", key=f"ccu_{i}")
+        c_ni = st.number_input(f"C_Ni (mol/cc)", 0.0, 1.8e-3, 0.1e-3 + i*0.4e-3, 0.1e-4, format="%.2e", key=f"cni_{i}")
+        params_list.append((ly, c_cu, c_ni))
 
-# --------------------------------------------------------------
-#  PLOTTING UTILITIES (unchanged except for imports & tiny fixes)
-# --------------------------------------------------------------
-# (All the plot_* functions from your original script are pasted here
-#  unchanged – only the missing imports were added at the top.)
-# --------------------------------------------------------------
+    st.header("Target Parameters (Interpolation)")
+    ly_target = st.number_input("Target L_y (μm)", 30.0, 120.0, 45.0, 0.1)
+    c_cu_target = st.number_input("Target C_Cu (mol/cc)", 0.0, 2.9e-3, 1.8e-3, 0.1e-3, format="%.2e")
+    c_ni_target = st.number_input("Target C_Ni (mol/cc)", 0.0, 1.8e-3, 3.0e-4, 0.1e-4, format="%.2e")
 
-# --------------------------------------------------------------
-#  MAIN APP
-# --------------------------------------------------------------
-def main():
-    st.set_page_config(page_title="Uphill Diffusion Explorer",
-                       layout="wide")
-    st.title("Publication-Quality Concentration Profiles with Uphill Diffusion Analysis")
+    sigma = st.slider("Gaussian σ (locality)", 0.05, 0.5, 0.2, 0.01)
+    seed = st.number_input("Random Seed (for W_q, W_k)", 0, 9999, 42)
+    torch.manual_seed(seed)
+    np.random.seed(seed)
 
-    # --------------------------------------------------
-    # Load solutions
-    # --------------------------------------------------
-    solutions, params_list, lys, c_cus, c_nis, load_logs = load_solutions(SOLUTION_DIR)
+# ——————————————————————————————————————————————————————
+# 3. Run Computation
+# ——————————————————————————————————————————————————————
+@st.cache_resource
+def get_interpolator(_sigma):
+    return MultiParamAttentionInterpolator(sigma=_sigma)
 
-    if load_logs:
-        with st.expander("Load Log"):
-            for l in load_logs:
-                st.write(l)
+interpolator = get_interpolator(sigma)
+results = interpolator.compute_weights(params_list, ly_target, c_cu_target, c_ni_target)
 
-    if not solutions:
-        st.error("No solution files found.")
-        return
+# ——————————————————————————————————————————————————————
+# 4. Display Results
+# ——————————————————————————————————————————————————————
+col1, col2 = st.columns([1, 1])
 
-    st.write(f"**{len(solutions)}** solutions loaded • "
-             f"Unique Ly: {len(set(lys))} • C₍Cu₎: {len(set(c_cus))} • C₍Ni₎: {len(set(c_nis))}")
+with col1:
+    st.subheader("Parameter Space (Normalized)")
+    fig, ax = plt.subplots(figsize=(6, 5))
+    norm_sources = results['norm_sources']
+    norm_target = results['norm_target']
+    scatter = ax.scatter(norm_sources[:, 0], norm_sources[:, 1], c=norm_sources[:, 2], cmap='viridis', s=120, edgecolors='k', label='Sources')
+    ax.scatter(norm_target[0], norm_target[1], c=norm_target[2], cmap='viridis', s=200, marker='*', edgecolors='red', linewidth=2, label='Target')
+    ax.set_xlabel('Normalized $L_y$')
+    ax.set_ylabel('Normalized $C_{Cu}$')
+    ax.set_title('Parameter Space')
+    cbar = plt.colorbar(scatter, ax=ax)
+    cbar.set_label('Normalized $C_{Ni}$')
+    ax.legend()
+    ax.grid(True, alpha=0.3)
+    st.pyplot(fig)
+    plt.close()
 
-    lys = sorted(set(lys))
-    c_cus = sorted(set(c_cus))
-    c_nis = sorted(set(c_nis))
+with col2:
+    st.subheader("Attention + Locality Weights")
+    fig, ax = plt.subplots(figsize=(6, 5))
+    x = np.arange(len(params_list))
+    width = 0.25
+    ax.bar(x - width, results['attention_weights'], width, label='Attention (ᾱ)', color='skyblue')
+    ax.bar(x, results['spatial_weights'], width, label='Gaussian (s̄)', color='lightcoral')
+    ax.bar(x + width, results['combined_weights'], width, label='Hybrid (w)', color='gold')
+    ax.set_xlabel('Source Index')
+    ax.set_ylabel('Weight')
+    ax.set_title('Weight Contributions')
+    ax.set_xticks(x)
+    ax.set_xticklabels([f"S{i+1}" for i in range(len(params_list))])
+    ax.legend()
+    ax.grid(True, axis='y', alpha=0.3)
+    st.pyplot(fig)
+    plt.close()
 
-    # --------------------------------------------------
-    # Parameter selection
-    # --------------------------------------------------
-    st.subheader("Select Parameters for a Single Solution")
-    ly_choice = st.selectbox("Domain Height Ly (μm)", lys, format_func=lambda x: f"{x:.1f}")
-    c_cu_choice = st.selectbox("Cu BC (mol/cc)", c_cus, format_func=lambda x: f"{x:.1e}")
-    c_ni_choice = st.selectbox("Ni BC (mol/cc)", c_nis, format_func=lambda x: f"{x:.1e}")
+# ——————————————————————————————————————————————————————
+# 5. Projection Matrices (Heatmaps)
+# ——————————————————————————————————————————————————————
+st.subheader("Learned Projection Matrices \(W_q\), \(W_k\) (32×3)")
 
-    use_custom = st.checkbox("Use **custom** parameters for interpolation", False)
-    if use_custom:
-        ly_target = st.number_input("Custom Ly (μm)", 30.0, 120.0, ly_choice, step=0.1)
-        c_cu_target = st.number_input("Custom C₍Cu₎ (mol/cc)", 0.0, 2.9e-3,
-                                      max(c_cu_choice, 1.5e-3), step=1e-4, format="%.1e")
-        c_ni_target = st.number_input("Custom C₍Ni₎ (mol/cc)", 0.0, 1.8e-3,
-                                      max(c_ni_choice, 1e-4), step=1e-5, format="%.1e")
-    else:
-        ly_target, c_cu_target, c_ni_target = ly_choice, c_cu_choice, c_ni_choice
+w_q = results['W_q']
+w_k = results['W_k']
 
-    # --------------------------------------------------
-    # Visualisation settings
-    # --------------------------------------------------
-    st.subheader("Visualization Settings")
-    cmap_cu = st.selectbox("Cu colormap", COLORMAPS, index=COLORMAPS.index('viridis'))
-    cmap_ni = st.selectbox("Ni colormap", COLORMAPS, index=COLORMAPS.index('magma'))
-    sidebar_metric = st.selectbox("Sidebar metric", ['mean_cu', 'mean_ni', 'loss'], index=0)
+fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 5))
+sns.heatmap(w_q, ax=ax1, cmap='coolwarm', center=0, cbar_kws={'label': 'Weight'}, annot=False)
+ax1.set_title('$W_q$ (Query Projection)')
+ax1.set_xlabel('Input Dim (L_y, C_Cu, C_Ni)')
+ax1.set_ylabel('Output Dim (32)')
 
-    # --------------------------------------------------
-    # Load / interpolate the chosen solution
-    # --------------------------------------------------
-    try:
-        solution = load_and_interpolate_solution(solutions, params_list,
-                                                 ly_target, c_cu_target, c_ni_target)
-    except Exception as e:
-        st.error(f"Interpolation failed: {e}")
-        return
+sns.heatmap(w_k, ax=ax2, cmap='coolwarm', center=0, cbar_kws={'label': 'Weight'}, annot=False)
+ax2.set_title('$W_k$ (Key Projection)')
+ax2.set_xlabel('Input Dim')
+ax2.set_ylabel('Output Dim')
 
-    # --------------------------------------------------
-    # Compute fluxes if missing
-    # --------------------------------------------------
-    if 'J1_preds' not in solution:
-        st.info("Computing fluxes & gradients …")
-        X = solution['X']
-        Y = solution['Y']
-        J1, J2, grad1, grad2 = compute_fluxes_and_grads(
-            solution['c1_preds'], solution['c2_preds'], X, Y, solution['params'])
-        solution.update({'J1_preds': J1, 'J2_preds': J2,
-                         'grad_c1_y': grad1, 'grad_c2_y': grad2})
+st.pyplot(fig)
+plt.close()
 
-    # --------------------------------------------------
-    # DISPLAY SOLUTION INFO
-    # --------------------------------------------------
-    st.subheader("Solution Summary")
-    st.write(f"**Ly** = {solution['params']['Ly']:.1f} μm  |  "
-             f"**C₍Cu₎** = {solution['params']['C_Cu']:.1e} mol/cc  |  "
-             f"**C₍Ni₎** = {solution['params']['C_Ni']:.1e} mol/cc")
-    st.write("**Interpolated**" if solution.get('interpolated') else "**Exact**")
+# ——————————————————————————————————————————————————————
+# 6. Flowchart (Mermaid)
+# ——————————————————————————————————————————————————————
+st.subheader("Attention Pipeline Flowchart")
+mermaid_code = f"""
+graph LR
+    subgraph Input
+        A[Sources θ_i] --> N[Normalize → θ̃_i ∈ [0,1]^3]
+        B[Target θ*] --> N
+    end
+    N --> Q[Query W_q → q]
+    N --> K[Keys W_k → k_i]
+    Q & K --> A1[Scaled Dot-Product]
+    A1 --> S1[Softmax per head]
+    S1 --> A2[Avg over {interpolator.num_heads} heads → ᾱ]
+    N --> D[Distance ||θ̃_i - θ̃*||]
+    D --> G[Gaussian exp(-d²/2σ²), σ={sigma}]
+    G --> S2[Normalize → s̄]
+    A2 & S2 --> F[Fuse w_i = (ᾱ_i s̄_i) / Σ]
+    F --> B1[Blend Fields]
+    B1 --> BC[Enforce BCs]
+    BC --> O[Output c*(x,y,t)]
+"""
+st.markdown(f"```mermaid\n{mermaid_code}\n```")
 
-    # --------------------------------------------------
-    # 2-D HEATMAPS
-    # --------------------------------------------------
-    st.subheader("2-D Concentration Heatmaps")
-    t_idx = st.slider("Time index", 0, len(solution['times'])-1,
-                      len(solution['times'])-1)
-    fig2d, fn2d = plot_2d_concentration(solution, t_idx,
-                                        cmap_cu=cmap_cu, cmap_ni=cmap_ni)
-    st.pyplot(fig2d)
-    with open(os.path.join("figures", f"{fn2d}.png"), "rb") as f:
-        st.download_button("Download PNG", f.read(), f"{fn2d}.png", "image/png")
-    with open(os.path.join("figures", f"{fn2d}.pdf"), "rb") as f:
-        st.download_button("Download PDF", f.read(), f"{fn2d}.pdf", "application/pdf")
+# ——————————————————————————————————————————————————————
+# 7. Appendix-Ready LaTeX Output
+# ——————————————————————————————————————————————————————
+with st.expander("Export LaTeX for Manuscript Appendix"):
+    latex_code = f"""
+\\appendix
+\\section{{Numerical Example of Attention Weights}}
+\\label{{app:attention_example}}
 
-    # --------------------------------------------------
-    # CENTERLINE CURVES
-    # --------------------------------------------------
-    st.subheader("Centerline Concentration Curves")
-    default_times = [0, len(solution['times'])//4, len(solution['times'])//2,
-                     3*len(solution['times'])//4, len(solution['times'])-1]
-    chosen = st.multiselect("Time indices", list(range(len(solution['times']))),
-                            default=default_times,
-                            format_func=lambda i: f"t = {solution['times'][i]:.1f}s")
-    if chosen:
-        fig_curves, fn_curves = plot_centerline_curves(
-            solution, chosen, sidebar_metric=sidebar_metric)
-        st.pyplot(fig_curves)
-        # (download buttons omitted for brevity – copy from the 2-D block)
+\\textbf{{Sources:}}
+\\begin{{align*}}
+&\\theta_1 = ({params_list[0][0]}, {params_list[0][1]:.2e}, {params_list[0][2]:.2e}) \\quad
+\\tilde{{\\theta}}_1 = ({norm_sources[0,0]:.3f}, {norm_sources[0,1]:.3f}, {norm_sources[0,2]:.3f}) \\\\
+&\\theta_2 = ({params_list[1][0]}, {params_list[1][1]:.2e}, {params_list[1][2]:.2e}) \\quad
+\\tilde{{\\theta}}_2 = ({norm_sources[1,0]:.3f}, {norm_sources[1,1]:.3f}, {norm_sources[1,2]:.3f}) \\\\
+&\\theta_3 = ({params_list[2][0]}, {params_list[2][1]:.2e}, {params_list[2][2]:.2e}) \\quad
+\\tilde{{\\theta}}_3 = ({norm_sources[2,0]:.3f}, {norm_sources[2,1]:.3f}, {norm_sources[2,2]:.3f})
+\\end{{align*}}
 
-    # --------------------------------------------------
-    # UPHILL DIFFUSION SECTION (kept exactly as you wrote)
-    # --------------------------------------------------
-    # … (all the uphill-related UI + plots) …
-    # (The code you already supplied works once the imports are present.)
+\\textbf{{Target:}} \\(\\theta^* = ({ly_target}, {c_cu_target:.2e}, {c_ni_target:.2e}) \\rightarrow 
+\\tilde{{\\theta}}^* = ({norm_target[0]:.3f}, {norm_target[1]:.3f}, {norm_target[2]:.3f})\\)
 
-    # --------------------------------------------------
-    # PARAMETER SWEEP, SUMMARY TABLE, OPTIMAL Ly …
-    # --------------------------------------------------
-    # (All the remaining sections from your original script are left
-    #  untouched – they now run because the core bugs are fixed.)
+\\textbf{{Weights:}}
+\\begin{{center}}
+\\begin{{tabular}}{{cccc}}
+\\toprule
+Source & Attention (ᾱ) & Gaussian (s̄) & Hybrid (w) \\\\
+\\midrule
+1 & {results['attention_weights'][0]:.3f} & {results['spatial_weights'][0]:.3f} & {results['combined_weights'][0]:.3f} \\\\
+2 & {results['attention_weights'][1]:.3f} & {results['spatial_weights'][1]:.3f} & {results['combined_weights'][1]:.3f} \\\\
+3 & {results['attention_weights'][2]:.3f} & {results['spatial_weights'][2]:.3f} & {results['combined_weights'][2]:.3f} \\\\
+\\bottomrule
+\\end{{tabular}}
+\\end{{center}}
+"""
+    st.code(latex_code, language='latex')
+    st.download_button("Download LaTeX", latex_code, file_name="attention_appendix.tex", mime="text/plain")
 
-if __name__ == "__main__":
-    # Create output folder for figures
-    os.makedirs("figures", exist_ok=True)
-    main()
+# ——————————————————————————————————————————————————————
+# 8. Footer
+# ——————————————————————————————————————————————————————
+st.markdown("---")
+st.caption("Developed for manuscript: *Attention-Based Interpolation of Diffusion Profiles in Cu-Ni Joints*")
