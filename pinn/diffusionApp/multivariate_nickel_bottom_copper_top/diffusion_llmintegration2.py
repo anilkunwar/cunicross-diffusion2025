@@ -25,7 +25,7 @@ if st.button("Generate Insights"):
                 generator = pipeline(
                     "text-generation",
                     model=model_name,
-                    device= 0 #-1  # -1 for CPU, change to 0 for GPU
+                    device=-1  # -1 for CPU, change to 0 for GPU
                 )
 
                 # Generate output
