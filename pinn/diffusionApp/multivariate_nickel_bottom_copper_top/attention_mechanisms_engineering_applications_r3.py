@@ -15,16 +15,20 @@ st.set_page_config(page_title="Attention-Based Diffusion Inference", layout="wid
 st.title("Attention-Driven Inference for Cu-Ni Interdiffusion & IMC Growth in Solder Joints")
 
 st.markdown("""
-**Engineering Context**: This tool leverages **transformer-inspired attention** to interpolate precomputed diffusion fields from PINN models and infer key phenomena in Cu pillar microbumps with Sn2.5Ag solder, as described in the experimental setup. It analyzes the role of domain length (\(L_y\)), boundary concentrations, substrate configurations (symmetric/asymmetric), and joining paths on concentration profiles, flux dynamics, uphill diffusion, cross-interactions, and intermetallic compound (IMC) growth kinetics at top (Cu) and bottom (Ni) interfaces.
+**Engineering Context**: This tool leverages **transformer-inspired attention** to interpolate precomputed diffusion fields from PINN models and infer key phenomena in Cu pillar microbumps with Sn2.5Ag solder. It analyzes the role of domain length (\(L_y\)), boundary concentrations, substrate configurations (symmetric/asymmetric), and joining paths on concentration profiles, flux dynamics, uphill diffusion, cross-interactions, and intermetallic compound (IMC) growth kinetics at top (Cu) and bottom (Ni) interfaces.
 """)
 
-# === Experimental Description (from database file) ===
-DB_PATH = "description_of_experiment.db"
+# === Experimental Description (from nlp_information/description_of_experiment.db) ===
+DB_DIR = "nlp_information"
+DB_FILENAME = "description_of_experiment.db"
+DB_PATH = os.path.join(DB_DIR, DB_FILENAME)
+
 if os.path.exists(DB_PATH):
     with open(DB_PATH, 'r', encoding='utf-8') as f:
         EXPERIMENTAL_DESCRIPTION = f.read().strip()
 else:
-    st.error(f"Database file `{DB_PATH}` not found. Please ensure it is in the same directory.")
+    st.error(f"Database file not found: `{DB_PATH}`\n\n"
+             "Please ensure the file exists in the `nlp_information/` directory.")
     EXPERIMENTAL_DESCRIPTION = ""
 
 # === Paraphrasing Model ===
@@ -60,14 +64,13 @@ synonyms = {
 def dynamic_replace(text):
     words = text.split()
     for i, word in enumerate(words):
-        clean_word = word.strip('.,;()').lower()
+        clean_word = ''.join(c for c in word if c.isalnum()).lower()
         if clean_word in synonyms:
             synonym = random.choice(synonyms[clean_word])
-            # Preserve punctuation
-            if word[-1] in '.,;()':
-                words[i] = synonym + word[-1]
-            else:
-                words[i] = synonym
+            # Preserve original punctuation
+            prefix = word[:word.index(clean_word)] if not word.startswith(clean_word) else ""
+            suffix = word[len(clean_word) + len(prefix):] if len(word) > len(clean_word) + len(prefix) else ""
+            words[i] = prefix + synonym + suffix
     return ' '.join(words)
 
 # === Model Definition ===
@@ -133,7 +136,7 @@ class MultiParamAttentionInterpolator(nn.Module):
 # === Sidebar: Controls ===
 with st.sidebar:
     st.header("Attention Model")
-    sigma = st.slider("Locality σ", 0.05, 0.50, 0.20, 0.01)
+    sigma = st.slider("Locality sigma", 0.05, 0.50, 0.20, 0.01)
     num_heads = st.slider("Heads", 1, 8, 4)
     d_head = st.slider("Dim/Head", 4, 16, 8)
     seed = st.number_input("Seed", 0, 9999, 42)
@@ -142,7 +145,7 @@ with st.sidebar:
 
     st.header("Joint Configuration")
     substrate_type = st.selectbox("Substrate Configuration", ["Cu(top)-Ni(bottom) Asymmetric", "Cu/Sn2.5Ag/Cu Symmetric", "Ni/Sn2.5Ag/Ni Symmetric"])
-    joining_path = st.selectbox("Joining Path (for Asymmetric)", ["Path I (Cu→Ni)", "Path II (Ni→Cu)", "N/A"])
+    joining_path = st.selectbox("Joining Path (for Asymmetric)", ["Path I (Cu to Ni)", "Path II (Ni to Cu)", "N/A"])
     joint_length = st.slider("Joint Thickness \(L_y\) (μm)", 30.0, 120.0, 60.0, 1.0)
 
 # === Source Solutions (Precomputed PINN Simulations) ===
@@ -221,21 +224,21 @@ if st.button("Run Attention Inference", type="primary"):
     max_w = w.max()
     ni_conc_ratio = c_ni_target / (c_cu_target + 1e-8)
     cu_conc_ratio = c_cu_target / (c_ni_target + 1e-8)
-    uphill_metric = ni_conc_ratio * max_w  # Calculation-focused metric
+    uphill_metric = ni_conc_ratio * max_w
     gradient_est = (c_cu_target - c_ni_target) / ly_target
     blended_ly = np.sum(w * np.array([p[0] for p in params_list]))
-    imc_thickness_est_cu = 2.0 + 0.02 * ly_target + 10 * cu_conc_ratio  # Arbitrary formula based on tables
+    imc_thickness_est_cu = 2.0 + 0.02 * ly_target + 10 * cu_conc_ratio
     imc_thickness_est_ni = 1.8 + 0.015 * ly_target + 8 * ni_conc_ratio
     uphill_risk_level = "High" if uphill_metric > 0.4 else "Moderate" if uphill_metric > 0.2 else "Low"
     imc_growth_pattern = "Faster on Ni side" if ni_conc_ratio > 0.5 else "Symmetric"
     void_risk_assessment = "High (Kirkendall voids in Cu3Sn)" if substrate_type == "Cu/Sn2.5Ag/Cu Symmetric" else "Suppressed by Ni addition"
     path_effect_desc = ""
-    if joining_path == "Path I (Cu→Ni)":
+    if joining_path == "Path I (Cu to Ni)":
         path_effect_desc = "Lower Ni content in Cu/Sn interface IMC; thinner (Cu,Ni)6Sn5 on Cu side compared to Path II."
-    elif joining_path == "Path II (Ni→Cu)":
+    elif joining_path == "Path II (Ni to Cu)":
         path_effect_desc = "Higher Ni content in Cu/Sn interface IMC; thicker (Cu,Ni)6Sn5 on Cu side due to initial Ni saturation in solder."
 
-    # Structure with >60% calculation focus, <40% experiment
+    # Structure with >60% calculation focus
     base_inferences = [
         f"Based on the attention-interpolated diffusion profiles (dominant blend from Source S{dominant_source} at {max_w:.1%} weight), with blended L_y ≈ {blended_ly:.1f} μm and gradient estimate {gradient_est:.1e} mol/cc/μm.",
         f"Domain Length Effect (L_y = {ly_target:.1f} μm): The calculated domain influences cross-diffusion, with {'steeper gradients ({gradient_est:.1e}) promoting rapid IMC' if ly_target < 60 else 'milder gradients sustaining diffusion over {ly_target:.1f} μm'}.",
@@ -250,9 +253,9 @@ if st.button("Run Attention Inference", type="primary"):
 
     # Paraphrase and dynamic replace (<40% experiment infusion)
     dynamic_inferences = []
-    exp_sentences = [s.strip() for s in EXPERIMENTAL_DESCRIPTION.split('.') if s.strip()][:3]  # Limit to first 3 sentences (~<40%)
+    exp_sentences = [s.strip() for s in EXPERIMENTAL_DESCRIPTION.split('.') if s.strip()][:3]  # <40% experimental context
     for i, base in enumerate(base_inferences):
-        if i < len(exp_sentences):  # Infuse limited experiment
+        if i < len(exp_sentences):
             context_infused = f"{exp_sentences[i]}. {base}"
         else:
             context_infused = base
@@ -292,5 +295,5 @@ Source & Attention & Gaussian & Hybrid \\\\
 """
         for i in range(len(w)):
             latex += f"S{i+1} & {results['attention_weights'][i]:.3f} & {results['spatial_weights'][i]:.3f} & {w[i]:.3f} \\\\\n"
-        latex += "\\bottomrule\n\\end{tabular}\n\n\\textbf{Inference}: {uphill_risk_level} uphill risk → {imc_growth_pattern} IMC growth; {void_risk_assessment} void formation. {path_effect_desc}"
+        latex += "\\bottomrule\n\\end{tabular}\n\n\\textbf{Inference}: {uphill_risk_level} uphill risk to {imc_growth_pattern} IMC growth; {void_risk_assessment} void formation. {path_effect_desc}"
         st.code(latex, language='latex')
