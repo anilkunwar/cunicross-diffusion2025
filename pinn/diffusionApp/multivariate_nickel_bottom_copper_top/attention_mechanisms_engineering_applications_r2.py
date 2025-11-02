@@ -138,12 +138,12 @@ if st.button("Run Attention Inference", type="primary"):
         tgt = results['norm_target']
         ax.scatter(src[:, 0], src[:, 1], c=src[:, 2], s=100, cmap='plasma', label='Sources', edgecolors='k')
         ax.scatter(tgt[0], tgt[1], c=tgt[2], s=300, marker='*', cmap='plasma', edgecolors='red', label='Target')
-        ax.set_xlabel("Norm. \(L_y\)")
-        ax.set_ylabel("Norm. \(C_{Cu}\)")
+        ax.set_xlabel("Norm. $L_y$")
+        ax.set_ylabel("Norm. $C_{Cu}$")
         ax.set_title("Parameter Space")
         ax.legend()
         cbar = plt.colorbar(ax.collections[0], ax=ax)
-        cbar.set_label("Norm. \(C_{Ni}\)")
+        cbar.set_label("Norm. $C_{Ni}$")
         st.pyplot(fig)
 
     with col2:
@@ -182,7 +182,7 @@ if st.button("Run Attention Inference", type="primary"):
     - **IMC Growth Kinetics**: Overall, Ni addition suppresses porous Cu3Sn formation after thermal cycling (-40°C to 125°C, 5°C/min, 10 min dwell), reducing voids by 20-50% and improving reliability. In TCT (1000 cycles), solder squeezing observed; Cu/SnAg/Cu shows Cu3Sn with voids, while Ni-containing joints resist embrittlement.
     - **PINN Modeling Tie-In**: The interpolated profiles from PINN (as in Fig. for 2D cross-diffusion domain with Ni bottom/Cu top) predict uphill diffusion driving IMC evolution, with loss convergence indicating accurate modeling of boundary-enforced concentrations.
 
-    These inferences explain the schematic in Figure 1: Symmetric (a-b) vs. asymmetric (c) joints via Paths I/II (d-e), reflow profile (f), and TCT (g), highlighting sequence-dependent IMC and void suppression by Ni.
+    These inferences explain the mechanisms in asymmetric joints  (solder joints with different substrates) highlighting sequence-dependent IMC and void suppression by Ni.
     """)
 
     # === Export ===
