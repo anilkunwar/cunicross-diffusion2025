@@ -19,7 +19,7 @@ st.markdown("""
 """)
 
 # === Experimental Description (from nlp_information/description_of_experiment.db) ===
-DB_DIR = "nlp_information"
+DB_DIR = os.path.join(os.path.dirname(__file__), "nlp_information")
 DB_FILENAME = "description_of_experiment.db"
 DB_PATH = os.path.join(DB_DIR, DB_FILENAME)
 
