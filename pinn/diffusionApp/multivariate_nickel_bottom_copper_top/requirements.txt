@@ -9,3 +9,5 @@ transformers
 langchain
 langchain-openai
 openai
+langchain-core
+langchain-community
