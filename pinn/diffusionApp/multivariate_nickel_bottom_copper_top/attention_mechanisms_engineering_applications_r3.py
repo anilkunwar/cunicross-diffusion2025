@@ -8,6 +8,7 @@ import seaborn as sns
 import io
 from transformers import AutoTokenizer, AutoModelForSeq2SeqLM
 import random
+import os
 
 # === Page Config ===
 st.set_page_config(page_title="Attention-Based Diffusion Inference", layout="wide")
@@ -17,26 +18,14 @@ st.markdown("""
 **Engineering Context**: This tool leverages **transformer-inspired attention** to interpolate precomputed diffusion fields from PINN models and infer key phenomena in Cu pillar microbumps with Sn2.5Ag solder, as described in the experimental setup. It analyzes the role of domain length (\(L_y\)), boundary concentrations, substrate configurations (symmetric/asymmetric), and joining paths on concentration profiles, flux dynamics, uphill diffusion, cross-interactions, and intermetallic compound (IMC) growth kinetics at top (Cu) and bottom (Ni) interfaces.
 """)
 
-# === Experimental Description (from database) ===
-EXPERIMENTAL_DESCRIPTION = """
-Cu pillar microbumps (50 μm height × 80 μm diameter) were first fabricated on silicon substrates using DC/pulse electroplating. Then two categories of under bump metallization (UBM) configurations were designed. The symmetric configurations Cu/Sn2.5Ag/Cu and Cu/Ni/Sn2.5Ag/Ni/Cu structures are schematically shown in Figs. 1(a)--(b)). The solder height was kept either at 50 μm or at 90 μm whereas the Ni UBM was of thickness 2 μm. The second category, that is asymmetric Cu/Sn2.5Ag/Ni structure is sketched in Fig. 1(c). To construct this structure, two distinct routes, namely Path I and Path II were employed.
-
-Path I (Cu→Ni): In this path highlighted in Fig. 1(d), a primary reflow (peak temperature 250±3 °C, reflow duration 90 s above the 221 °C eutectic temperature) is first performed to bond Sn2.5Ag solder to the Cu UBM. Then it is followed by a secondary reflow to join the preformed Sn2.5Ag/Cu microbump to the Ni UBM. The reflow T-t curve is presented in Fig. 1(f).
-
-Path II (Ni→Cu): As sketched in Fig. 1(e), this route utilized an initial reflow to form the Sn2.5Ag/Ni microbump on the Ni UBM, followed by subsequent bonding to the Cu UBM through a second reflow cycle. Both pathways maintained strict thermal control (±3 °C tolerance) to ensure consistent interfacial evolution while enabling comparative analysis of sequence-dependent intermetallic compound (IMC) formation in heterogeneous microbump systems.
-
-The prepared Cu pillar microbumps were then subjected to a thermal cycling test (TCT) under temperature conditions ranging from -40 °C to 125 °C. As shown in Fig. 1(g), a single cycle lasted for a duration of 1.5 h (90 min.). The temperature rise and fall rate was set at 5 °C/min, and the maximum or minimum temperatures were maintained for 10 min. each. At the conclusion of the test, the Cu pillar microbumps were encapsulated in epoxy resin, and samples for microstructural observation were prepared using metallographic grinding and polishing. Failure analysis was performed using scanning electron microscopy (SEM), and the composition of interfacial IMCs was characterized by energy dispersive X-ray spectroscopy (EDX). The area of the interfacial IMC layer in SEM images was measured using a Q500IW image analyzer and divided by the total length of the measured area to calculate the average IMC thickness. To improve accuracy, three images were captured for each interface, and each image was measured three times and averaged.
-
-Fig. 2 shows cross-sectional views of different structures solder joints produced via Cu and Ni UBM, respectively. Fig. 2a and d show the typical cross-sectional SEM BEIs of the Ni/Sn2.5Ag/Ni and Cu/Sn2.5Ag/Cu joints reflowed for 90s. Both structures solder joints had symmetric growth of the interfacial IMCs. Reflowing for 90 sec yielded typical needle-type Ni3Sn4 IMCs at Ni/Sn2.5Ag/Ni interfaces and at Cu/Sn2.5Ag/Cu interfaces produced interfacial IMCs are Cu6Sn5, as shown in Fig. 2 b-c and Fig. 2 e-f, respectively. The interfacial IMCs of the Cu/Sn2.5Ag/Ni emerged asymmetric growth, that is, Ni UBM experienced a considerably quicker rate of interfacial IMC growth than Cu UBM. Cu and Ni UBM both produced interfacial IMCs that are (Cu, Ni)6Sn5. And the IMC morphology at interface of Sn/Ni is long rod shape, its scallop shape at interface of Sn/Cu shown in Fig. 2h-i.
-
-Comparing the three joint structures, the IMC growth at the Cu/Solder/Cu interfaces was found to be faster than at the Cu/Solder/Ni and Ni/Solder/Ni interfaces. This could be due to the higher solubility of Cu in Sn, which accelerates the formation of Cu6Sn5 during the soldering process. In contrast, the Ni/Solder/Ni joints, while forming more stable Ni3Sn4 IMCs, exhibited slower growth rates, likely due to the lower diffusivity of Ni compared to Cu. This difference in IMC growth behavior is critical for determining the mechanical reliability and thermal stability of the joints, as faster IMC growth may lead to embrittlement, while slower growth may enhance the long-term durability of the solder joint.
-
-Fig. 3 shows the overall and local cross-sectional SEM backscattered images (BEIs) of Ni/Sn2.5Ag/Ni, Cu/Sn2.5Ag/Cu, and Cu/Sn2.5Ag/Ni joints after a 1000-cycle TCT (Thermal Cycling Test). It can be observed that the morphology of the IMCs at the interfaces on both sides of the copper column joints in the three structures changed after TCT. Additionally, a solder squeezing phenomenon was observed in the 1000-cycle samples, which could potentially influence the reliability of the joints under extended thermal cycling. A solder squeezing phenomenon was also observed in the 1000-cycle samples. In the Cu/Sn2.5Ag/Cu solder joints, Cu3Sn IMCs formed at the interface between the Cu6Sn5 layer and the Cu substrate and Kirkendall voids were observed both within Cu3Sn and at the Cu3Sn/Cu interface after a 1000-cycle TCT show in Fig. 3. During the thermal cycling process, the Cu atoms on both sides of the Cu/Sn2.5Ag/Cu joints continuously diffused into the solder, resulting in a solid-state diffusion reaction occurs between the solder layer and the copper columns, with Cu6Sn5 being the first to form at the interface. As more Cu atoms diffused into the Cu6Sn5 layer, a solid-state transformation of the intermetallic compound occurred: Cu6Sn5 + 9Cu → 5Cu3Sn. This led to a change in the IMC type at the interface, from Cu6Sn5 to Cu3Sn. As the number of thermal cycles increased, Cu atoms from the Cu substrate participate in reactions at the interface, continuously consuming Sn components, thereby causing the intermetallic compound layer to continuously advance towards the direction of Cu atoms. On the other hand, Cu atoms from the Cu substrate participate in reactions at the Cu6Sn5/Cu3Sn interface, continuously consuming Cu6Sn5, which gradually increases the thickness of the Cu3Sn intermetallic compound layer. This results in the formation of different contrast layers at the interface, with the lighter-colored part being Cu6Sn5 and the darker-colored part near the copper side interface being Cu3Sn. It can be seen that the formation of Kirkendall voids is closely related to the formation and thickening of porous Cu3Sn. Therefore, how to suppress the formation of porous Cu3Sn is the key to reducing the generation of Kirkendall voids. From Fig. 3h and i, we can see that after 1000 thermal cycles, the Cu/Sn2.5Ag/Ni joint do not form voids at the Ni/Sn2.5Ag interface, and there is no formation of Cu3Sn at the Cu/Sn2.5Ag interface, only a very few voids. With Ni additions, the Cu3Sn layer became thinner, and the amount of Kirkendall voids decreased correspondingly, as shown in Fig. 3. In other words, Ni addition did have its effectiveness in reducing the amount of the Kirkendall voids.
-
-Fig. 4 shows a set of as-assembled Cu/Sn2.5Ag(90μm)/Ni solder joints produced via Path I (Fig. 4 a-c) and II (Fig. 4, d-e), respectively. As can be observed in these figures, an intermetallic compound (IMC) layer respectively grew at both solder/Ni and solder/Cu interfaces with the aid of EDS. Based on Fig. 4 (a)-(f) it can be seen that the original interface IMC came into being at Cu side in a scallop shape, while the original interface (Cu,Ni)6Sn5 came into being on Ni side in a short rod shape. Nevertheless, the Cu-to-Ni ratio and the thickness of the (Cu,Ni)6Sn5 were different at the different interfaces, as summarized in Table I. Additionally, isolated (Cu,Ni)6Sn5 colonies were scattered throughout the solder matrix. From Table 1, we can know that under the same size, the content of Ni atoms in the Cu/Sn interface compound in paths II is higher than that in the Cu/Sn interface compound in paths I, which results in the thickness of the Cu/Sn interface compound in paths II being greater than that in paths I. This is because in path 1, the solder first reacts with the Cu substrate, and the solder changes from Sn2.5Ag binary alloy to ternary Sn-Ag-Cu alloy solder which is nearly saturated with Cu. After Cu atom is integrated into the solder, the solubility of Ni atom in the solder is little affected, and the solubility of Cu atom in the Sn2.5Ag solder is larger. The ternary Sn-Ag-Cu alloy solder will react with the Ni side substrate to form a thicker (Cu,Ni)6Sn5, and the denser interfacial compound will reduce the integration of Ni atoms into the filler metal, and the Ni atoms reaching the Cu side interface will be reduced. On the contrary, paths II, because the solder reacts with the Ni substrate first, the solder is transformed from Sn2.5Ag binary alloy into a ternary Sn-Ag-Ni alloy solder that is nearly saturated with Ni. After Ni atoms are integrated into the solder, the solubility of Cu atoms in the solder will be reduced, so the Cu atoms reaching the Ni side will be reduced. When the second reflux occurs, the Ni atom content in the solder is higher. The number of Ni atoms reaching the Cu side interface increases.
-
-Fig. 5 shows a set of as-assembled Cu/Sn2.5Ag(50μm)/Ni solder joints produced via Path I (Fig. 6 a-c) and II (Fig. 6 d-e), respectively. Based on Fig. 4 (a)-(f) it is observed that the original interface IMC came into being at Cu side in a scallop shape, while the original interface (Cu,Ni)6Sn5 came into being on Ni side in a long rod shape. EDS analysis was performed on the Cu/Sn2.5Ag(50μm)/Ni solder joints, as shown in Table 2. The results show that compared with solder thickness of 90μm. Under the same experimental conditions, the difference in the concentration of Ni atoms in the Cu/Sn and interfacial compounds between Path II and Path I increases, make the thickness of the Cu/Sn interfacial compound in Path II is significantly greater than that in Path I as shown in Fig. 7.
-"""
+# === Experimental Description (from database file) ===
+DB_PATH = "description_of_experiment.db"
+if os.path.exists(DB_PATH):
+    with open(DB_PATH, 'r', encoding='utf-8') as f:
+        EXPERIMENTAL_DESCRIPTION = f.read().strip()
+else:
+    st.error(f"Database file `{DB_PATH}` not found. Please ensure it is in the same directory.")
+    EXPERIMENTAL_DESCRIPTION = ""
 
 # === Paraphrasing Model ===
 @st.cache_resource
@@ -71,8 +60,14 @@ synonyms = {
 def dynamic_replace(text):
     words = text.split()
     for i, word in enumerate(words):
-        if word.lower() in synonyms:
-            words[i] = random.choice(synonyms[word.lower()])
+        clean_word = word.strip('.,;()').lower()
+        if clean_word in synonyms:
+            synonym = random.choice(synonyms[clean_word])
+            # Preserve punctuation
+            if word[-1] in '.,;()':
+                words[i] = synonym + word[-1]
+            else:
+                words[i] = synonym
     return ' '.join(words)
 
 # === Model Definition ===
@@ -173,6 +168,9 @@ with col2:
 
 # === Compute ===
 if st.button("Run Attention Inference", type="primary"):
+    if not EXPERIMENTAL_DESCRIPTION:
+        st.stop()
+
     with st.spinner("Interpolating diffusion profiles and inferring joint behavior..."):
         interpolator = MultiParamAttentionInterpolator(sigma, num_heads, d_head)
         results = interpolator.compute_weights(params_list, ly_target, c_cu_target, c_ni_target)
@@ -252,7 +250,7 @@ if st.button("Run Attention Inference", type="primary"):
 
     # Paraphrase and dynamic replace (<40% experiment infusion)
     dynamic_inferences = []
-    exp_sentences = EXPERIMENTAL_DESCRIPTION.split('. ')[:3]  # Limit to <40% content
+    exp_sentences = [s.strip() for s in EXPERIMENTAL_DESCRIPTION.split('.') if s.strip()][:3]  # Limit to first 3 sentences (~<40%)
     for i, base in enumerate(base_inferences):
         if i < len(exp_sentences):  # Infuse limited experiment
             context_infused = f"{exp_sentences[i]}. {base}"
