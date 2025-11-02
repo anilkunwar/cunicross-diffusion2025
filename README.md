@@ -70,11 +70,13 @@ with training datasets for 0 BCs (Transformer-inspired Attention): [![meaningtow
 
  [![meaningtowords](https://img.shields.io/badge/enggapplications-streamlit-red)](https://attention-mechanism-engineering-applications.streamlit.app/)
 
-  [![meaningtowords](https://img.shields.io/badge/enggapplications2-streamlit-red)](https://attention-mechanism-engineering-applications2.streamlit.app/)
+  [![meaningtowords](https://img.shields.io/badge/enggapplications2-streamlit-red)](https://attention-mechanism-engineering-applications2.streamlit.app/)  (static inference)
  
+For dynamic inferences using NLP
 
- [![meaningtowords](https://img.shields.io/badge/txt2db-streamlit-red)](https://text-to-db.streamlit.app/)
- 
+ [![meaningtowords](https://img.shields.io/badge/txt2db-streamlit-red)](https://text-to-db.streamlit.app/) [ The user's information about the experimental procedure ]
+
+ [![meaningtowords](https://img.shields.io/badge/enggapplications3-streamlit-red)](https://attention-mechanism-engineering-applications3.streamlit.app/) [ Generative AI's dynamic response ]
 
 
 
