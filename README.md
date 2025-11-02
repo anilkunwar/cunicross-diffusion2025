@@ -79,7 +79,9 @@ For dynamic inferences using NLP
  [![meaningtowords](https://img.shields.io/badge/enggapplications3-streamlit-red)](https://attention-mechanism-engineering-applications3.streamlit.app/) [ Generative AI's dynamic response ]
  
 
+LLM integration 
 
+MWE:  [![meaningtowords](https://img.shields.io/badge/openaichat-streamlit-red)](https://diffusionllm-integration.streamlit.app/) 
 
   
 
