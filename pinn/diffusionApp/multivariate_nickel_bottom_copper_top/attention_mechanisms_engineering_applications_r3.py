@@ -80,10 +80,19 @@ def dynamic_replace(text):
         clean_word = ''.join(c for c in word if c.isalnum()).lower()
         if clean_word in synonyms:
             synonym = random.choice(synonyms[clean_word])
-            # Preserve original punctuation
-            prefix = word[:word.index(clean_word)] if not word.startswith(clean_word) else ""
-            suffix = word[len(clean_word) + len(prefix):] if len(word) > len(clean_word) + len(prefix) else ""
-            words[i] = prefix + synonym + suffix
+            try:
+                pos = word.lower().index(clean_word)
+                prefix = word[:pos]
+                stem = word[pos:pos + len(clean_word)]
+                suffix = word[pos + len(clean_word):]
+                # Preserve case
+                if stem.isupper():
+                    synonym = synonym.upper()
+                elif stem.istitle():
+                    synonym = synonym.capitalize()
+                words[i] = prefix + synonym + suffix
+            except ValueError:
+                pass  # Skip if substring not found
     return ' '.join(words)
 
 # === Model Definition ===
