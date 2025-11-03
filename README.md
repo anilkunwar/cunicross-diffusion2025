@@ -88,6 +88,7 @@ MWE:  [![meaningtowords](https://img.shields.io/badge/openaichat-streamlit-red)]
 [![meaningtowords](https://img.shields.io/badge/diffusionllm3-streamlit-red)](https://diffusion-llmintegration3.streamlit.app/ ) (local+cloud)
 [![meaningtowords](https://img.shields.io/badge/diffusionllm4-streamlit-red)](https://diffusion-llmintegration4.streamlit.app/ ) (local+cloud)
 [![meaningtowords](https://img.shields.io/badge/diffusionllm5-streamlit-red)](https://diffusion-llmintegration5.streamlit.app/ ) (local+cloud)
+[![meaningtowords](https://img.shields.io/badge/diffusionllm6-streamlit-red)](https://diffusion-llmintegration6.streamlit.app/ ) (local+cloud)
 
 
 
