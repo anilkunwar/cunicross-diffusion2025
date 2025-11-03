@@ -122,8 +122,8 @@ class DiffusionAnalyzer:
     def integrate_imc_growth(self, flux_Cu, flux_Ni, time_hours):
         """Integrate IMC thickness based on interdiffusion fluxes"""
         # IMC growth proportional to interdiffusion flux
-        k_Cu6Sn5 = 2.3e-11  # Growth constant for Cu6Sn5 (m²/s)
-        k_Ni3Sn4 = 1.8e-11  # Growth constant for Ni3Sn4 (m²/s)
+        k_Cu6Sn5 = 2.3e-21  # Growth constant for Cu6Sn5 (m²/s)
+        k_Ni3Sn4 = 1.8e-21  # Growth constant for Ni3Sn4 (m²/s)
         
         time_seconds = time_hours * 3600
         
@@ -275,7 +275,7 @@ if st.button("Run Attention Inference", type="primary"):
     
     # IMC Growth Results
     st.markdown(f"""
-    **IMC Growth Prediction after {reflow_time} seconds aging:**
+    **IMC Growth Prediction after {reflow_time} seconds reflow:**
     - **Cu-side IMC (Cu6Sn5) thickness**: {imc_Cu_thickness:.2f} μm
     - **Ni-side IMC (Ni3Sn4) thickness**: {imc_Ni_thickness:.2f} μm
     - **IMC thickness ratio (Cu/Ni)**: {imc_Cu_thickness/imc_Ni_thickness:.2f}
