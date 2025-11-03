@@ -122,14 +122,14 @@ class DiffusionAnalyzer:
     def integrate_imc_growth(self, flux_Cu, flux_Ni, time_hours):
         """Integrate IMC thickness based on interdiffusion fluxes"""
         # IMC growth proportional to interdiffusion flux
-        k_Cu6Sn5 = 2.3e-21  # Growth constant for Cu6Sn5 (m²/s)
-        k_Ni3Sn4 = 1.8e-21  # Growth constant for Ni3Sn4 (m²/s)
+        k_Cu6Sn5 = 2.3e-14  # Growth constant for Cu6Sn5 (m²/s)
+        k_Ni3Sn4 = 1.8e-14  # Growth constant for Ni3Sn4 (m²/s)
         
         time_seconds = time_hours * 3600
         
         # IMC thickness from parabolic growth law
-        imc_Cu_thickness = np.cbrt(2 * k_Cu6Sn5 * time_seconds) * 1e6  # convert to μm
-        imc_Ni_thickness = np.cbrt(2 * k_Ni3Sn4 * time_seconds) * 1e6  # convert to μm
+        imc_Cu_thickness = k_Cu6Sn5 *np.cbrt(time_seconds) * 1e12  # convert to μm
+        imc_Ni_thickness = k_Ni3Sn4 *np.cbrt(time_seconds) * 1e12  # convert to μm
         
         return imc_Cu_thickness, imc_Ni_thickness
 
