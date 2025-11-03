@@ -18,6 +18,14 @@ st.markdown("""
 **Engineering Context**: This tool leverages **transformer-inspired attention** to interpolate precomputed diffusion fields from PINN models and infer key phenomena in Cu pillar microbumps with Sn2.5Ag solder. It analyzes the role of domain length (\(L_y\)), boundary concentrations, substrate configurations (symmetric/asymmetric), and joining paths on concentration profiles, flux dynamics, uphill diffusion, cross-interactions, and intermetallic compound (IMC) growth kinetics at top (Cu) and bottom (Ni) interfaces.
 """)
 
+# === Initialize Session State ===
+if 'computation_complete' not in st.session_state:
+    st.session_state.computation_complete = False
+if 'results' not in st.session_state:
+    st.session_state.results = None
+if 'diffusion_data' not in st.session_state:
+    st.session_state.diffusion_data = None
+
 # === Experimental Description (from nlp_information/description_of_experiment.db) ===
 DB_DIR = os.path.join(os.path.dirname(__file__), "nlp_information")
 DB_FILENAME = "description_of_experiment.db"
@@ -29,7 +37,6 @@ if os.path.exists(DB_PATH):
     try:
         conn = sqlite3.connect(DB_PATH)
         cursor = conn.cursor()
-        # Example: if your table is named 'experiments' and has a column 'description'
         cursor.execute("SELECT description FROM experiments LIMIT 1;")
         row = cursor.fetchone()
         if row:
@@ -111,7 +118,6 @@ class DiffusionAnalyzer:
         
     def concentration_profile(self, y, L, C_top, C_bottom, D, time):
         """Calculate concentration profile using error function solution"""
-        # Convert to meters for diffusion calculation
         y_norm = y / L
         return C_bottom + (C_top - C_bottom) * (1 - y_norm)
     
@@ -121,15 +127,14 @@ class DiffusionAnalyzer:
     
     def integrate_imc_growth(self, flux_Cu, flux_Ni, time_hours):
         """Integrate IMC thickness based on interdiffusion fluxes"""
-        # IMC growth proportional to interdiffusion flux
         k_Cu6Sn5 = 2.3e-14  # Growth constant for Cu6Sn5 (m²/s)
         k_Ni3Sn4 = 1.8e-14  # Growth constant for Ni3Sn4 (m²/s)
         
-        time_seconds = time_hours * 3600
+        time_seconds = time_hours
         
         # IMC thickness from parabolic growth law
-        imc_Cu_thickness = k_Cu6Sn5 *np.cbrt(time_seconds) * 1e12  # convert to μm
-        imc_Ni_thickness = k_Ni3Sn4 *np.cbrt(time_seconds) * 1e12  # convert to μm
+        imc_Cu_thickness = k_Cu6Sn5 * np.cbrt(time_seconds) * 1e12  # convert to μm
+        imc_Ni_thickness = k_Ni3Sn4 * np.cbrt(time_seconds) * 1e12  # convert to μm
         
         return imc_Cu_thickness, imc_Ni_thickness
 
@@ -180,7 +185,7 @@ with col2:
     c_cu_target = st.number_input("Top BC \(C_{Cu}\) (mol/cc)", 0.0, 2.9e-3, 2.0e-3, 1e-4, format="%.1e", key="c_cu_target")
     c_ni_target = st.number_input("Bottom BC \(C_{Ni}\) (mol/cc)", 0.0, 1.8e-3, 1.0e-3, 1e-4, format="%.1e", key="c_ni_target")
 
-# === Compute ===
+# === Main Computation ===
 if st.button("Run Attention Inference", type="primary"):
     with st.spinner("Interpolating diffusion profiles and inferring joint behavior..."):
         interpolator = MultiParamAttentionInterpolator(sigma, num_heads, d_head)
@@ -191,7 +196,7 @@ if st.button("Run Attention Inference", type="primary"):
         y_positions = np.linspace(0, ly_target, num_points)
         
         # Calculate concentration profiles
-        time_seconds = reflow_time #reflow_time * 3600
+        time_seconds = reflow_time
         Cu_profile = analyzer.concentration_profile(y_positions, ly_target, c_cu_target, 0, analyzer.D_Cu, time_seconds)
         Ni_profile = analyzer.concentration_profile(ly_target - y_positions, ly_target, c_ni_target, 0, analyzer.D_Ni, time_seconds)
         
@@ -206,15 +211,40 @@ if st.button("Run Attention Inference", type="primary"):
             np.mean(flux_Cu), np.mean(flux_Ni), reflow_time
         )
 
+        # Store results in session state
+        st.session_state.results = results
+        st.session_state.diffusion_data = {
+            'y_positions': y_positions,
+            'Cu_profile': Cu_profile,
+            'Ni_profile': Ni_profile,
+            'flux_Cu': flux_Cu,
+            'flux_Ni': flux_Ni,
+            'imc_Cu_thickness': imc_Cu_thickness,
+            'imc_Ni_thickness': imc_Ni_thickness,
+            'params_list': params_list,
+            'ly_target': ly_target,
+            'c_cu_target': c_cu_target,
+            'c_ni_target': c_ni_target,
+            'substrate_type': substrate_type,
+            'joining_path': joining_path,
+            'reflow_time': reflow_time
+        }
+        st.session_state.computation_complete = True
+
     st.success("Inference Complete!")
 
+# === Display Results if Computation is Complete ===
+if st.session_state.computation_complete:
+    results = st.session_state.results
+    data = st.session_state.diffusion_data
+    
     # === Results ===
     col1, col2 = st.columns([1.2, 1])
 
     with col1:
         st.subheader("Hybrid Attention Weights")
         df_weights = pd.DataFrame({
-            'Source': [f"S{i+1}" for i in range(len(params_list))],
+            'Source': [f"S{i+1}" for i in range(len(data['params_list']))],
             'Attention': np.round(results['attention_weights'], 4),
             'Gaussian': np.round(results['spatial_weights'], 4),
             'Hybrid': np.round(results['combined_weights'], 4)
@@ -252,8 +282,8 @@ if st.button("Run Attention Inference", type="primary"):
     with col1:
         # Concentration profiles
         fig, ax = plt.subplots(figsize=(8, 6))
-        ax.plot(Cu_profile, y_positions, 'r-', linewidth=2, label='Cu Concentration')
-        ax.plot(Ni_profile, y_positions, 'b-', linewidth=2, label='Ni Concentration')
+        ax.plot(data['Cu_profile'], data['y_positions'], 'r-', linewidth=2, label='Cu Concentration')
+        ax.plot(data['Ni_profile'], data['y_positions'], 'b-', linewidth=2, label='Ni Concentration')
         ax.set_xlabel('Concentration (mol/cc)')
         ax.set_ylabel('Position (μm)')
         ax.set_title('Concentration Profiles')
@@ -264,8 +294,8 @@ if st.button("Run Attention Inference", type="primary"):
     with col2:
         # Flux profiles
         fig, ax = plt.subplots(figsize=(8, 6))
-        ax.plot(flux_Cu, y_positions, 'r--', linewidth=2, label='Cu Flux')
-        ax.plot(flux_Ni, y_positions, 'b--', linewidth=2, label='Ni Flux')
+        ax.plot(data['flux_Cu'], data['y_positions'], 'r--', linewidth=2, label='Cu Flux')
+        ax.plot(data['flux_Ni'], data['y_positions'], 'b--', linewidth=2, label='Ni Flux')
         ax.set_xlabel('Diffusion Flux (mol/m²s)')
         ax.set_ylabel('Position (μm)')
         ax.set_title('Diffusion Flux Profiles')
@@ -275,12 +305,12 @@ if st.button("Run Attention Inference", type="primary"):
     
     # IMC Growth Results
     st.markdown(f"""
-    **IMC Growth Prediction after {reflow_time} seconds reflow:**
-    - **Cu-side IMC (Cu6Sn5) thickness**: {imc_Cu_thickness:.2f} μm
-    - **Ni-side IMC (Ni3Sn4) thickness**: {imc_Ni_thickness:.2f} μm
-    - **IMC thickness ratio (Cu/Ni)**: {imc_Cu_thickness/imc_Ni_thickness:.2f}
-    - **Average Cu flux**: {np.mean(flux_Cu):.2e} mol/m²s
-    - **Average Ni flux**: {np.mean(flux_Ni):.2e} mol/m²s
+    **IMC Growth Prediction after {data['reflow_time']} seconds reflow:**
+    - **Cu-side IMC (Cu6Sn5) thickness**: {data['imc_Cu_thickness']:.2f} μm
+    - **Ni-side IMC (Ni3Sn4) thickness**: {data['imc_Ni_thickness']:.2f} μm
+    - **IMC thickness ratio (Cu/Ni)**: {data['imc_Cu_thickness']/data['imc_Ni_thickness']:.2f}
+    - **Average Cu flux**: {np.mean(data['flux_Cu']):.2e} mol/m²s
+    - **Average Ni flux**: {np.mean(data['flux_Ni']):.2e} mol/m²s
     """)
 
     # === AI-Generated Engineering Insights ===
@@ -294,13 +324,13 @@ if st.button("Run Attention Inference", type="primary"):
     Experimental Context: {EXPERIMENTAL_DESCRIPTION}
     
     Generate engineering insights on Cu-Ni interdiffusion and IMC growth in solder joints with the following parameters:
-    - Joint configuration: {substrate_type}, {joining_path}
-    - Joint thickness (L_y): {ly_target} μm
-    - Boundary concentrations: Cu={c_cu_target:.1e} mol/cc, Ni={c_ni_target:.1e} mol/cc
-    - Reflow time: {reflow_time} seconds
-    - Predicted IMC thickness: Cu-side={imc_Cu_thickness:.2f} μm, Ni-side={imc_Ni_thickness:.2f} μm
+    - Joint configuration: {data['substrate_type']}, {data['joining_path']}
+    - Joint thickness (L_y): {data['ly_target']} μm
+    - Boundary concentrations: Cu={data['c_cu_target']:.1e} mol/cc, Ni={data['c_ni_target']:.1e} mol/cc
+    - Reflow time: {data['reflow_time']} seconds
+    - Predicted IMC thickness: Cu-side={data['imc_Cu_thickness']:.2f} μm, Ni-side={data['imc_Ni_thickness']:.2f} μm
     - Dominant attention source: Source {dominant_source} with weight {w.max():.1%}
-    - Average fluxes: Cu={np.mean(flux_Cu):.2e} mol/m²s, Ni={np.mean(flux_Ni):.2e} mol/m²s
+    - Average fluxes: Cu={np.mean(data['flux_Cu']):.2e} mol/m²s, Ni={np.mean(data['flux_Ni']):.2e} mol/m²s
     
     Focus on diffusion mechanisms, IMC growth kinetics, reliability implications, and comparison with experimental observations.
     """
@@ -325,19 +355,19 @@ if st.button("Run Attention Inference", type="primary"):
             except Exception as e:
                 st.error(f"Error generating AI insights: {e}")
                 # Fallback to precomputed insights using experimental description
-                ni_conc_ratio = c_ni_target / (c_cu_target + 1e-8)
-                cu_conc_ratio = c_cu_target / (c_ni_target + 1e-8)
+                ni_conc_ratio = data['c_ni_target'] / (data['c_cu_target'] + 1e-8)
+                cu_conc_ratio = data['c_cu_target'] / (data['c_ni_target'] + 1e-8)
                 uphill_risk = "High" if ni_conc_ratio > 0.5 or cu_conc_ratio > 2.0 else "Moderate" if ni_conc_ratio > 0.3 else "Low"
                 
                 st.markdown(f"""
                 **Based on Experimental Context**: {EXPERIMENTAL_DESCRIPTION[:200]}...
                 
                 **AI Insights Fallback Analysis**:
-                - **Domain Effect**: {'Thinner joints promote faster IMC growth' if ly_target < 60 else 'Thicker joints sustain cross-diffusion'}
-                - **Flux Dynamics**: Cu flux dominates with {np.mean(flux_Cu):.2e} mol/m²s vs Ni flux {np.mean(flux_Ni):.2e} mol/m²s
+                - **Domain Effect**: {'Thinner joints promote faster IMC growth' if data['ly_target'] < 60 else 'Thicker joints sustain cross-diffusion'}
+                - **Flux Dynamics**: Cu flux dominates with {np.mean(data['flux_Cu']):.2e} mol/m²s vs Ni flux {np.mean(data['flux_Ni']):.2e} mol/m²s
                 - **Uphill Diffusion**: {uphill_risk} risk due to concentration ratios
-                - **IMC Growth**: Asymmetric growth with Cu-side {imc_Cu_thickness:.2f} μm vs Ni-side {imc_Ni_thickness:.2f} μm
-                - **Reliability**: {'Void formation risk high' if imc_Cu_thickness/imc_Ni_thickness > 2.0 else 'Stable IMC formation'}
+                - **IMC Growth**: Asymmetric growth with Cu-side {data['imc_Cu_thickness']:.2f} μm vs Ni-side {data['imc_Ni_thickness']:.2f} μm
+                - **Reliability**: {'Void formation risk high' if data['imc_Cu_thickness']/data['imc_Ni_thickness'] > 2.0 else 'Stable IMC formation'}
                 """)
 
     # === Export ===
@@ -345,7 +375,7 @@ if st.button("Run Attention Inference", type="primary"):
     
     # Create separate DataFrames to avoid length mismatch
     weights_df = pd.DataFrame({
-        'source': [f"S{i+1}" for i in range(len(params_list))],
+        'source': [f"S{i+1}" for i in range(len(data['params_list']))],
         'attention_weights': results['attention_weights'],
         'spatial_weights': results['spatial_weights'],
         'combined_weights': results['combined_weights']
@@ -354,8 +384,8 @@ if st.button("Run Attention Inference", type="primary"):
     target_df = pd.DataFrame({
         'parameter': ['ly_target', 'c_cu_target', 'c_ni_target', 'reflow_time', 
                      'imc_Cu_thickness', 'imc_Ni_thickness', 'avg_Cu_flux', 'avg_Ni_flux'],
-        'value': [ly_target, c_cu_target, c_ni_target, reflow_time,
-                 imc_Cu_thickness, imc_Ni_thickness, np.mean(flux_Cu), np.mean(flux_Ni)]
+        'value': [data['ly_target'], data['c_cu_target'], data['c_ni_target'], data['reflow_time'],
+                 data['imc_Cu_thickness'], data['imc_Ni_thickness'], np.mean(data['flux_Cu']), np.mean(data['flux_Ni'])]
     })
     
     # Combine for single CSV download
@@ -379,10 +409,10 @@ if st.button("Run Attention Inference", type="primary"):
     with st.expander("Export LaTeX Appendix"):
         latex = f"""
 \\appendix
-\\section{{Attention Inference Example: {substrate_type}, Path {joining_path}, \(L_y = {ly_target:.1f}\)\\mu m\}}
-\\label{{app:inf-{int(ly_target)}}}
+\\section{{Attention Inference Example: {data['substrate_type']}, Path {data['joining_path']}, \(L_y = {data['ly_target']:.1f}\)\\mu m\}}
+\\label{{app:inf-{int(data['ly_target'])}}}
 
-\\textbf{{Target}}: \\(\\theta^* = ({ly_target:.1f}, {c_cu_target:.1e}, {c_ni_target:.1e})\\)
+\\textbf{{Target}}: \\(\\theta^* = ({data['ly_target']:.1f}, {data['c_cu_target']:.1e}, {data['c_ni_target']:.1e})\\)
 
 \\textbf{{Weights}}:
 \\begin{{tabular}}{{lccc}}
@@ -393,6 +423,13 @@ Source & Attention & Gaussian & Hybrid \\\\
         for i in range(len(w)):
             latex += f"S{i+1} & {results['attention_weights'][i]:.3f} & {results['spatial_weights'][i]:.3f} & {w[i]:.3f} \\\\\n"
         latex += f"\\bottomrule\n\\end{{tabular}}\n\n"
-        latex += f"\\textbf{{IMC Growth}}: Cu-side: {imc_Cu_thickness:.2f} \\mu m, Ni-side: {imc_Ni_thickness:.2f} \\mu m after {reflow_time} seconds aging."
+        latex += f"\\textbf{{IMC Growth}}: Cu-side: {data['imc_Cu_thickness']:.2f} \\mu m, Ni-side: {data['imc_Ni_thickness']:.2f} \\mu m after {data['reflow_time']} seconds aging."
         latex += f"\\textbf{{Experimental Context}}: {EXPERIMENTAL_DESCRIPTION[:100]}..."
         st.code(latex, language='latex')
+
+# Clear results if needed
+if st.session_state.computation_complete and st.button("Clear Results"):
+    st.session_state.computation_complete = False
+    st.session_state.results = None
+    st.session_state.diffusion_data = None
+    st.rerun()
