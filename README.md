@@ -65,6 +65,8 @@ with training datasets for 0 BCs (Transformer-inspired Attention): [![meaningtow
 
    Understanding the Attention Weights and Engineering Applications 
 
+  * Transformer-Inspired Attention Interpolator for Diffusion Fields *
+
  [![meaningtowords](https://img.shields.io/badge/numericalattnmech-streamlit-red)](https://attention-mechanism-numerical-illustration.streamlit.app/)
  
 
