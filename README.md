@@ -86,6 +86,8 @@ LLM integration
 MWE:  [![meaningtowords](https://img.shields.io/badge/openaichat-streamlit-red)](https://diffusionllm-integration.streamlit.app/)  (cloud)
 [![meaningtowords](https://img.shields.io/badge/transformers-streamlit-red)](https://diffusion-llmintegration2.streamlit.app/ ) (local)
 [![meaningtowords](https://img.shields.io/badge/diffusionllm3-streamlit-red)](https://diffusion-llmintegration3.streamlit.app/ ) (local+cloud)
+[![meaningtowords](https://img.shields.io/badge/diffusionllm4-streamlit-red)](https://diffusion-llmintegration4.streamlit.app/ ) (local+cloud)
+[![meaningtowords](https://img.shields.io/badge/diffusionllm5-streamlit-red)](https://diffusion-llmintegration5.streamlit.app/ ) (local+cloud)
 
 
 
