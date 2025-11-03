@@ -84,6 +84,8 @@ For dynamic inferences using NLP
  
 [![meaningtowords](https://img.shields.io/badge/enggapplications6-streamlit-red)](https://attention-mechanism-engineering-applications6.streamlit.app/) (local+cloud)
 
+[![meaningtowords](https://img.shields.io/badge/enggapplications7-streamlit-red)](https://attention-mechanism-engineering-applications7.streamlit.app/) (local+cloud)
+
 
 LLM integration 
 
