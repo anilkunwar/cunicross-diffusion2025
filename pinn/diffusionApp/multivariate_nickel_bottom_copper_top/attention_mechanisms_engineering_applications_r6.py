@@ -1,4 +1,3 @@
-
 import streamlit as st
 import numpy as np
 import torch
@@ -228,7 +227,7 @@ class AIModelHandler:
         self.supported_models = {
             "Lightweight Models": {
                 "gpt2": "GPT-2 (Fastest)",
-                "facebook/opt-350m": "OPT-350M",
+                "facebook/opt-350m": "OPT-350M", 
                 "distilgpt2": "DistilGPT-2",
                 "microsoft/DialoGPT-small": "DialoGPT-Small"
             },
@@ -237,17 +236,16 @@ class AIModelHandler:
                 "google/flan-t5-base": "FLAN-T5 Base",
                 "tiiuae/falcon-7b-instruct": "Falcon-7B-Instruct"
             },
-            "Advanced Models (if available)": {
+            "Advanced Models": {
                 "llama-2-7b-chat": "LLaMA-2-7B-Chat",
-                "mistral-7b-instruct": "Mistral-7B-Instruct",
-                "openllm/llama-2": "OpenLLM LLaMA-2",
+                "mistral-7b-instruct": "Mistral-7B-Instruct", 
                 "custom": "Custom Model"
             }
         }
     
     def get_model_list(self):
         """Return organized model list for dropdown"""
-        model_list = []
+        model_list = ["Select a model..."]
         for category, models in self.supported_models.items():
             model_list.append(f"--- {category} ---")
             model_list.extend(models.values())
@@ -295,16 +293,16 @@ with st.sidebar:
     model_display = st.selectbox(
         "Select AI Model",
         options=model_handler.get_model_list(),
-        index=3  # Default to DistilGPT-2
+        index=0
     )
     
     # Custom model input
     custom_model_path = None
-    if "Custom Model" in model_display:
+    if model_display == "Custom Model":
         custom_model_path = st.text_input("Custom Model Path/Name", "username/model-name")
     
     # Get actual model name
-    nlp_model = model_handler.get_model_name(model_display)
+    nlp_model = model_handler.get_model_name(model_display) if model_display != "Select a model..." else "distilgpt2"
     
     st.header("🔧 Analysis Parameters")
     sigma = st.slider("Attention Locality σ", 0.05, 0.50, 0.20, 0.01)
@@ -324,12 +322,21 @@ st.sidebar.header("📚 Engineering FAQ Topics")
 if not st.session_state.faq_questions:
     st.session_state.faq_questions = faq_db.get_faq_questions()
 
-# Display FAQ selection
-faq_options = ["Select a specific engineering topic..."] + [q[2] for q in st.session_state.faq_questions]
-selected_faq_index = st.sidebar.selectbox("Focus Analysis On:", faq_options)
+# Create FAQ options
+faq_options = ["Select a specific engineering topic..."] + [f"{q[1]}: {q[2]}" for q in st.session_state.faq_questions]
 
-if selected_faq_index > 0:
-    st.session_state.selected_faq = st.session_state.faq_questions[selected_faq_index - 1]
+# Display FAQ selection
+selected_faq_display = st.sidebar.selectbox("Focus Analysis On:", faq_options)
+
+# Find the selected FAQ
+st.session_state.selected_faq = None
+if selected_faq_display != "Select a specific engineering topic...":
+    # Find the FAQ that matches the selected display string
+    for faq in st.session_state.faq_questions:
+        faq_display = f"{faq[1]}: {faq[2]}"
+        if faq_display == selected_faq_display:
+            st.session_state.selected_faq = faq
+            break
 
 # === Source Solutions ===
 st.subheader("📊 Precomputed Source Simulations")
@@ -354,103 +361,106 @@ with col2:
 
 # === Main Analysis ===
 if st.button("🚀 Run AI-Attention Analysis", type="primary"):
-    with st.spinner("Computing attention weights and generating AI insights..."):
-        # Perform computation
-        interpolator = MultiParamAttentionInterpolator(sigma, num_heads, 8)
-        results = interpolator.compute_weights(params_list, ly_target, c_cu_target, c_ni_target)
-        
-        analyzer = DiffusionAnalyzer()
-        y_positions = np.linspace(0, ly_target, 100)
-        
-        Cu_profile = analyzer.concentration_profile(y_positions, ly_target, c_cu_target, 0, analyzer.D_Cu, reflow_time)
-        Ni_profile = analyzer.concentration_profile(ly_target - y_positions, ly_target, c_ni_target, 0, analyzer.D_Ni, reflow_time)
-        
-        gradient_Cu = np.gradient(Cu_profile, y_positions)
-        gradient_Ni = np.gradient(Ni_profile, y_positions)
-        flux_Cu = analyzer.calculate_flux(gradient_Cu, analyzer.D_Cu)
-        flux_Ni = analyzer.calculate_flux(gradient_Ni, analyzer.D_Ni)
-        
-        imc_Cu_thickness, imc_Ni_thickness = analyzer.integrate_imc_growth(
-            np.mean(flux_Cu), np.mean(flux_Ni), reflow_time
-        )
+    if model_display == "Select a model...":
+        st.error("Please select an AI model first!")
+    else:
+        with st.spinner("Computing attention weights and generating AI insights..."):
+            # Perform computation
+            interpolator = MultiParamAttentionInterpolator(sigma, num_heads, 8)
+            results = interpolator.compute_weights(params_list, ly_target, c_cu_target, c_ni_target)
+            
+            analyzer = DiffusionAnalyzer()
+            y_positions = np.linspace(0, ly_target, 100)
+            
+            Cu_profile = analyzer.concentration_profile(y_positions, ly_target, c_cu_target, 0, analyzer.D_Cu, reflow_time)
+            Ni_profile = analyzer.concentration_profile(ly_target - y_positions, ly_target, c_ni_target, 0, analyzer.D_Ni, reflow_time)
+            
+            gradient_Cu = np.gradient(Cu_profile, y_positions)
+            gradient_Ni = np.gradient(Ni_profile, y_positions)
+            flux_Cu = analyzer.calculate_flux(gradient_Cu, analyzer.D_Cu)
+            flux_Ni = analyzer.calculate_flux(gradient_Ni, analyzer.D_Ni)
+            
+            imc_Cu_thickness, imc_Ni_thickness = analyzer.integrate_imc_growth(
+                np.mean(flux_Cu), np.mean(flux_Ni), reflow_time
+            )
 
-        # Store results
-        st.session_state.results = results
-        st.session_state.diffusion_data = {
-            'y_positions': y_positions, 'Cu_profile': Cu_profile, 'Ni_profile': Ni_profile,
-            'flux_Cu': flux_Cu, 'flux_Ni': flux_Ni, 'imc_Cu_thickness': imc_Cu_thickness,
-            'imc_Ni_thickness': imc_Ni_thickness, 'params_list': params_list,
-            'ly_target': ly_target, 'c_cu_target': c_cu_target, 'c_ni_target': c_ni_target,
-            'substrate_type': substrate_type, 'joining_path': joining_path, 'reflow_time': reflow_time
-        }
-        st.session_state.computation_complete = True
+            # Store results
+            st.session_state.results = results
+            st.session_state.diffusion_data = {
+                'y_positions': y_positions, 'Cu_profile': Cu_profile, 'Ni_profile': Ni_profile,
+                'flux_Cu': flux_Cu, 'flux_Ni': flux_Ni, 'imc_Cu_thickness': imc_Cu_thickness,
+                'imc_Ni_thickness': imc_Ni_thickness, 'params_list': params_list,
+                'ly_target': ly_target, 'c_cu_target': c_cu_target, 'c_ni_target': c_ni_target,
+                'substrate_type': substrate_type, 'joining_path': joining_path, 'reflow_time': reflow_time
+            }
+            st.session_state.computation_complete = True
 
-        # Generate AI insights
-        with st.spinner("🤖 Generating AI-powered engineering insights..."):
-            try:
-                w = results['combined_weights']
-                dominant_source = np.argmax(w) + 1
-                
-                # Build context-aware prompt
-                if st.session_state.selected_faq:
-                    # FAQ-focused prompt
-                    faq_id, topic, question, template, weight_factor = st.session_state.selected_faq
-                    context = template.format(
-                        ly_target=ly_target, sources=len(params_list),
-                        c_cu_target=c_cu_target, c_ni_target=c_ni_target,
-                        cu_ni_ratio=c_cu_target/c_ni_target, substrate_type=substrate_type,
-                        joining_path=joining_path, imc_cu=imc_Cu_thickness,
-                        imc_ni=imc_Ni_thickness, time=reflow_time,
-                        dominant_source=dominant_source, max_weight=w.max()
-                    )
+            # Generate AI insights
+            with st.spinner("🤖 Generating AI-powered engineering insights..."):
+                try:
+                    w = results['combined_weights']
+                    dominant_source = np.argmax(w) + 1
                     
-                    ai_prompt = f"""
-                    As a materials engineering expert, answer this specific question:
-                    QUESTION: {question}
+                    # Build context-aware prompt
+                    if st.session_state.selected_faq:
+                        # FAQ-focused prompt
+                        faq_id, topic, question, template, weight_factor = st.session_state.selected_faq
+                        context = template.format(
+                            ly_target=ly_target, sources=len(params_list),
+                            c_cu_target=c_cu_target, c_ni_target=c_ni_target,
+                            cu_ni_ratio=c_cu_target/c_ni_target, substrate_type=substrate_type,
+                            joining_path=joining_path, imc_cu=imc_Cu_thickness,
+                            imc_ni=imc_Ni_thickness, time=reflow_time,
+                            dominant_source=dominant_source, max_weight=w.max()
+                        )
+                        
+                        ai_prompt = f"""
+                        As a materials engineering expert, answer this specific question:
+                        QUESTION: {question}
+                        
+                        CONTEXT: {context}
+                        
+                        ATTENTION ANALYSIS: Dominant source S{dominant_source} ({w.max():.1%} weight)
+                        CALCULATED RESULTS: IMC thickness Cu6Sn5={imc_Cu_thickness:.2f}μm, Ni3Sn4={imc_Ni_thickness:.2f}μm
+                        
+                        Provide a detailed, quantitative engineering answer focusing specifically on the question.
+                        """
+                    else:
+                        # General comprehensive analysis
+                        ai_prompt = f"""
+                        Generate comprehensive engineering insights for Cu-Ni interdiffusion:
+
+                        ATTENTION ANALYSIS RESULTS:
+                        - Dominant source: S{dominant_source} with {w.max():.1%} weight
+                        - Parameter blending from {len(params_list)} simulations
+                        - Target: {ly_target}μm, Cu={c_cu_target:.1e} mol/cc, Ni={c_ni_target:.1e} mol/cc
+                        - Configuration: {substrate_type}, {joining_path}
+                        - Predicted IMC: Cu6Sn5={imc_Cu_thickness:.2f}μm, Ni3Sn4={imc_Ni_thickness:.2f}μm
+
+                        Focus on:
+                        1. Domain length effects and diffusion kinetics
+                        2. Boundary concentration impacts on flux
+                        3. Uphill diffusion risks (Cu/Ni ratio: {c_cu_target/c_ni_target:.2f})
+                        4. Substrate configuration effects
+                        5. Joining path dependencies  
+                        6. IMC growth kinetics and reliability
+                        7. Attention mechanism interpretation
+
+                        Provide quantitative, specific engineering predictions.
+                        """
+
+                    # Load and run model
+                    generator = model_handler.load_model(nlp_model, custom_model_path)
+                    outputs = generator(ai_prompt, max_length=800, do_sample=True, temperature=0.7, 
+                                      num_return_sequences=1)
+                    st.session_state.ai_insights = outputs[0]["generated_text"]
+                    st.session_state.ai_insights_generated = True
                     
-                    CONTEXT: {context}
-                    
-                    ATTENTION ANALYSIS: Dominant source S{dominant_source} ({w.max():.1%} weight)
-                    CALCULATED RESULTS: IMC thickness Cu6Sn5={imc_Cu_thickness:.2f}μm, Ni3Sn4={imc_Ni_thickness:.2f}μm
-                    
-                    Provide a detailed, quantitative engineering answer focusing specifically on the question.
-                    """
-                else:
-                    # General comprehensive analysis
-                    ai_prompt = f"""
-                    Generate comprehensive engineering insights for Cu-Ni interdiffusion:
+                except Exception as e:
+                    st.error(f"AI insight generation failed: {e}")
+                    st.session_state.ai_insights_generated = False
 
-                    ATTENTION ANALYSIS RESULTS:
-                    - Dominant source: S{dominant_source} with {w.max():.1%} weight
-                    - Parameter blending from {len(params_list)} simulations
-                    - Target: {ly_target}μm, Cu={c_cu_target:.1e} mol/cc, Ni={c_ni_target:.1e} mol/cc
-                    - Configuration: {substrate_type}, {joining_path}
-                    - Predicted IMC: Cu6Sn5={imc_Cu_thickness:.2f}μm, Ni3Sn4={imc_Ni_thickness:.2f}μm
-
-                    Focus on:
-                    1. Domain length effects and diffusion kinetics
-                    2. Boundary concentration impacts on flux
-                    3. Uphill diffusion risks (Cu/Ni ratio: {c_cu_target/c_ni_target:.2f})
-                    4. Substrate configuration effects
-                    5. Joining path dependencies  
-                    6. IMC growth kinetics and reliability
-                    7. Attention mechanism interpretation
-
-                    Provide quantitative, specific engineering predictions.
-                    """
-
-                # Load and run model
-                generator = model_handler.load_model(nlp_model, custom_model_path)
-                outputs = generator(ai_prompt, max_length=800, do_sample=True, temperature=0.7, 
-                                  num_return_sequences=1)
-                st.session_state.ai_insights = outputs[0]["generated_text"]
-                st.session_state.ai_insights_generated = True
-                
-            except Exception as e:
-                st.error(f"AI insight generation failed: {e}")
-                st.session_state.ai_insights_generated = False
-
-    st.success("✅ AI-Attention analysis complete!")
+        st.success("✅ AI-Attention analysis complete!")
 
 # === Display Results ===
 if st.session_state.computation_complete:
@@ -490,8 +500,11 @@ if st.session_state.computation_complete:
         st.subheader("🔍 Attention Insights")
         st.metric("Dominant Influence", f"Source {dominant_source}")
         st.metric("Weight Concentration", f"{w.max():.1%}")
-        st.metric("Analysis Focus", 
-                 st.session_state.selected_faq[1] if st.session_state.selected_faq else "Comprehensive")
+        
+        if st.session_state.selected_faq:
+            st.metric("Analysis Focus", st.session_state.selected_faq[1])
+        else:
+            st.metric("Analysis Focus", "Comprehensive")
         
         # Quick metrics
         st.info(f"""
