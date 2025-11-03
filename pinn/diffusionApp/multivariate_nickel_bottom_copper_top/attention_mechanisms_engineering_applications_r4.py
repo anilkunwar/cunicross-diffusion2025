@@ -149,7 +149,7 @@ with st.sidebar:
     joint_length = st.slider("Joint Thickness \(L_y\) (μm)", 30.0, 120.0, 60.0, 1.0)
     
     st.header("Diffusion Analysis Parameters")
-    reflow_time = st.slider("Reflow Time (seconds)", 1, 1000, 50, key="aging_time")
+    reflow_time = st.slider("Reflow Time (seconds)", 1, 1000, 50, key="reflow_time")
     num_points = st.slider("Grid Points", 50, 500, 100, key="num_points")
 
     st.header("AI Model Selection")
@@ -191,7 +191,7 @@ if st.button("Run Attention Inference", type="primary"):
         y_positions = np.linspace(0, ly_target, num_points)
         
         # Calculate concentration profiles
-        time_seconds = reflow_time #aging_time * 3600
+        time_seconds = reflow_time #reflow_time * 3600
         Cu_profile = analyzer.concentration_profile(y_positions, ly_target, c_cu_target, 0, analyzer.D_Cu, time_seconds)
         Ni_profile = analyzer.concentration_profile(ly_target - y_positions, ly_target, c_ni_target, 0, analyzer.D_Ni, time_seconds)
         
@@ -203,7 +203,7 @@ if st.button("Run Attention Inference", type="primary"):
         
         # Calculate IMC growth
         imc_Cu_thickness, imc_Ni_thickness = analyzer.integrate_imc_growth(
-            np.mean(flux_Cu), np.mean(flux_Ni), aging_time
+            np.mean(flux_Cu), np.mean(flux_Ni), reflow_time
         )
 
     st.success("Inference Complete!")
@@ -352,9 +352,9 @@ if st.button("Run Attention Inference", type="primary"):
     })
     
     target_df = pd.DataFrame({
-        'parameter': ['ly_target', 'c_cu_target', 'c_ni_target', 'aging_time', 
+        'parameter': ['ly_target', 'c_cu_target', 'c_ni_target', 'reflow_time', 
                      'imc_Cu_thickness', 'imc_Ni_thickness', 'avg_Cu_flux', 'avg_Ni_flux'],
-        'value': [ly_target, c_cu_target, c_ni_target, aging_time,
+        'value': [ly_target, c_cu_target, c_ni_target, reflow_time,
                  imc_Cu_thickness, imc_Ni_thickness, np.mean(flux_Cu), np.mean(flux_Ni)]
     })
     
