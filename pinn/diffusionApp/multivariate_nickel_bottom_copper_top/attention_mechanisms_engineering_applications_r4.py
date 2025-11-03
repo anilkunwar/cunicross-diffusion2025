@@ -6,16 +6,42 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
 import io
+import os
+import sqlite3
 from transformers import pipeline
-from scipy import integrate
 
 # === Page Config ===
 st.set_page_config(page_title="Attention-Based Diffusion Inference", layout="wide")
 st.title("Attention-Driven Inference for Cu-Ni Interdiffusion & IMC Growth in Solder Joints")
 
 st.markdown("""
-**Engineering Context**: This tool leverages **transformer-inspired attention** to interpolate precomputed diffusion fields from PINN models and infer key phenomena in Cu pillar microbumps with Sn2.5Ag solder, as described in the experimental setup. It analyzes the role of domain length (\(L_y\)), boundary concentrations, substrate configurations (symmetric/asymmetric), and joining paths on concentration profiles, flux dynamics, uphill diffusion, cross-interactions, and intermetallic compound (IMC) growth kinetics at top (Cu) and bottom (Ni) interfaces.
+**Engineering Context**: This tool leverages **transformer-inspired attention** to interpolate precomputed diffusion fields from PINN models and infer key phenomena in Cu pillar microbumps with Sn2.5Ag solder. It analyzes the role of domain length (\(L_y\)), boundary concentrations, substrate configurations (symmetric/asymmetric), and joining paths on concentration profiles, flux dynamics, uphill diffusion, cross-interactions, and intermetallic compound (IMC) growth kinetics at top (Cu) and bottom (Ni) interfaces.
 """)
+
+# === Experimental Description (from nlp_information/description_of_experiment.db) ===
+DB_DIR = os.path.join(os.path.dirname(__file__), "nlp_information")
+DB_FILENAME = "description_of_experiment.db"
+DB_PATH = os.path.join(DB_DIR, DB_FILENAME)
+
+EXPERIMENTAL_DESCRIPTION = ""
+
+if os.path.exists(DB_PATH):
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
+        # Example: if your table is named 'experiments' and has a column 'description'
+        cursor.execute("SELECT description FROM experiments LIMIT 1;")
+        row = cursor.fetchone()
+        if row:
+            EXPERIMENTAL_DESCRIPTION = row[0]
+        else:
+            st.warning("No description found in the database.")
+        conn.close()
+    except Exception as e:
+        st.error(f"Error reading database: {e}")
+else:
+    st.error(f"Database file not found: `{DB_PATH}`\n\n"
+             "Please ensure the file exists in the `nlp_information/` directory.")
 
 # === Model Definition ===
 class MultiParamAttentionInterpolator(nn.Module):
@@ -87,8 +113,7 @@ class DiffusionAnalyzer:
         """Calculate concentration profile using error function solution"""
         # Convert to meters for diffusion calculation
         y_norm = y / L
-        erf_term = (1 - y_norm) * np.sqrt(D * time) / L
-        return C_bottom + (C_top - C_bottom) * (1 - erf_term)
+        return C_bottom + (C_top - C_bottom) * (1 - y_norm)
     
     def calculate_flux(self, concentration_gradient, D):
         """Calculate diffusion flux using Fick's first law"""
@@ -103,8 +128,8 @@ class DiffusionAnalyzer:
         time_seconds = time_hours * 3600
         
         # IMC thickness from parabolic growth law
-        imc_Cu_thickness = np.sqrt(2 * k_Cu6Sn5 * np.abs(flux_Cu) * time_seconds) * 1e6  # convert to μm
-        imc_Ni_thickness = np.sqrt(2 * k_Ni3Sn4 * np.abs(flux_Ni) * time_seconds) * 1e6  # convert to μm
+        imc_Cu_thickness = np.sqrt(2 * k_Cu6Sn5 * time_seconds) * 1e6  # convert to μm
+        imc_Ni_thickness = np.sqrt(2 * k_Ni3Sn4 * time_seconds) * 1e6  # convert to μm
         
         return imc_Cu_thickness, imc_Ni_thickness
 
@@ -123,19 +148,20 @@ with st.sidebar:
     joining_path = st.selectbox("Joining Path (for Asymmetric)", ["Path I (Cu→Ni)", "Path II (Ni→Cu)", "N/A"])
     joint_length = st.slider("Joint Thickness \(L_y\) (μm)", 30.0, 120.0, 60.0, 1.0)
     
-    st.header("Numeric Integration Parameters")
-    aging_time = st.slider("Aging Time (hours)", 1, 1000, 168)
-    num_points = st.slider("Grid Points", 50, 500, 100)
+    st.header("Diffusion Analysis Parameters")
+    aging_time = st.slider("Aging Time (hours)", 1, 1000, 168, key="aging_time")
+    num_points = st.slider("Grid Points", 50, 500, 100, key="num_points")
 
-    st.header("NLP Model Selection")
+    st.header("AI Model Selection")
     nlp_model = st.selectbox(
         "AI Model for Engineering Insights",
-        ["gpt2", "facebook/opt-1.3b", "tiiuae/falcon-7b-instruct", "google/flan-t5-large"]
+        ["gpt2", "facebook/opt-1.3b", "tiiuae/falcon-7b-instruct", "google/flan-t5-large"],
+        key="nlp_model"
     )
 
 # === Source Solutions (Precomputed PINN Simulations) ===
 st.subheader("Precomputed Source Simulations (e.g., PINN-Generated Diffusion Profiles)")
-num_sources = st.slider("Number of Sources", 2, 6, 3)
+num_sources = st.slider("Number of Sources", 2, 6, 3, key="num_sources")
 params_list = []
 for i in range(num_sources):
     with st.expander(f"Source {i+1} (e.g., Simulated Configuration)"):
@@ -149,10 +175,10 @@ for i in range(num_sources):
 st.subheader("Target Joint for Inference")
 col1, col2 = st.columns(2)
 with col1:
-    ly_target = st.number_input("Target \(L_y\) (μm)", 30.0, 120.0, joint_length, 0.1)
+    ly_target = st.number_input("Target \(L_y\) (μm)", 30.0, 120.0, joint_length, 0.1, key="ly_target")
 with col2:
-    c_cu_target = st.number_input("Top BC \(C_{Cu}\) (mol/cc)", 0.0, 2.9e-3, 2.0e-3, 1e-4, format="%.1e")
-    c_ni_target = st.number_input("Bottom BC \(C_{Ni}\) (mol/cc)", 0.0, 1.8e-3, 1.0e-3, 1e-4, format="%.1e")
+    c_cu_target = st.number_input("Top BC \(C_{Cu}\) (mol/cc)", 0.0, 2.9e-3, 2.0e-3, 1e-4, format="%.1e", key="c_cu_target")
+    c_ni_target = st.number_input("Bottom BC \(C_{Ni}\) (mol/cc)", 0.0, 1.8e-3, 1.0e-3, 1e-4, format="%.1e", key="c_ni_target")
 
 # === Compute ===
 if st.button("Run Attention Inference", type="primary"):
@@ -265,6 +291,8 @@ if st.button("Run Attention Inference", type="primary"):
     dominant_source = np.argmax(w) + 1
     
     ai_prompt = f"""
+    Experimental Context: {EXPERIMENTAL_DESCRIPTION}
+    
     Generate engineering insights on Cu-Ni interdiffusion and IMC growth in solder joints with the following parameters:
     - Joint configuration: {substrate_type}, {joining_path}
     - Joint thickness (L_y): {ly_target} μm
@@ -274,7 +302,7 @@ if st.button("Run Attention Inference", type="primary"):
     - Dominant attention source: Source {dominant_source} with weight {w.max():.1%}
     - Average fluxes: Cu={np.mean(flux_Cu):.2e} mol/m²s, Ni={np.mean(flux_Ni):.2e} mol/m²s
     
-    Focus on diffusion mechanisms, IMC growth kinetics, reliability implications, and comparison with experimental observations in Cu pillar microbumps.
+    Focus on diffusion mechanisms, IMC growth kinetics, reliability implications, and comparison with experimental observations.
     """
     
     if st.button("Generate AI Insights", type="secondary"):
@@ -296,16 +324,15 @@ if st.button("Run Attention Inference", type="primary"):
 
             except Exception as e:
                 st.error(f"Error generating AI insights: {e}")
-                st.info("Showing precomputed insights instead...")
-                
-                # Fallback to precomputed insights
+                # Fallback to precomputed insights using experimental description
                 ni_conc_ratio = c_ni_target / (c_cu_target + 1e-8)
                 cu_conc_ratio = c_cu_target / (c_ni_target + 1e-8)
                 uphill_risk = "High" if ni_conc_ratio > 0.5 or cu_conc_ratio > 2.0 else "Moderate" if ni_conc_ratio > 0.3 else "Low"
                 
                 st.markdown(f"""
-                Based on the attention-interpolated diffusion profiles (dominant blend from Source S{dominant_source} at {w.max():.1%} weight), the following inferences align with experimental observations:
+                **Based on Experimental Context**: {EXPERIMENTAL_DESCRIPTION[:200]}...
                 
+                **AI Insights Fallback Analysis**:
                 - **Domain Effect**: {'Thinner joints promote faster IMC growth' if ly_target < 60 else 'Thicker joints sustain cross-diffusion'}
                 - **Flux Dynamics**: Cu flux dominates with {np.mean(flux_Cu):.2e} mol/m²s vs Ni flux {np.mean(flux_Ni):.2e} mol/m²s
                 - **Uphill Diffusion**: {uphill_risk} risk due to concentration ratios
@@ -314,20 +341,39 @@ if st.button("Run Attention Inference", type="primary"):
                 """)
 
     # === Export ===
-    buffer = io.StringIO()
-    export_df = pd.DataFrame({
+    st.subheader("Export Results")
+    
+    # Create separate DataFrames to avoid length mismatch
+    weights_df = pd.DataFrame({
+        'source': [f"S{i+1}" for i in range(len(params_list))],
         'attention_weights': results['attention_weights'],
         'spatial_weights': results['spatial_weights'],
-        'combined_weights': results['combined_weights'],
-        'W_q_row0': results['W_q'][0],
-        'W_k_row0': results['W_k'][0],
-        'imc_Cu_thickness_um': [imc_Cu_thickness],
-        'imc_Ni_thickness_um': [imc_Ni_thickness],
-        'avg_Cu_flux': [np.mean(flux_Cu)],
-        'avg_Ni_flux': [np.mean(flux_Ni)]
+        'combined_weights': results['combined_weights']
     })
-    csv = export_df.to_csv(index=False)
-    st.download_button("Download Results (CSV)", csv, "attention_inference.csv", "text/csv")
+    
+    target_df = pd.DataFrame({
+        'parameter': ['ly_target', 'c_cu_target', 'c_ni_target', 'aging_time', 
+                     'imc_Cu_thickness', 'imc_Ni_thickness', 'avg_Cu_flux', 'avg_Ni_flux'],
+        'value': [ly_target, c_cu_target, c_ni_target, aging_time,
+                 imc_Cu_thickness, imc_Ni_thickness, np.mean(flux_Cu), np.mean(flux_Ni)]
+    })
+    
+    # Combine for single CSV download
+    combined_data = {
+        'source_weights': weights_df.to_dict(),
+        'target_results': target_df.to_dict(),
+        'experimental_context': EXPERIMENTAL_DESCRIPTION
+    }
+    
+    import json
+    json_export = json.dumps(combined_data, indent=2)
+    
+    st.download_button(
+        "Download Results (JSON)", 
+        json_export, 
+        "attention_inference.json", 
+        "application/json"
+    )
 
     # LaTeX for Appendix
     with st.expander("Export LaTeX Appendix"):
@@ -347,5 +393,6 @@ Source & Attention & Gaussian & Hybrid \\\\
         for i in range(len(w)):
             latex += f"S{i+1} & {results['attention_weights'][i]:.3f} & {results['spatial_weights'][i]:.3f} & {w[i]:.3f} \\\\\n"
         latex += f"\\bottomrule\n\\end{{tabular}}\n\n"
-        latex += f"\\textbf{{IMC Growth}}: Cu-side: {imc_Cu_thickness:.2f} \\mu m, Ni-side: {imc_Ni_thickness:.2f} \\mu m after {aging_time} hours."
+        latex += f"\\textbf{{IMC Growth}}: Cu-side: {imc_Cu_thickness:.2f} \\mu m, Ni-side: {imc_Ni_thickness:.2f} \\mu m after {aging_time} hours aging."
+        latex += f"\\textbf{{Experimental Context}}: {EXPERIMENTAL_DESCRIPTION[:100]}..."
         st.code(latex, language='latex')
