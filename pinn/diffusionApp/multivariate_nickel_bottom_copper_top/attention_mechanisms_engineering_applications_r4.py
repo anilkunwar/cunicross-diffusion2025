@@ -149,7 +149,7 @@ with st.sidebar:
     joint_length = st.slider("Joint Thickness \(L_y\) (μm)", 30.0, 120.0, 60.0, 1.0)
     
     st.header("Diffusion Analysis Parameters")
-    aging_time = st.slider("Aging Time (hours)", 1, 1000, 168, key="aging_time")
+    reflow_time = st.slider("Reflow Time (seconds)", 1, 1000, 50, key="aging_time")
     num_points = st.slider("Grid Points", 50, 500, 100, key="num_points")
 
     st.header("AI Model Selection")
@@ -191,7 +191,7 @@ if st.button("Run Attention Inference", type="primary"):
         y_positions = np.linspace(0, ly_target, num_points)
         
         # Calculate concentration profiles
-        time_seconds = aging_time * 3600
+        time_seconds = reflow_time #aging_time * 3600
         Cu_profile = analyzer.concentration_profile(y_positions, ly_target, c_cu_target, 0, analyzer.D_Cu, time_seconds)
         Ni_profile = analyzer.concentration_profile(ly_target - y_positions, ly_target, c_ni_target, 0, analyzer.D_Ni, time_seconds)
         
@@ -275,7 +275,7 @@ if st.button("Run Attention Inference", type="primary"):
     
     # IMC Growth Results
     st.markdown(f"""
-    **IMC Growth Prediction after {aging_time} hours aging:**
+    **IMC Growth Prediction after {reflow_time} seconds aging:**
     - **Cu-side IMC (Cu6Sn5) thickness**: {imc_Cu_thickness:.2f} μm
     - **Ni-side IMC (Ni3Sn4) thickness**: {imc_Ni_thickness:.2f} μm
     - **IMC thickness ratio (Cu/Ni)**: {imc_Cu_thickness/imc_Ni_thickness:.2f}
@@ -297,7 +297,7 @@ if st.button("Run Attention Inference", type="primary"):
     - Joint configuration: {substrate_type}, {joining_path}
     - Joint thickness (L_y): {ly_target} μm
     - Boundary concentrations: Cu={c_cu_target:.1e} mol/cc, Ni={c_ni_target:.1e} mol/cc
-    - Aging time: {aging_time} hours
+    - Reflow time: {reflow_time} seconds
     - Predicted IMC thickness: Cu-side={imc_Cu_thickness:.2f} μm, Ni-side={imc_Ni_thickness:.2f} μm
     - Dominant attention source: Source {dominant_source} with weight {w.max():.1%}
     - Average fluxes: Cu={np.mean(flux_Cu):.2e} mol/m²s, Ni={np.mean(flux_Ni):.2e} mol/m²s
@@ -393,6 +393,6 @@ Source & Attention & Gaussian & Hybrid \\\\
         for i in range(len(w)):
             latex += f"S{i+1} & {results['attention_weights'][i]:.3f} & {results['spatial_weights'][i]:.3f} & {w[i]:.3f} \\\\\n"
         latex += f"\\bottomrule\n\\end{{tabular}}\n\n"
-        latex += f"\\textbf{{IMC Growth}}: Cu-side: {imc_Cu_thickness:.2f} \\mu m, Ni-side: {imc_Ni_thickness:.2f} \\mu m after {aging_time} hours aging."
+        latex += f"\\textbf{{IMC Growth}}: Cu-side: {imc_Cu_thickness:.2f} \\mu m, Ni-side: {imc_Ni_thickness:.2f} \\mu m after {reflow_time} seconds aging."
         latex += f"\\textbf{{Experimental Context}}: {EXPERIMENTAL_DESCRIPTION[:100]}..."
         st.code(latex, language='latex')
