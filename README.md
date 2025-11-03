@@ -77,6 +77,8 @@ For dynamic inferences using NLP
  [![meaningtowords](https://img.shields.io/badge/txt2db-streamlit-red)](https://text-to-db.streamlit.app/) [ The user's information about the experimental procedure ]
 
  [![meaningtowords](https://img.shields.io/badge/enggapplications3-streamlit-red)](https://attention-mechanism-engineering-applications3.streamlit.app/) [ Generative AI's dynamic response ]
+
+ [![meaningtowords](https://img.shields.io/badge/enggapplications4-streamlit-red)](https://attention-mechanism-engineering-applications4.streamlit.app/) 
  
 
 LLM integration 
