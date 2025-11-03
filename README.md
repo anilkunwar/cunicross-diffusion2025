@@ -78,8 +78,12 @@ For dynamic inferences using NLP
 
  [![meaningtowords](https://img.shields.io/badge/enggapplications3-streamlit-red)](https://attention-mechanism-engineering-applications3.streamlit.app/) [ Generative AI's dynamic response ]
 
- [![meaningtowords](https://img.shields.io/badge/enggapplications4-streamlit-red)](https://attention-mechanism-engineering-applications4.streamlit.app/) 
+ [![meaningtowords](https://img.shields.io/badge/enggapplications4-streamlit-red)]() 
+
+ [![meaningtowords](https://img.shields.io/badge/enggapplications5-streamlit-red)](https://attention-mechanism-engineering-applications.streamlit.app/) (local+cloud)
  
+[![meaningtowords](https://img.shields.io/badge/enggapplications4-streamlit-red)](https://attention-mechanism-engineering-applications.streamlit.app/) (local+cloud)
+
 
 LLM integration 
 
@@ -87,8 +91,6 @@ MWE:  [![meaningtowords](https://img.shields.io/badge/openaichat-streamlit-red)]
 [![meaningtowords](https://img.shields.io/badge/transformers-streamlit-red)](https://diffusion-llmintegration2.streamlit.app/ ) (local)
 [![meaningtowords](https://img.shields.io/badge/diffusionllm3-streamlit-red)](https://diffusion-llmintegration3.streamlit.app/ ) (local+cloud)
 [![meaningtowords](https://img.shields.io/badge/diffusionllm4-streamlit-red)](https://diffusion-llmintegration4.streamlit.app/ ) (local+cloud)
-[![meaningtowords](https://img.shields.io/badge/diffusionllm5-streamlit-red)](https://diffusion-llmintegration5.streamlit.app/ ) (local+cloud)
-[![meaningtowords](https://img.shields.io/badge/diffusionllm6-streamlit-red)](https://diffusion-llmintegration6.streamlit.app/ ) (local+cloud)
 
 
 
