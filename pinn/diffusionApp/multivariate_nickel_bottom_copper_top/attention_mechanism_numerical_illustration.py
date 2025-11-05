@@ -153,7 +153,7 @@ with col2:
 # ——————————————————————————————————————————————————————
 # 5. Projection Matrices (Heatmaps)
 # ——————————————————————————————————————————————————————
-st.subheader("Learned Projection Matrices \(W_q\), \(W_k\) (32×3)")
+st.subheader("Learned Projection Matrices W$_q$, W$_k$ (32×3)")
 
 w_q = results['W_q']
 w_k = results['W_k']
@@ -161,7 +161,7 @@ w_k = results['W_k']
 fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 5))
 sns.heatmap(w_q, ax=ax1, cmap='coolwarm', center=0, cbar_kws={'label': 'Weight'}, annot=False)
 ax1.set_title('$W_q$ (Query Projection)')
-ax1.set_xlabel('Input Dim (L_y, C_Cu, C_Ni)')
+ax1.set_xlabel('Input Dim (L$_y$, c$_{s,Cu}$, c$_{s,Ni}$)')
 ax1.set_ylabel('Output Dim (32)')
 
 sns.heatmap(w_k, ax=ax2, cmap='coolwarm', center=0, cbar_kws={'label': 'Weight'}, annot=False)
