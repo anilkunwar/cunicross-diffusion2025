@@ -55,7 +55,7 @@ with training datasets for 0 BCs (Transformer-inspired Attention): [![meaningtow
  [![meaningtowords](https://img.shields.io/badge/advBroadRangeConcAttnSideBC-streamlit-red)](https://advanced-attentive-concentration-interpolator.streamlit.app/) 
 
 
- [![meaningtowords](https://img.shields.io/badge/uphilldiffusion1-streamlit-red)](https://attention-prediction-uphill-diffusion.streamlit.app/) (self-attentive code for uphill diffusion)
+ [![meaningtowords](https://img.shields.io/badge/uphilldiffusion1-streamlit-red)](https://attention-prediction-uphill-diffusion.streamlit.app/) (cross-attentive code for uphill diffusion)
  
   [![meaningtowords](https://img.shields.io/badge/uphilldiffusion2-streamlit-red)](https://attention-prediction-uphill-diffusion2.streamlit.app/)
 
