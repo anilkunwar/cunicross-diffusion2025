@@ -598,8 +598,8 @@ def fig_to_bytes(fig, fmt='png'):
     return buf
 
 def plot_flux_vs_gradient(solution, time_index,
-                          figsize=(6,3), marker_size=12, linewidth=1.2,
-                          label_fontsize=12, title_fontsize=14, scatter_alpha=0.6,
+                          figsize=(6,3), marker_size=12, linewidth=1.52,
+                          label_fontsize=16, title_fontsize=16, scatter_alpha=0.6,
                           marker_edgewidth=0.2, output_dir="figures"):
     # Safe access
     J1_y = np.array(solution['J1_preds'][time_index][1]).flatten()
