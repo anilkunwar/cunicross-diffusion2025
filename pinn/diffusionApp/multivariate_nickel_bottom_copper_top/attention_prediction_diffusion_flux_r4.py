@@ -691,10 +691,12 @@ def plot_uphill_heatmap(solution, time_index, cmap='viridis', vmin=None, vmax=No
         #cbar = fig.colorbar(im2, ax=axes.ravel().tolist(), orientation='vertical',
         #                    fraction=0.046, pad=0.08, shrink=0.8)
         cbar = fig.colorbar(im2, ax=axes.ravel().tolist(), orientation='vertical',
-                            fraction=0.046, pad=0.5, shrink=0.8)
+                            fraction=0.046, pad=0.05, shrink=0.8)
         cbar.set_label(cbar_label, fontsize=label_fontsize, labelpad=10)
         cbar.ax.tick_params(labelsize=label_fontsize-2)
 
+                            # Add colorbar beside the heatmaps with adjusted padding and fraction
+    
     fig.suptitle(f'Uphill Diffusion (positive J·∇c) @ t = {t_val:.2f} s',
                  fontsize=title_fontsize + 2, y=0.96)
     fig.subplots_adjust(left=0.08, right=0.88, top=0.88, bottom=0.12, wspace=0.40)
