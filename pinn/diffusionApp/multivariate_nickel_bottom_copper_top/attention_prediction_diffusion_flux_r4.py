@@ -616,7 +616,7 @@ def plot_flux_vs_gradient(solution, time_index,
         axes[0].scatter(grad_c1_y[uphill_cu], J1_y[uphill_cu], s=marker_size*1.1,
                         edgecolors='k', linewidths=marker_edgewidth, label='Uphill (Cu)')
     axes[0].set_xlabel('∇c (y)', fontsize=label_fontsize)
-    axes[0].set_ylabel('J$_y$', fontsize=label_fontsize)
+    axes[0].set_ylabel('J_y', fontsize=label_fontsize)
     axes[0].set_title('Cu Flux vs ∇c', fontsize=title_fontsize)
     axes[0].grid(True, which='both', linestyle='--', linewidth=0.3)
 
