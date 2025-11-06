@@ -643,12 +643,15 @@ def plot_flux_vs_gradient(solution, time_index,
     plt.close()
     return fig, base_filename
 
+
 def plot_uphill_heatmap(solution, time_index, cmap='viridis', vmin=None, vmax=None,
-                        figsize=(12,5), colorbar=True, cbar_label='J·∇c',
-                        label_fontsize=12, title_fontsize=14, downsample=1, output_dir="figures"):
-    x_coords = solution['X'][:,0] if solution['X'].ndim == 2 else solution['X']
-    y_coords = solution['Y'][0,:] if solution['Y'].ndim == 2 else solution['Y']
+                        figsize=(14, 6), colorbar=True, cbar_label='J·∇c',
+                        label_fontsize=13, title_fontsize=15, downsample=1,
+                        output_dir="figures"):
+    x_coords = solution['X'][:, 0] if solution['X'].ndim == 2 else solution['X']
+    y_coords = solution['Y'][0, :] if solution['Y'].ndim == 2 else solution['Y']
     t_val = solution['times'][time_index]
+
     (uphill_cu, uphill_ni,
      uphill_prod_cu_pos, uphill_prod_ni_pos,
      max_pos_cu, max_pos_ni,
@@ -656,47 +659,54 @@ def plot_uphill_heatmap(solution, time_index, cmap='viridis', vmin=None, vmax=No
      avg_pos_cu, avg_pos_ni,
      total_intensity_cu, total_intensity_ni) = detect_uphill(solution, time_index)
 
-    # optionally downsample for speed
     z1 = uphill_prod_cu_pos[::downsample, ::downsample]
     z2 = uphill_prod_ni_pos[::downsample, ::downsample]
     x_ds = x_coords[::downsample]
     y_ds = y_coords[::downsample]
 
-    fig, axes = plt.subplots(1,2, figsize=figsize)
+    fig, axes = plt.subplots(1, 2, figsize=figsize, constrained_layout=False)
 
-    im1 = axes[0].imshow(z1, origin='lower', aspect='auto',
+    im1 = axes[0].imshow(z1, origin='lower', aspect='equal',
                          extent=(x_ds[0], x_ds[-1], y_ds[0], y_ds[-1]),
-                         cmap=cmap, vmin=vmin, vmax=vmax)
-    axes[0].set_title(f'Cu Uphill (max={max_pos_cu:.3e}, avg={avg_pos_cu:.3e})', fontsize=title_fontsize)
-    axes[0].set_xlabel('x (μm)', fontsize=label_fontsize)
-    axes[0].set_ylabel('y (μm)', fontsize=label_fontsize)
+                         cmap=cmap, vmin=vmin, vmax=vmax, interpolation='bilinear')
+    axes[0].set_title(f'Cu Uphill\n(max={max_pos_cu:.2e}, avg={avg_pos_cu:.2e})',
+                      fontsize=title_fontsize, pad=12)
+    axes[0].set_xlabel('x (μm)', fontsize=label_fontsize, labelpad=8)
+    axes[0].set_ylabel('y (μm)', fontsize=label_fontsize, labelpad=8)
+    axes[0].tick_params(axis='both', which='major', labelsize=label_fontsize-2)
 
-    im2 = axes[1].imshow(z2, origin='lower', aspect='auto',
+    im2 = axes[1].imshow(z2, origin='lower', aspect='equal',
                          extent=(x_ds[0], x_ds[-1], y_ds[0], y_ds[-1]),
-                         cmap=cmap, vmin=vmin, vmax=vmax)
-    axes[1].set_title(f'Ni Uphill (max={max_pos_ni:.3e}, avg={avg_pos_ni:.3e})', fontsize=title_fontsize)
-    axes[1].set_xlabel('x (μm)', fontsize=label_fontsize)
-    axes[1].set_ylabel('')
-
-    if colorbar:
-        cbar = fig.colorbar(im2, ax=axes.ravel().tolist(), orientation='vertical', fraction=0.046, pad=0.04)
-        cbar.set_label(cbar_label, fontsize=label_fontsize)
-        cbar.ax.tick_params(labelsize=label_fontsize-2)
+                         cmap=cmap, vmin=vmin, vmax=vmax, interpolation='bilinear')
+    axes[1].set_title(f'Ni Uphill\n(max={max_pos_ni:.2e}, avg={avg_pos_ni:.2e})',
+                      fontsize=title_fontsize, pad=12)
+    axes[1].set_xlabel('x (μm)', fontsize=label_fontsize, labelpad=8)
+    axes[1].set_ylabel('', fontsize=label_fontsize, labelpad=8)
+    axes[1].tick_params(axis='both', which='major', labelsize=label_fontsize-2)
 
     for ax in axes:
-        ax.tick_params(axis='both', which='major', labelsize=label_fontsize-2)
+        ax.grid(True, linestyle='--', linewidth=0.6, alpha=0.3)
 
-    fig.suptitle(f'Uphill Diffusion (positive J·∇c) @ t={t_val:.2f}s', fontsize=title_fontsize+1)
-    fig.tight_layout(rect=[0, 0.03, 1, 0.95])
-    fig.subplots_adjust(wspace=0.3)  # Add space between subplots
+    if colorbar:
+        cbar = fig.colorbar(im2, ax=axes.ravel().tolist(), orientation='vertical',
+                            fraction=0.046, pad=0.08, shrink=0.8)
+        cbar.set_label(cbar_label, fontsize=label_fontsize, labelpad=10)
+        cbar.ax.tick_params(labelsize=label_fontsize-2)
+
+    fig.suptitle(f'Uphill Diffusion (positive J·∇c) @ t = {t_val:.2f} s',
+                 fontsize=title_fontsize + 2, y=0.96)
+    fig.subplots_adjust(left=0.08, right=0.88, top=0.88, bottom=0.12, wspace=0.40)
 
     Ly = solution['params']['Ly']
     base_filename = f"uphill_heatmap_t_{t_val:.1f}_ly_{Ly:.1f}_ccu_{solution['params']['C_Cu']:.1e}_cni_{solution['params']['C_Ni']:.1e}"
-    plt.savefig(os.path.join(output_dir, f"{base_filename}.png"), dpi=300, bbox_inches='tight')
-    plt.savefig(os.path.join(output_dir, f"{base_filename}.pdf"), bbox_inches='tight')
-    plt.close()
-    return fig, max_pos_cu, max_pos_ni, frac_cu, frac_ni, avg_pos_cu, avg_pos_ni, total_intensity_cu, total_intensity_ni, base_filename
+    os.makedirs(output_dir, exist_ok=True)
+    for ext in ('.png', '.pdf'):
+        fig.savefig(os.path.join(output_dir, base_filename + ext), dpi=300, bbox_inches='tight')
+    plt.close(fig)
 
+    return (fig, max_pos_cu, max_pos_ni, frac_cu, frac_ni,
+            avg_pos_cu, avg_pos_ni, total_intensity_cu, total_intensity_ni, base_filename)
+                            
 def plot_uphill_over_time(solution, figsize=(8,3), linewidth=1.6, marker_size=6,
                           label_fontsize=12, title_fontsize=14, output_dir="figures"):
     times = np.array(solution['times'])
