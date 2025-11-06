@@ -634,7 +634,7 @@ def plot_flux_vs_gradient(solution, time_index,
         ax.legend(fontsize=label_fontsize-2)
 
     #fig.subplots_adjust(wspace=0.3)  # Add space between subplots
-    fig.subplots_adjust(wspace=0.53)  # Add space between subplots
+    fig.subplots_adjust(wspace=0.3)  # Add space between subplots
 
     Ly = solution['params']['Ly']
     t_val = solution['times'][time_index]
