@@ -699,7 +699,7 @@ def plot_uphill_heatmap(solution, time_index, cmap='viridis', vmin=None, vmax=No
     
     fig.suptitle(f'Uphill Diffusion (positive J·∇c) @ t = {t_val:.2f} s',
                  fontsize=title_fontsize + 2, y=0.96)
-    fig.subplots_adjust(left=0.08, right=0.95, top=0.88, bottom=0.12, wspace=0.40)
+    fig.subplots_adjust(left=0.08, right=0.75, top=0.88, bottom=0.12, wspace=0.40)
 
     Ly = solution['params']['Ly']
     base_filename = f"uphill_heatmap_t_{t_val:.1f}_ly_{Ly:.1f}_ccu_{solution['params']['C_Cu']:.1e}_cni_{solution['params']['C_Ni']:.1e}"
