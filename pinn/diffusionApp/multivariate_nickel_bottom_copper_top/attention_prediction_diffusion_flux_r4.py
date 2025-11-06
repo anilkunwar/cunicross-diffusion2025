@@ -688,8 +688,10 @@ def plot_uphill_heatmap(solution, time_index, cmap='viridis', vmin=None, vmax=No
         ax.grid(True, linestyle='--', linewidth=0.6, alpha=0.3)
 
     if colorbar:
-        cbar = fig.colorbar(im2, ax=axes.ravel().tolist(), orientation='vertical',
+        #cbar = fig.colorbar(im2, ax=axes.ravel().tolist(), orientation='vertical',
                             fraction=0.046, pad=0.08, shrink=0.8)
+        cbar = fig.colorbar(im2, ax=axes.ravel().tolist(), orientation='vertical',
+                            fraction=0.046, pad=0.1, shrink=0.8)
         cbar.set_label(cbar_label, fontsize=label_fontsize, labelpad=10)
         cbar.ax.tick_params(labelsize=label_fontsize-2)
 
