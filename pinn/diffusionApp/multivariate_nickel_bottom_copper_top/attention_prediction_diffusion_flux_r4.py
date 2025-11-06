@@ -631,6 +631,7 @@ def plot_flux_vs_gradient(solution, time_index,
 
     for ax in axes:
         ax.tick_params(axis='both', which='major', labelsize=label_fontsize-2)
+        ax.ticklabel_format(style='sci', axis='both', scilimits=(0,0))   
         ax.legend(fontsize=label_fontsize-2)
 
     #fig.subplots_adjust(wspace=0.3)  # Add space between subplots
