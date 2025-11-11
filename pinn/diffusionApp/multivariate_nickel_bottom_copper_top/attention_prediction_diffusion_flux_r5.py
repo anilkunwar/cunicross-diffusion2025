@@ -780,27 +780,34 @@ def compute_summary_dataframe(all_solutions, time_index_for_summary=0):
 
 def main():
     st.title("Publication-Quality Concentration Profiles with Uphill Diffusion Analysis")
+    
     # Load solutions
     solutions, params_list, lys, c_cus, c_nis, load_logs = load_solutions(SOLUTION_DIR)
+    
     # Display load logs
     if load_logs:
         with st.expander("Load Log"):
             for log in load_logs:
                 st.write(log)
+    
     # Check if solutions were loaded
     if not solutions:
         st.error("No valid solution files found in pinn_solutions directory. Please check the directory and file contents.")
         return
+    
     st.write(f"Loaded {len(solutions)} solutions. Unique Ly: {len(set(lys))}, C_Cu: {len(set(c_cus))}, C_Ni: {len(set(c_nis))}")
+    
     # Sort unique parameters
     lys = sorted(set(lys))
     c_cus = sorted(set(c_cus))
     c_nis = sorted(set(c_nis))
+    
     # Parameter selection for single solution
     st.subheader("Select Parameters for Single Solution")
     ly_choice = st.selectbox("Domain Height (Ly, μm)", options=lys, format_func=lambda x: f"{x:.1f}")
     c_cu_choice = st.selectbox("Cu Boundary Concentration (mol/cc)", options=c_cus, format_func=lambda x: f"{x:.1e}")
     c_ni_choice = st.selectbox("Ni Boundary Concentration (mol/cc)", options=c_nis, format_func=lambda x: f"{x:.1e}")
+    
     # Custom parameters for interpolation
     use_custom_params = st.checkbox("Use Custom Parameters for Interpolation", value=False)
     if use_custom_params:
@@ -830,11 +837,13 @@ def main():
         )
     else:
         ly_target, c_cu_target, c_ni_target = ly_choice, c_cu_choice, c_ni_choice
+    
     # Visualization settings
     st.subheader("Visualization Settings")
     cmap_cu = st.selectbox("Cu Heatmap Colormap", options=COLORMAPS, index=COLORMAPS.index('viridis'))
     cmap_ni = st.selectbox("Ni Heatmap Colormap", options=COLORMAPS, index=COLORMAPS.index('magma'))
     sidebar_metric = st.selectbox("Sidebar Metric for Curves", options=['mean_cu', 'mean_ni', 'loss'], index=0)
+    
     # Color scale limits
     st.subheader("Color Scale Limits")
     use_custom_scale = st.checkbox("Use custom color scale limits", value=False)
@@ -849,6 +858,7 @@ def main():
             st.write("**Ni Concentration Limits**")
             custom_ni_min = st.number_input("Ni Min", value=0.0, format="%.2e", key="ni_min")
             custom_ni_max = st.number_input("Ni Max", value=1.0, format="%.2e", key="ni_max")
+    
     # Validate color scale limits
     if custom_cu_min is not None and custom_cu_max is not None and custom_cu_min >= custom_cu_max:
         st.error("Cu minimum concentration must be less than maximum concentration.")
@@ -856,6 +866,7 @@ def main():
     if custom_ni_min is not None and custom_ni_max is not None and custom_ni_min >= custom_ni_max:
         st.error("Ni minimum concentration must be less than maximum concentration.")
         return
+    
     # Figure customization controls
     with st.expander("Figure Customization"):
         label_size = st.slider("Axis Label Size", min_value=8, max_value=20, value=12, step=1)
@@ -882,7 +893,8 @@ def main():
         grid_linestyle = st.selectbox("Grid Line Style", options=['--', '-', ':', '-.'], index=0)
         legend_frameon = st.checkbox("Show Legend Frame", value=True)
         legend_framealpha = st.slider("Legend Frame Opacity", min_value=0.0, max_value=1.0, value=0.8, step=0.1)
-    # Added: Uphill visualization settings
+    
+    # Uphill visualization settings
     st.subheader("Uphill Diffusion Visualization Settings")
     cmap_uphill = st.selectbox("Uphill Heatmap Colormap", options=COLORMAPS, index=COLORMAPS.index('viridis'))
     use_custom_uphill_scale = st.checkbox("Use custom uphill color scale limits", value=False)
@@ -893,12 +905,14 @@ def main():
     marker_size = st.slider("Scatter Marker Size (Flux vs Grad)", min_value=1, max_value=50, value=12)
     linewidth = st.slider("Line Width (Temporal Plots)", min_value=0.2, max_value=5.0, value=1.2)
     downsample = st.slider("Downsample Heatmap (Uphill)", min_value=1, max_value=8, value=1)
+    
     # Load or interpolate single solution
     try:
         solution = load_and_interpolate_solution(solutions, params_list, ly_target, c_cu_target, c_ni_target)
     except Exception as e:
         st.error(f"Failed to load or interpolate solution: {str(e)}")
         return
+    
     # Compute fluxes and gradients if not present
     if 'J1_preds' not in solution or 'grad_c1_y' not in solution:
         st.info("Computing fluxes and gradients...")
@@ -917,6 +931,7 @@ def main():
         except Exception as e:
             st.error(f"Failed to compute fluxes: {e}")
             return
+    
     # Display solution details
     st.subheader("Solution Details")
     st.write(f"$L_y$ = {solution['params']['Ly']:.1f} μm")
@@ -927,6 +942,7 @@ def main():
         st.write("**Status**: Interpolated solution")
     else:
         st.write("**Status**: Exact solution")
+    
     # 2D Concentration Heatmaps
     st.subheader("2D Concentration Heatmaps")
     time_index = st.slider("Select Time Index for Heatmaps", 0, len(solution['times'])-1, len(solution['times'])-1)
@@ -950,6 +966,7 @@ def main():
         file_name=f"{filename_2d}.pdf",
         mime="application/pdf"
     )
+    
     # Centerline Concentration Curves
     st.subheader("Centerline Concentration Curves")
     time_indices = st.multiselect(
@@ -981,22 +998,30 @@ def main():
             file_name=f"{filename_curves}.pdf",
             mime="application/pdf"
         )
-    # Added: Uphill Diffusion Analysis for Single Solution
+    
+    # Uphill Diffusion Analysis for Single Solution
     st.subheader("Uphill Diffusion Analysis")
+    
     st.subheader("1) Flux vs Gradient")
-    fig_fg, filename_fg = plot_flux_vs_gradient(solution, time_index, figsize=(fig_width, fig_height/2),
-                                                marker_size=marker_size, linewidth=linewidth)
+    fig_fg, filename_fg = plot_flux_vs_gradient(
+        solution, time_index, figsize=(fig_width, fig_height/2),
+        marker_size=marker_size, linewidth=linewidth
+    )
     st.pyplot(fig_fg)
     st.download_button("Download Flux vs Gradient as PNG", data=fig_to_bytes(fig_fg, fmt='png').read(), file_name=f"{filename_fg}.png", mime="image/png")
     st.download_button("Download Flux vs Gradient as PDF", data=fig_to_bytes(fig_fg, fmt='pdf').read(), file_name=f"{filename_fg}.pdf", mime="application/pdf")
+    
     st.subheader("2) Uphill Heatmaps")
     fig_hm, max_pos_cu, max_pos_ni, frac_cu, frac_ni, avg_pos_cu, avg_pos_ni, total_intensity_cu, total_intensity_ni, filename_hm = plot_uphill_heatmap(
-        solution, time_index, cmap=cmap_uphill, vmin=custom_uphill_min if use_custom_uphill_scale else None,
-        vmax=custom_uphill_max if use_custom_uphill_scale else None, figsize=(fig_width, fig_height), downsample=downsample
+        solution, time_index, cmap=cmap_uphill,
+        vmin=custom_uphill_min if use_custom_uphill_scale else None,
+        vmax=custom_uphill_max if use_custom_uphill_scale else None,
+        figsize=(fig_width, fig_height), downsample=downsample
     )
     st.pyplot(fig_hm)
     st.download_button("Download Uphill Heatmaps as PNG", data=fig_to_bytes(fig_hm, fmt='png').read(), file_name=f"{filename_hm}.png", mime="image/png")
     st.download_button("Download Uphill Heatmaps as PDF", data=fig_to_bytes(fig_hm, fmt='pdf').read(), file_name=f"{filename_hm}.pdf", mime="application/pdf")
+    
     st.markdown(f"- **Max (positive) J·∇c (Cu):** {max_pos_cu:.3e}")
     st.markdown(f"- **Max (positive) J·∇c (Ni):** {max_pos_ni:.3e}")
     st.markdown(f"- **Avg (positive) J·∇c (Cu):** {avg_pos_cu:.3e}")
@@ -1005,6 +1030,7 @@ def main():
     st.markdown(f"- **Total Intensity (Ni):** {total_intensity_ni:.3e}")
     st.markdown(f"- **Uphill fraction (Cu):** {frac_cu*100:.2f}%")
     st.markdown(f"- **Uphill fraction (Ni):** {frac_ni*100:.2f}%")
+    
     st.subheader("3) Temporal Evolution of Uphill Metrics")
     fig_time, fig_avg, fig_frac, fig_intensity, filename_time, csv_path = plot_uphill_over_time(
         solution,
@@ -1016,17 +1042,19 @@ def main():
     st.pyplot(fig_avg)
     st.pyplot(fig_frac)
     st.pyplot(fig_intensity)
+    
     st.download_button("Download Max Evolution as PNG", data=fig_to_bytes(fig_time, fmt='png').read(), file_name=f"{filename_time}_max.png", mime="image/png")
     st.download_button("Download Avg Evolution as PNG", data=fig_to_bytes(fig_avg, fmt='png').read(), file_name=f"{filename_time}_avg.png", mime="image/png")
     st.download_button("Download Fraction Evolution as PNG", data=fig_to_bytes(fig_frac, fmt='png').read(), file_name=f"{filename_time}_frac.png", mime="image/png")
     st.download_button("Download Intensity Evolution as PNG", data=fig_to_bytes(fig_intensity, fmt='png').read(), file_name=f"{filename_time}_intensity.png", mime="image/png")
-    # NEW: CSV download button
+    
     st.download_button(
         label="Download Uphill Temporal Data as CSV",
         data=open(csv_path, "rb").read(),
         file_name=os.path.basename(csv_path),
         mime="text/csv"
     )
+    
     # Parameter Sweep Curves
     st.subheader("Parameter Sweep Curves")
     with st.expander("Add Custom Parameter Combinations for Sweep"):
@@ -1036,32 +1064,18 @@ def main():
             st.write(f"Custom Parameter Set {i+1}")
             ly_custom = st.number_input(
                 f"Custom Ly (μm) {i+1}",
-                min_value=30.0,
-                max_value=120.0,
-                value=ly_choice,
-                step=0.1,
-                format="%.1f",
-                key=f"ly_custom_{i}"
+                min_value=30.0, max_value=120.0, value=ly_choice, step=0.1, format="%.1f", key=f"ly_custom_{i}"
             )
             c_cu_custom = st.number_input(
                 f"Custom C_Cu (mol/cc) {i+1}",
-                min_value=0.0,
-                max_value=2.9e-3,
-                value=max(c_cu_choice, 1.5e-3),
-                step=0.1e-3,
-                format="%.1e",
-                key=f"c_cu_custom_{i}"
+                min_value=0.0, max_value=2.9e-3, value=max(c_cu_choice, 1.5e-3), step=0.1e-3, format="%.1e", key=f"c_cu_custom_{i}"
             )
             c_ni_custom = st.number_input(
                 f"Custom C_Ni (mol/cc) {i+1}",
-                min_value=0.0,
-                max_value=1.8e-3,
-                value=max(c_ni_choice, 1.0e-4),
-                step=0.1e-4,
-                format="%.1e",
-                key=f"c_ni_custom_{i}"
+                min_value=0.0, max_value=1.8e-3, value=max(c_ni_choice, 1.0e-4), step=0.1e-4, format="%.1e", key=f"c_ni_custom_{i}"
             )
             custom_params.append((ly_custom, c_cu_custom, c_ni_custom))
+    
     # Combine exact and custom parameters
     param_options = [(ly, c_cu, c_ni) for ly, c_cu, c_ni in params_list]
     param_labels = [f"$L_y$={ly:.1f}, $C_{{Cu}}$={c_cu:.1e}, $C_{{Ni}}$={c_ni:.1e}" for ly, c_cu, c_ni in param_options]
@@ -1074,7 +1088,8 @@ def main():
     )
     selected_params = [param_options[param_labels.index(label)] for label in selected_labels]
     selected_params.extend(custom_params)
-    # Generate solutions for selected parameters (exact or interpolated)
+    
+    # Generate solutions for selected parameters
     sweep_solutions = []
     sweep_params_list = []
     for params in selected_params:
@@ -1093,6 +1108,7 @@ def main():
             sweep_params_list.append(params)
         except Exception as e:
             st.warning(f"Failed to load or interpolate solution for Ly={ly:.1f}, C_Cu={c_cu:.1e}, C_Ni={c_ni:.1e}: {str(e)}")
+    
     # Plot parameter sweep
     sweep_time_index = st.slider("Select Time Index for Sweep", 0, len(solution['times'])-1, len(solution['times'])-1, key="sweep_time")
     if sweep_solutions:
@@ -1121,7 +1137,7 @@ def main():
         )
     else:
         st.warning("No valid solutions selected for parameter sweep.")
-
+    
     # Summary Table across all solutions
     st.subheader("Summary Table: Uphill Diffusion Metrics Across All Solutions")
     summary_time_index = st.slider("Select Time Index for Summary Table", 0, len(solutions[0]['times'])-1, len(solutions[0]['times'])-1, key="summary_time")
@@ -1139,7 +1155,7 @@ def main():
         "total_intensity_Cu": "{:.2e}",
         "total_intensity_Ni": "{:.2e}"
     }))
-
+    
     # Download Summary CSV
     csv_summary = df_summary.to_csv(index=False).encode()
     st.download_button(
@@ -1148,7 +1164,7 @@ def main():
         file_name=f"uphill_summary_t_{solutions[0]['times'][summary_time_index]:.1f}s.csv",
         mime="text/csv"
     )
-
+    
     # Final Notes
     st.info("""
     **Notes:**
