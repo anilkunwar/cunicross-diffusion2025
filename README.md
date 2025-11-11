@@ -64,7 +64,8 @@ with training datasets for 0 BCs (Transformer-inspired Attention): [![meaningtow
    [![meaningtowords](https://img.shields.io/badge/uphilldiffusion4-streamlit-red)](https://attention-prediction-uphill-diffusion4.streamlit.app/)
 
    [![meaningtowords](https://img.shields.io/badge/uphilldiffusion5-streamlit-red)](https://attention-prediction-uphill-diffusion5.streamlit.app/) ( allows download of csv data of temporal uphill diffusion in Cu/Sn-2.5Ag/Ni system)
-    
+
+    [![meaningtowords](https://img.shields.io/badge/uphilldiffusion6-streamlit-red)](https://attention-prediction-uphill-diffusion6.streamlit.app/) 
 
    Understanding the Attention Weights and Engineering Applications 
 
