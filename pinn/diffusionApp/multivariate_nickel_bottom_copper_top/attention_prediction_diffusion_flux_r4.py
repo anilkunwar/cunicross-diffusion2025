@@ -683,7 +683,7 @@ def plot_uphill_heatmap(solution, time_index, cmap='viridis', vmin=None, vmax=No
     axes[1].set_title(f'Ni Uphill\n(max={max_pos_ni:.2e}, avg={avg_pos_ni:.2e})\n',
                       fontsize=title_fontsize, pad=12)
     axes[1].set_xlabel('x (μm)', fontsize=label_fontsize, labelpad=8)
-    axes[1].set_ylabel('', fontsize=label_fontsize, labelpad=8)
+    axes[1].set_ylabel('y (μm)', fontsize=label_fontsize, labelpad=8)
     axes[1].tick_params(axis='both', which='major', labelsize=label_fontsize-2)
 
     for ax in axes:
@@ -717,7 +717,7 @@ def plot_uphill_heatmap(solution, time_index, cmap='viridis', vmin=None, vmax=No
     fig.suptitle(f'Uphill Diffusion (positive J·∇c) @ t = {t_val:.2f} s',
                  fontsize=title_fontsize + 2, y=0.96)
     #fig.subplots_adjust(left=0.08, right=0.88, top=0.88, bottom=0.12, wspace=0.40)
-    fig.subplots_adjust(left=0.02, right=0.83, top=0.88, bottom=0.12, wspace=0.20) # to adjust the position of image relative to colorscale bar
+    fig.subplots_adjust(left=0.02, right=0.83, top=0.88, bottom=0.12, wspace=0.30) # to adjust the position of image relative to colorscale bar
 
 
     Ly = solution['params']['Ly']
