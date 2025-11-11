@@ -68,6 +68,12 @@ with training datasets for 0 BCs (Transformer-inspired Attention): [![meaningtow
    [![meaningtowords](https://img.shields.io/badge/uphilldiffusion6-streamlit-red)](https://attention-prediction-uphill-diffusion6.streamlit.app/) 
    
 
+   Prediction and Visualization
+   [![meaningtowords](https://img.shields.io/badge/radarchart1-streamlit-red)](https://attention-concentration-prediction-visualization1.streamlit.app/) 
+
+   [![meaningtowords](https://img.shields.io/badge/radarchart2-streamlit-red)](https://attention-concentration-prediction-visualization2.streamlit.app/) 
+   
+
    Understanding the Attention Weights and Engineering Applications 
 
   * Transformer-Inspired Attention Interpolator for Diffusion Fields 
