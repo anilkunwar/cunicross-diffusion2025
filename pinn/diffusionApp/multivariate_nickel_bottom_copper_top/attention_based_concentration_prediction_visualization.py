@@ -1,12 +1,14 @@
 import os
+import pickle
 import numpy as np
 import matplotlib.pyplot as plt
 import torch
 import torch.nn as nn
 from scipy.interpolate import RegularGridInterpolator
-import pickle
 from matplotlib.colors import Normalize
 import matplotlib as mpl
+import streamlit as st
+import re
 
 # === CONFIG ===
 PINN_DIR = "pinn_solutions"
@@ -19,23 +21,100 @@ T_MAX = 200.0  # r = 1 corresponds to t = 200 s
 N_TIME_STEPS = 50  # radial resolution
 N_LY = len(LY_VALUES)
 
-# Fixed boundary conditions for interpolation
+# Fixed boundary conditions for interpolation (adjust as needed)
 C_CU_TARGET = 1.0e-3   # mol/cc
 C_NI_TARGET = 1.0e-4   # mol/cc
 
-# === 1. Load all PINN solutions ===
-def load_solutions(dir_path):
+# === 1. Robust Load Solutions ===
+@st.cache_data(show_spinner="Loading PINN solutions...")
+def load_solutions(solution_dir="pinn_solutions"):
     solutions = []
     params_list = []
-    for fname in os.listdir(dir_path):
-        if fname.endswith(".pkl"):
-            path = os.path.join(dir_path, fname)
-            with open(path, "rb") as f:
+    load_logs = []
+    lys, c_cus, c_nis = [], [], []
+
+    # STEP 1: Check if directory exists
+    if not os.path.exists(solution_dir):
+        load_logs.append(f"Directory '{solution_dir}' NOT FOUND.")
+        load_logs.append(f"Current working directory: {os.getcwd()}")
+        load_logs.append(f"Contents of current directory: {os.listdir('.') if os.path.exists('.') else 'N/A'}")
+        st.error("\n".join(load_logs))
+        return solutions, params_list, lys, c_cus, c_nis, load_logs
+
+    if not os.path.isdir(solution_dir):
+        load_logs.append(f"'{solution_dir}' is not a directory.")
+        st.error("\n".join(load_logs))
+        return solutions, params_list, lys, c_cus, c_nis, load_logs
+
+    # STEP 2: List .pkl files
+    try:
+        files = [f for f in os.listdir(solution_dir) if f.endswith(".pkl")]
+        load_logs.append(f"Found {len(files)} .pkl files in '{solution_dir}'.")
+    except Exception as e:
+        load_logs.append(f"Failed to list files in '{solution_dir}': {str(e)}")
+        st.error("\n".join(load_logs))
+        return solutions, params_list, lys, c_cus, c_nis, load_logs
+
+    if not files:
+        load_logs.append(f"No .pkl files found in '{solution_dir}'.")
+        st.warning("\n".join(load_logs))
+        return solutions, params_list, lys, c_cus, c_nis, load_logs
+
+    # STEP 3: Load each file safely
+    for fname in files:
+        fpath = os.path.join(solution_dir, fname)
+        try:
+            with open(fpath, "rb") as f:
                 sol = pickle.load(f)
-            if all(k in sol for k in ['params', 'X', 'Y', 'c1_preds', 'c2_preds', 'times']):
-                solutions.append(sol)
-                params_list.append((sol['params']['Ly'], sol['params']['C_Cu'], sol['params']['C_Ni']))
-    return solutions, params_list
+
+            required_keys = ['params', 'X', 'Y', 'c1_preds', 'c2_preds', 'times']
+            missing = [k for k in required_keys if k not in sol]
+            if missing:
+                load_logs.append(f"{fname}: Missing keys: {missing}")
+                continue
+
+            # Validate data
+            if (np.any(np.isnan(sol['c1_preds'])) or np.any(np.isnan(sol['c2_preds'])) or
+                np.all(sol['c1_preds'] == 0) or np.all(sol['c2_preds'] == 0)):
+                load_logs.append(f"{fname}: Invalid data (NaN or zero).")
+                continue
+
+            # Extract stats
+            c1_min, c1_max = np.min(sol['c1_preds'][0]), np.max(sol['c1_preds'][0])
+            c2_min, c2_max = np.min(sol['c2_preds'][0]), np.max(sol['c2_preds'][0])
+
+            # Store
+            solutions.append(sol)
+            param_tuple = (sol['params']['Ly'], sol['params']['C_Cu'], sol['params']['C_Ni'])
+            params_list.append(param_tuple)
+            lys.append(sol['params']['Ly'])
+            c_cus.append(sol['params']['C_Cu'])
+            c_nis.append(sol['params']['C_Ni'])
+
+            # Parse diffusion type
+            match = re.match(r"solution_(\w+)_ly_([\d.]+)_tmax_([\d.]+)\.pkl", fname)
+            diff_type = 'crossdiffusion'
+            if match:
+                raw = match.group(1).lower()
+                diff_type = {'cross': 'crossdiffusion', 'cu_self': 'cu_selfdiffusion', 'ni_self': 'ni_selfdiffusion'}.get(raw, 'crossdiffusion')
+            sol['diffusion_type'] = diff_type
+
+            load_logs.append(
+                f"{fname}: Loaded | Cu: {c1_min:.2e}–{c1_max:.2e} | Ni: {c2_min:.2e}–{c2_max:.2e} | "
+                f"Ly={param_tuple[0]:.1f} | C_Cu={param_tuple[1]:.1e} | C_Ni={param_tuple[2]:.1e} | Type={diff_type}"
+            )
+        except Exception as e:
+            load_logs.append(f"{fname}: Failed to load → {str(e)}")
+
+    # FINAL SUMMARY
+    if not solutions:
+        load_logs.append("No valid solutions loaded. Check file format and data.")
+        st.error("\n".join(load_logs))
+    else:
+        load_logs.append(f"Successfully loaded {len(solutions)} solutions.")
+        st.success("\n".join(load_logs))
+
+    return solutions, params_list, lys, c_cus, c_nis, load_logs
 
 # === 2. Transformer-Inspired Attention Interpolator ===
 class AttentionInterpolator(nn.Module):
@@ -124,9 +203,9 @@ class AttentionInterpolator(nn.Module):
             'params': {'Ly': ly_target, 'C_Cu': C_CU_TARGET, 'C_Ni': C_NI_TARGET}
         }
 
-# === 3. Extract Centerpoint Concentration ===
+# === 3. Extract Centerpoint Concentration (x = Lx/2 = 30, y = Ly/2) ===
 def get_center_concentration(solution):
-    x_center = solution['params']['Lx'] / 2
+    x_center = solution['params']['Lx'] / 2  # 60/2 = 30
     y_center = solution['params']['Ly'] / 2
     x_idx = np.argmin(np.abs(solution['X'][:, 0] - x_center))
     y_idx = np.argmin(np.abs(solution['Y'][0, :] - y_center))
@@ -134,13 +213,13 @@ def get_center_concentration(solution):
     ni = [c2[x_idx, y_idx] for c2 in solution['c2_preds']]
     return np.array(cu), np.array(ni)
 
-# === 4. Build Sunburst Data ===
+# === 4. Build Sunburst Data Matrices ===
 def build_sunburst_matrices(solutions, params_list, interpolator):
     cu_matrix = np.zeros((N_TIME_STEPS, N_LY))
     ni_matrix = np.zeros((N_TIME_STEPS, N_LY))
 
     for j, ly in enumerate(LY_VALUES):
-        print(f"Interpolating Ly = {ly} μm...")
+        st.write(f"Interpolating Ly = {ly} μm...")
         sol = interpolator(solutions, params_list, ly, C_CU_TARGET, C_NI_TARGET)
         cu_center, ni_center = get_center_concentration(sol)
         cu_matrix[:, j] = cu_center
@@ -148,11 +227,11 @@ def build_sunburst_matrices(solutions, params_list, interpolator):
 
     return cu_matrix, ni_matrix
 
-# === 5. Sunburst Polar Heatmap ===
+# === 5. Sunburst Polar Heatmap Visualization ===
 def plot_sunburst_polar(data, title, cmap, vmin, vmax, filename):
     fig, ax = plt.subplots(figsize=(10, 10), subplot_kw=dict(projection='polar'))
 
-    # Meshgrid in polar: theta = Ly, r = t
+    # Meshgrid in polar: theta = Ly spokes, r = normalized time (0 to 1 for 0 to 200 s)
     theta = np.linspace(0, 2*np.pi, N_LY + 1)
     r = np.linspace(0, 1, N_TIME_STEPS + 1)
     Theta, R = np.meshgrid(theta, r)
@@ -163,7 +242,7 @@ def plot_sunburst_polar(data, title, cmap, vmin, vmax, filename):
     norm = Normalize(vmin=vmin, vmax=vmax)
     im = ax.pcolormesh(Theta, R, Z, cmap=cmap, norm=norm, shading='auto')
 
-    # Spoke labels
+    # Spoke labels (Ly values)
     theta_labels = [f"{ly}" for ly in LY_VALUES]
     ax.set_xticks(theta[:-1])
     ax.set_xticklabels(theta_labels, fontsize=14, fontweight='bold')
@@ -187,28 +266,44 @@ def plot_sunburst_polar(data, title, cmap, vmin, vmax, filename):
     plt.savefig(os.path.join(OUTPUT_DIR, f"{filename}.png"), dpi=300, bbox_inches='tight')
     plt.savefig(os.path.join(OUTPUT_DIR, f"{filename}.pdf"), bbox_inches='tight')
     plt.close()
+    return fig
 
-# === MAIN ===
-if __name__ == "__main__":
-    print("Loading PINN solutions...")
-    solutions, params_list = load_solutions(PINN_DIR)
+# === Streamlit App ===
+def main():
+    st.title("Interpolation & Sunburst Visualization of Centerpoint Concentrations")
 
-    print("Initializing attention interpolator...")
+    # Load solutions with robust handling
+    solutions, params_list, lys, c_cus, c_nis, load_logs = load_solutions(PINN_DIR)
+
+    with st.expander("Load Logs"):
+        for log in load_logs:
+            st.write(log)
+
+    if not solutions:
+        st.stop()
+
+    # Initialize interpolator
     interpolator = AttentionInterpolator(sigma=0.25, num_heads=4)
 
-    print("Building sunburst data...")
+    # Build matrices
     cu_data, ni_data = build_sunburst_matrices(solutions, params_list, interpolator)
 
-    print("Plotting sunburst charts...")
-    plot_sunburst_polar(
+    # Plot sunbursts
+    fig_cu = plot_sunburst_polar(
         cu_data, "Cu Concentration at Center (x=30, y=Ly/2)",
         cmap='plasma', vmin=0, vmax=1.5e-3,
         filename="sunburst_cu_center"
     )
-    plot_sunburst_polar(
+    fig_ni = plot_sunburst_polar(
         ni_data, "Ni Concentration at Center (x=30, y=Ly/2)",
         cmap='viridis', vmin=0, vmax=3e-4,
         filename="sunburst_ni_center"
     )
 
-    print(f"Sunburst plots saved to {OUTPUT_DIR}/")
+    st.pyplot(fig_cu)
+    st.pyplot(fig_ni)
+
+    st.success(f"Visualizations saved to {OUTPUT_DIR}/")
+
+if __name__ == "__main__":
+    main()
