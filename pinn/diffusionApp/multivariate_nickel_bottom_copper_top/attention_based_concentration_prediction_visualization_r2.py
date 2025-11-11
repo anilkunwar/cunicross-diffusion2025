@@ -265,7 +265,7 @@ def main():
     ly_dir = st.sidebar.radio("Ly Direction", ["top→bottom", "bottom→top"])
 
     cu_mat, ni_mat = build_sunburst_matrices(
-        sols, params, interpolator, c_cu_target, c_ni_target, ly_fraction
+        sols, params, interpolator, c_cu_target, c_ni_target, ly_center_choice
     )
 
 
