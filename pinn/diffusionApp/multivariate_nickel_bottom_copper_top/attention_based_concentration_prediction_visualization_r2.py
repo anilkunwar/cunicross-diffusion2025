@@ -173,34 +173,38 @@ def build_sunburst_matrices(solutions, params_list, interpolator,
 # ----------------------------------------------------------------------
 # 5. Sunburst plot (polar pcolormesh – correct shape!)
 # ----------------------------------------------------------------------
-def plot_sunburst(data, title, cmap, vmin, vmax, log_scale,
-                  ly_dir, fname):
+def plot_sunburst(data, title, cmap, vmin, vmax, log_scale, ly_dir, fname):
     fig, ax = plt.subplots(figsize=(9,9), subplot_kw=dict(projection='polar'))
 
-    # ---- grid ----
-    theta = np.linspace(0, 2*np.pi, len(LY_SPOKES), endpoint=False)   # 8 points
-    r     = np.linspace(0, 1, N_TIME+1)                               # 51 edges → 50 cells
-    Theta, R = np.meshgrid(theta, r)
+    # --- 9 theta edges for 8 spokes ---
+    theta_edges = np.linspace(0, 2*np.pi, len(LY_SPOKES) + 1)
+    r_edges     = np.linspace(0, 1, N_TIME + 1)
 
-    # ---- optional reverse radial direction ----
+    # --- meshgrid: (51, 9) ---
+    Theta, R = np.meshgrid(theta_edges, r_edges)
+
+    # --- reverse time direction if needed ---
     if ly_dir == "top→bottom":
-        R = R[::-1]                     # flip rows
-        data = data[::-1, :]            # flip data rows
+        R = R[::-1]           # flip rows
+        data = data[::-1, :]  # flip data rows
 
-    # ---- colour normalisation ----
-    norm = LogNorm(vmin=max(vmin,1e-9), vmax=vmax) if log_scale else Normalize(vmin=vmin, vmax=vmax)
+    # --- color norm ---
+    norm = LogNorm(vmin=max(vmin, 1e-9), vmax=vmax) if log_scale else Normalize(vmin=vmin, vmax=vmax)
 
+    # --- pcolormesh: C is (50, 8), mesh is (51, 9) → perfect ---
     im = ax.pcolormesh(Theta, R, data, cmap=cmap, norm=norm, shading='auto')
 
-    # ---- spokes labels ----
-    ax.set_xticks(theta)
+    # --- spoke labels (at center of each sector) ---
+    theta_centers = 0.5 * (theta_edges[:-1] + theta_edges[1:])
+    ax.set_xticks(theta_centers)
     ax.set_xticklabels([f"{ly}" for ly in LY_SPOKES], fontsize=13, fontweight='bold')
 
-    # ---- time labels ----
-    ax.set_yticks([0,0.25,0.5,0.75,1.0])
-    ax.set_yticklabels(['0','50','100','150','200'], fontsize=11)
+    # --- time labels ---
+    ax.set_yticks([0, 0.25, 0.5, 0.75, 1.0])
+    ax.set_yticklabels(['0', '50', '100', '150', '200'], fontsize=11)
+    ax.set_ylim(0, 1)
 
-    ax.set_ylim(0,1)
+    # --- style ---
     ax.grid(True, color='w', linewidth=1.2, alpha=0.7)
     ax.set_title(title, fontsize=16, fontweight='bold', pad=25)
 
