@@ -182,7 +182,7 @@ def build_sunburst_matrices(solutions, params_list, interpolator, ccu, cni, ly_f
 # ----------------------------------------------------------------------
 # Sunburst plot
 # ----------------------------------------------------------------------
-def plot_sunburst(data, title, cmap, vmin, vmax, log_scale, ly_dir, fname):
+build_sunburst_matrices(sols, params, interpolator, c_cu_target, c_ni_target, ly_fraction):
     fig, ax = plt.subplots(figsize=(9, 9), subplot_kw=dict(projection='polar'))
     theta_edges = np.linspace(0, 2 * np.pi, len(LY_SPOKES) + 1)
     r_edges = np.linspace(0, 1, N_TIME + 1)
@@ -265,7 +265,8 @@ def main():
     ly_dir = st.sidebar.radio("Ly Direction", ["top→bottom", "bottom→top"])
 
     cu_mat, ni_mat = build_sunburst_matrices(sols, params, interpolator,
-                                             c_cu_target, c_ni_target, ly_center_choice)
+                                         c_cu_target, c_ni_target, frac_val)
+
 
     col1, col2 = st.columns(2)
     with col1:
