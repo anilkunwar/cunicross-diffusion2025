@@ -182,7 +182,7 @@ def build_sunburst_matrices(solutions, params_list, interpolator, ccu, cni, ly_f
 # ----------------------------------------------------------------------
 # Sunburst plot
 # ----------------------------------------------------------------------
-build_sunburst_matrices(sols, params, interpolator, c_cu_target, c_ni_target, ly_fraction):
+def build_sunburst_matrices(sols, params, interpolator, c_cu_target, c_ni_target, ly_fraction):
     fig, ax = plt.subplots(figsize=(9, 9), subplot_kw=dict(projection='polar'))
     theta_edges = np.linspace(0, 2 * np.pi, len(LY_SPOKES) + 1)
     r_edges = np.linspace(0, 1, N_TIME + 1)
@@ -264,8 +264,10 @@ def main():
     ly_center_choice = st.sidebar.selectbox("Center Sampling (Ly fraction)", {"Ly/2": 0.5, "Ly/3": 1/3, "Ly/4": 1/4})
     ly_dir = st.sidebar.radio("Ly Direction", ["top→bottom", "bottom→top"])
 
-    cu_mat, ni_mat = build_sunburst_matrices(sols, params, interpolator,
-                                         c_cu_target, c_ni_target, frac_val)
+    cu_mat, ni_mat = build_sunburst_matrices(
+        sols, params, interpolator, c_cu_target, c_ni_target, ly_fraction
+    )
+
 
 
     col1, col2 = st.columns(2)
