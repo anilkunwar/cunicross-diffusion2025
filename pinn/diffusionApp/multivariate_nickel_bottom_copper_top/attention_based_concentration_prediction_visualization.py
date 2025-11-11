@@ -187,18 +187,26 @@ def build_sunburst_matrices(solutions, params_list, interpolator):
 # 7. Sunburst plot (polar pcolormesh – shape fixed!)
 # ----------------------------------------------------------------------
 def plot_sunburst(data, title, cmap, vmin, vmax, fname):
+    """
+    data: shape (N_TIME, len(LY_SPOKES))  # rows = radial cells, cols = angular cells
+    """
     fig, ax = plt.subplots(figsize=(9,9), subplot_kw=dict(projection='polar'))
 
-    theta = np.linspace(0, 2*np.pi, len(LY_SPOKES), endpoint=False)   # 8 angles
-    r     = np.linspace(0, 1, N_TIME+1)                              # 51 edges → 50 cells
-    Theta, R = np.meshgrid(theta, r)
+    # --- build edge coordinates so pcolormesh gets C.shape == (M-1, N-1) ---
+    theta_edges = np.linspace(0, 2*np.pi, len(LY_SPOKES) + 1, endpoint=True)  # 9 edges for 8 spokes
+    r_edges     = np.linspace(0, 1, N_TIME + 1)                                # 51 edges -> 50 cells
+    Theta, R = np.meshgrid(theta_edges, r_edges)  # shapes (51, 9) -> C must be (50, 8)
 
     norm = Normalize(vmin=vmin, vmax=vmax)
     im = ax.pcolormesh(Theta, R, data, cmap=cmap, norm=norm, shading='auto')
 
-    ax.set_xticks(theta)
+    # tick positions: use the angular cell centers (midpoint of edges)
+    theta_centers = 0.5 * (theta_edges[:-1] + theta_edges[1:])
+    ax.set_xticks(theta_centers)
     ax.set_xticklabels([f"{ly}" for ly in LY_SPOKES], fontsize=13, fontweight='bold')
-    ax.set_yticks([0,0.25,0.5,0.75,1.0])
+
+    # radial ticks: map radial edges to physical time labels (you used 0..200 earlier)
+    ax.set_yticks([0.0, 0.25, 0.5, 0.75, 1.0])
     ax.set_yticklabels(['0','50','100','150','200'], fontsize=11)
     ax.set_ylim(0,1)
     ax.grid(True, color='w', linewidth=1.2, alpha=0.7)
@@ -214,6 +222,7 @@ def plot_sunburst(data, title, cmap, vmin, vmax, fname):
     plt.savefig(pdf, bbox_inches='tight')
     plt.close()
     return fig, png, pdf
+
 
 # ----------------------------------------------------------------------
 # 8. Radar chart (one time slice → 8 spokes)
