@@ -683,7 +683,8 @@ def plot_uphill_heatmap(solution, time_index, cmap='viridis', vmin=None, vmax=No
     axes[1].set_title(f'Ni Uphill\n(max={max_pos_ni:.2e}, avg={avg_pos_ni:.2e})\n',
                       fontsize=title_fontsize, pad=12)
     axes[1].set_xlabel('x (μm)', fontsize=label_fontsize, labelpad=8)
-    axes[1].set_ylabel('y (μm)', fontsize=label_fontsize, labelpad=8)
+    #axes[1].set_ylabel('y (μm)', fontsize=label_fontsize, labelpad=8)
+    axes[1].set_ylabel('', fontsize=label_fontsize, labelpad=8)
     axes[1].tick_params(axis='both', which='major', labelsize=label_fontsize-2)
 
     for ax in axes:
