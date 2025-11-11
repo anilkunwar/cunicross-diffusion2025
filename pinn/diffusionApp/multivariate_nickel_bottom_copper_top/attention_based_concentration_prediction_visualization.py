@@ -243,15 +243,19 @@ def build_sunburst_matrices(solutions, params_list, interpolator):
 def plot_sunburst_polar(data, title, cmap, vmin, vmax, fname):
     fig, ax = plt.subplots(figsize=(10, 10), subplot_kw=dict(projection='polar'))
 
-    theta = np.linspace(0, 2*np.pi, N_LY + 1)
-    r     = np.linspace(0, 1, N_TIME_STEPS + 1)
+    # --- Grid: 50 time steps × 8 Ly values ---
+    theta = np.linspace(0, 2*np.pi, N_LY, endpoint=False)  # 8 points, no repeat
+    r     = np.linspace(0, 1, N_TIME_STEPS + 1)           # 51 edges → 50 cells
     Theta, R = np.meshgrid(theta, r)
-    Z = np.hstack([data, data[:, 0:1]])
+
+    # --- C must be (50, 8) — one smaller than mesh in each direction ---
+    C = data  # Shape: (50, 8)
 
     norm = Normalize(vmin=vmin, vmax=vmax)
-    im = ax.pcolormesh(Theta, R, Z, cmap=cmap, norm=norm, shading='auto')
+    im = ax.pcolormesh(Theta, R, C, cmap=cmap, norm=norm, shading='auto')
 
-    ax.set_xticks(theta[:-1])
+    # --- Labels ---
+    ax.set_xticks(theta)
     ax.set_xticklabels([f"{ly}" for ly in LY_VALUES], fontsize=14, fontweight='bold')
 
     r_labels = [0, 50, 100, 150, 200]
@@ -273,7 +277,6 @@ def plot_sunburst_polar(data, title, cmap, vmin, vmax, fname):
     plt.savefig(pdf, bbox_inches='tight')
     plt.close()
     return fig, png, pdf
-
 
 # ----------------------------------------------------------------------
 # 7. STREAMLIT UI
