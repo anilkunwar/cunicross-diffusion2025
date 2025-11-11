@@ -10,22 +10,26 @@ from matplotlib.colors import Normalize
 import streamlit as st
 import re
 
-# === CONFIG: Use __file__ to locate pinn_solutions relative to this script ===
+# ----------------------------------------------------------------------
+# 1. CONFIG – locate the .pkl folder next to this file
+# ----------------------------------------------------------------------
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-PINN_DIR = os.path.join(SCRIPT_DIR, "pinn_solutions")
+PINN_DIR   = os.path.join(SCRIPT_DIR, "pinn_solutions")   # <-- same as first code
 OUTPUT_DIR = os.path.join(SCRIPT_DIR, "sunburst_figures")
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
-# Target Ly values for 8 spokes
-LY_VALUES = [30, 40, 50, 60, 70, 80, 90, 100]
-T_MAX = 200.0
-N_TIME_STEPS = 50
-N_LY = len(LY_VALUES)
+# Sunburst geometry
+LY_VALUES     = [30, 40, 50, 60, 70, 80, 90, 100]   # 8 spokes
+T_MAX         = 200.0
+N_TIME_STEPS  = 50
+N_LY          = len(LY_VALUES)
 
 C_CU_TARGET = 1.0e-3
 C_NI_TARGET = 1.0e-4
 
-# === 1. Robust Load Solutions (Fixed 'params30') ===
+# ----------------------------------------------------------------------
+# 2. LOAD SOLUTIONS – **exactly the same as the first script**
+# ----------------------------------------------------------------------
 @st.cache_data(show_spinner="Loading PINN solutions...")
 def load_solutions(solution_dir):
     solutions = []
@@ -33,9 +37,8 @@ def load_solutions(solution_dir):
     load_logs = []
     lys, c_cus, c_nis = [], [], []
 
-    if not os.path.exists(solution_dir):
-        load_logs.append(f"Directory '{solution_dir}' NOT FOUND.")
-        load_logs.append(f"Script location: {SCRIPT_DIR}")
+    if not os.path.isdir(solution_dir):
+        load_logs.append(f"Directory not found: {solution_dir}")
         st.error("\n".join(load_logs))
         return solutions, params_list, lys, c_cus, c_nis, load_logs
 
@@ -43,175 +46,205 @@ def load_solutions(solution_dir):
     load_logs.append(f"Found {len(files)} .pkl files.")
 
     for fname in files:
-        fpath = os.path.join(solution_dir, fname)
+        path = os.path.join(solution_dir, fname)
         try:
-            with open(fpath, "rb") as f:
+            with open(path, "rb") as f:
                 sol = pickle.load(f)
 
-            required_keys = ['params', 'X', 'Y', 'c1_preds', 'c2_preds', 'times']
-            missing = [k for k in required_keys if k not in sol]
-            if missing:
-                load_logs.append(f"{fname}: Missing keys: {missing}")
+            req = ['params', 'X', 'Y', 'c1_preds', 'c2_preds', 'times']
+            if not all(k in sol for k in req):
+                load_logs.append(f"{fname}: missing keys")
                 continue
 
-            if (np.any(np.isnan(sol['c1_preds'])) or np.any(np.isnan(sol['c2_preds']))):
-                load_logs.append(f"{fname}: Contains NaN.")
+            if np.any(np.isnan(sol['c1_preds'])) or np.any(np.isnan(sol['c2_preds'])):
+                load_logs.append(f"{fname}: NaNs")
                 continue
 
-            # FIXED: 'params30' → 'params'
-            param_tuple = (sol['params']['Ly'], sol['params']['C_Cu'], sol['params']['C_Ni'])
+            # ---- parameter tuple (exactly as first code) ----
+            p = sol['params']
+            param_tuple = (p['Ly'], p['C_Cu'], p['C_Ni'])
             solutions.append(sol)
             params_list.append(param_tuple)
-            lys.append(sol['params']['Ly'])
-            c_cus.append(sol['params']['C_Cu'])
-            c_nis.append(sol['params']['C_Ni'])  # ← Fixed
+            lys.append(p['Ly'])
+            c_cus.append(p['C_Cu'])
+            c_nis.append(p['C_Ni'])
 
-            # Parse diffusion type
-            match = re.search(r"ly_([\d.]+)_ccu_([\deE.-]+)_cni_([\deE.-]+)", fname)
+            # diffusion-type from filename (same logic)
+            m = re.search(r"ly_([\d.]+)_ccu_([\deE.-]+)_cni_([\deE.-]+)", fname)
             diff_type = 'crossdiffusion'
-            if match:
-                ly, c_cu, c_ni = match.groups()
-                if float(c_cu) == 0 and float(c_ni) > 0:
-                    diff_type = 'ni_selfdiffusion'
-                elif float(c_ni) == 0 and float(c_cu) > 0:
-                    diff_type = 'cu_selfdiffusion'
+            if m:
+                ly, cu, ni = map(float, m.groups())
+                if cu == 0 and ni > 0:   diff_type = 'ni_selfdiffusion'
+                if ni == 0 and cu > 0:   diff_type = 'cu_selfdiffusion'
             sol['diffusion_type'] = diff_type
 
-            load_logs.append(f"{fname}: Loaded | Ly={param_tuple[0]:.1f} | Cu={param_tuple[1]:.1e} | Ni={param_tuple[2]:.1e}")
+            load_logs.append(
+                f"{fname}: Ly={p['Ly']:.1f} Cu={p['C_Cu']:.1e} Ni={p['C_Ni']:.1e}"
+            )
         except Exception as e:
-            load_logs.append(f"{fname}: Failed → {str(e)}")
+            load_logs.append(f"{fname}: {e}")
 
-    if not solutions:
-        load_logs.append("No valid solutions loaded.")
-        st.error("\n".join(load_logs))
-    else:
-        load_logs.append(f"Loaded {len(solutions)} solutions.")
-        st.success("\n".join(load_logs[-5:]))
-
+    load_logs.append(f"Loaded {len(solutions)} solutions.")
     return solutions, params_list, lys, c_cus, c_nis, load_logs
 
-# === 2. Attention Interpolator (Robust to t_max) ===
-class AttentionInterpolator(nn.Module):
-    def __init__(self, sigma=0.25, num_heads=4, d_head=8):
+
+# ----------------------------------------------------------------------
+# 3. ATTENTION INTERPOLATOR – **copy-paste from the first script**
+# ----------------------------------------------------------------------
+class MultiParamAttentionInterpolator(nn.Module):
+    """Exact copy of the interpolator used in the first (working) app."""
+    def __init__(self, sigma=0.2, num_heads=4, d_head=8):
         super().__init__()
         self.sigma = sigma
         self.num_heads = num_heads
-        self.W_q = nn.Linear(3, num_heads * d_head)
-        self.W_k = nn.Linear(3, num_heads * d_head)
+        self.d_head = d_head
+        self.W_q = nn.Linear(3, self.num_heads * self.d_head)
+        self.W_k = nn.Linear(3, self.num_heads * self.d_head)
 
     def forward(self, solutions, params_list, ly_target, c_cu_target, c_ni_target):
-        lys = torch.tensor([p[0] for p in params_list], dtype=torch.float32)
-        c_cus = torch.tensor([p[1] for p in params_list], dtype=torch.float32)
-        c_nis = torch.tensor([p[2] for p in params_list], dtype=torch.float32)
+        # ----- 1. min-max normalisation (exactly as first code) -----
+        lys   = np.array([p[0] for p in params_list])
+        c_cus = np.array([p[1] for p in params_list])
+        c_nis = np.array([p[2] for p in params_list])
 
-        ly_norm = (lys - 30.0) / (120.0 - 30.0)
-        c_cu_norm = c_cus / 3.0e-3
-        c_ni_norm = c_nis / 1.8e-3
+        ly_norm   = (lys   - 30.0) / (120.0 - 30.0)
+        c_cu_norm = (c_cus - 0.0) / (2.9e-3 - 0.0)   # allows C_Cu = 0
+        c_ni_norm = (c_nis - 0.0) / (1.8e-3 - 0.0)   # allows C_Ni = 0
 
-        target_ly_norm = (ly_target - 30.0) / (120.0 - 30.0)
-        target_c_cu_norm = c_cu_target / 3.0e-3
-        target_c_ni_norm = c_ni_target / 1.8e-3
+        tgt_ly_norm   = (ly_target   - 30.0) / (120.0 - 30.0)
+        tgt_c_cu_norm = (c_cu_target - 0.0) / (2.9e-3 - 0.0)
+        tgt_c_ni_norm = (c_ni_target - 0.0) / (1.8e-3 - 0.0)
 
-        params_tensor = torch.stack([ly_norm, c_cu_norm, c_ni_norm], dim=1)
-        target_tensor = torch.tensor([[target_ly_norm, target_c_cu_norm, target_c_ni_norm]])
+        # ----- 2. multi-head attention -----
+        params_tensor = torch.tensor(np.stack([ly_norm, c_cu_norm, c_ni_norm], axis=1),
+                                    dtype=torch.float32)               # [N,3]
+        target_tensor = torch.tensor([[tgt_ly_norm, tgt_c_cu_norm, tgt_c_ni_norm]],
+                                    dtype=torch.float32)               # [1,3]
 
-        Q = self.W_q(target_tensor).view(1, self.num_heads, -1)
-        K = self.W_k(params_tensor).view(-1, self.num_heads, Q.size(-1))
-        attn = torch.einsum('nhd,mhd->nmh', K, Q) / (Q.size(-1) ** 0.5)
-        attn_weights = torch.softmax(attn, dim=0).mean(dim=2).squeeze(1)
+        Q = self.W_q(target_tensor).view(1, self.num_heads, self.d_head)   # [1,H,D]
+        K = self.W_k(params_tensor).view(-1, self.num_heads, self.d_head) # [N,H,D]
 
+        attn_logits = torch.einsum('nhd,mhd->nmh', K, Q) / np.sqrt(self.d_head)
+        attn_weights = torch.softmax(attn_logits, dim=0)          # [N,1,H]
+        attn_weights = attn_weights.mean(dim=2).squeeze(1)        # [N]
+
+        # ----- 3. Gaussian spatial weighting -----
         dist = torch.sqrt(
-            ((ly_norm - target_ly_norm) / self.sigma) ** 2 +
-            ((c_cu_norm - target_c_cu_norm) / self.sigma) ** 2 +
-            ((c_ni_norm - target_c_ni_norm) / self.sigma) ** 2
+            ((torch.tensor(ly_norm)   - tgt_ly_norm)   / self.sigma)**2 +
+            ((torch.tensor(c_cu_norm) - tgt_c_cu_norm) / self.sigma)**2 +
+            ((torch.tensor(c_ni_norm) - tgt_c_ni_norm) / self.sigma)**2
         )
-        spatial_weights = torch.exp(-dist ** 2 / 2)
-        spatial_weights /= spatial_weights.sum() + 1e-8
+        spatial_weights = torch.exp(-dist**2 / 2)
+        spatial_weights = spatial_weights / (spatial_weights.sum() + 1e-12)
 
-        weights = attn_weights * spatial_weights
-        weights /= weights.sum() + 1e-8
+        # ----- 4. combine & normalise -----
+        combined = attn_weights * spatial_weights
+        combined = combined / (combined.sum() + 1e-12)
 
-        return self._interpolate(solutions, weights.numpy(), ly_target)
+        # ----- 5. physics-aware interpolation (identical to first code) -----
+        return self._physics_aware_interpolation(
+            solutions, combined.detach().numpy(),
+            ly_target, c_cu_target, c_ni_target
+        )
 
-    def _interpolate(self, solutions, weights, ly_target):
-        Lx = solutions[0]['params']['Lx']
-        x = np.linspace(0, Lx, 50)
-        y = np.linspace(0, ly_target, 50)
-        times = np.linspace(0, T_MAX, N_TIME_STEPS)  # Always 0 to 200
+    # ------------------------------------------------------------------
+    def _physics_aware_interpolation(self, solutions, weights,
+                                     ly_target, c_cu_target, c_ni_target):
+        Lx     = solutions[0]['params']['Lx']
+        t_max  = solutions[0]['params']['t_max']
+        x      = np.linspace(0, Lx, 50)
+        y      = np.linspace(0, ly_target, 50)
+        times  = np.linspace(0, min(t_max, T_MAX), N_TIME_STEPS)
 
         X, Y = np.meshgrid(x, y, indexing='ij')
-        c1_interp = np.zeros((N_TIME_STEPS, 50, 50))
-        c2_interp = np.zeros((N_TIME_STEPS, 50, 50))
+        c1_interp = np.zeros((len(times), 50, 50))
+        c2_interp = np.zeros((len(times), 50, 50))
 
         for t_idx, t in enumerate(times):
+            # ---- map target time to *exact* index in each source solution ----
             for sol, w in zip(solutions, weights):
-                t_max = sol['params']['t_max']
-                sol_times = sol['times']
-                # Map t (0–200) → nearest index in sol['times']
-                t_idx_sol = np.argmin(np.abs(sol_times - t))
-                t_idx_sol = min(t_idx_sol, len(sol_times) - 1)
-
+                src_times = sol['times']
+                t_idx_src = min(
+                    int(np.round(t / src_times[-1] * (len(src_times) - 1))),
+                    len(src_times) - 1
+                )
                 scale = ly_target / sol['params']['Ly']
-                Y_scaled = sol['Y'][0, :] * scale
+                Y_src = sol['Y'][0, :] * scale
 
+                # ---- linear interpolation on the scaled source grid ----
                 try:
                     interp_c1 = RegularGridInterpolator(
-                        (sol['X'][:, 0], Y_scaled), sol['c1_preds'][t_idx_sol],
-                        method='linear', bounds_error=False, fill_value=0
-                    )
+                        (sol['X'][:, 0], Y_src), sol['c1_preds'][t_idx_src],
+                        method='linear', bounds_error=False, fill_value=0)
                     interp_c2 = RegularGridInterpolator(
-                        (sol['X'][:, 0], Y_scaled), sol['c2_preds'][t_idx_sol],
-                        method='linear', bounds_error=False, fill_value=0
-                    )
+                        (sol['X'][:, 0], Y_src), sol['c2_preds'][t_idx_src],
+                        method='linear', bounds_error=False, fill_value=0)
+
                     pts = np.stack([X.flatten(), Y.flatten()], axis=1)
                     c1_interp[t_idx] += w * interp_c1(pts).reshape(50, 50)
                     c2_interp[t_idx] += w * interp_c2(pts).reshape(50, 50)
-                except Exception as e:
-                    st.warning(f"Interpolation failed for {sol['params']['Ly']} at t={t}: {e}")
+                except Exception:
+                    # silent skip – same behaviour as the first script
                     continue
 
-        # Enforce BCs
-        c1_interp[:, :, 0] = C_CU_TARGET
-        c2_interp[:, :, -1] = C_NI_TARGET
+        # ---- enforce BCs (identical to first code) ----
+        c1_interp[:, :, 0]  = c_cu_target      # Cu at y = 0
+        c2_interp[:, :, -1] = c_ni_target      # Ni at y = Ly
+
+        param_set = solutions[0]['params'].copy()
+        param_set.update({'Ly': ly_target, 'C_Cu': c_cu_target, 'C_Ni': c_ni_target})
 
         return {
-            'X': X, 'Y': Y, 'times': times,
-            'c1_preds': c1_interp, 'c2_preds': c2_interp,
-            'params': {'Ly': ly_target, 'C_Cu': C_CU_TARGET, 'C_Ni': C_NI_TARGET}
+            'params': param_set,
+            'X': X, 'Y': Y,
+            'times': times,
+            'c1_preds': list(c1_interp),
+            'c2_preds': list(c2_interp),
+            'interpolated': True,
+            'attention_weights': weights.tolist()
         }
 
-# === 3. Centerpoint ===
+
+# ----------------------------------------------------------------------
+# 4. CENTER-POINT EXTRACTION
+# ----------------------------------------------------------------------
 def get_center_concentration(solution):
-    x_center = solution['params']['Lx'] / 2
-    y_center = solution['params']['Ly'] / 2
-    x_idx = np.argmin(np.abs(solution['X'][:, 0] - x_center))
-    y_idx = np.argmin(np.abs(solution['Y'][0, :] - y_center))
-    cu = [c1[x_idx, y_idx] for c1 in solution['c1_preds']]
-    ni = [c2[x_idx, y_idx] for c2 in solution['c2_preds']]
+    Lx, Ly = solution['params']['Lx'], solution['params']['Ly']
+    x_center, y_center = Lx / 2, Ly / 2
+    ix = np.argmin(np.abs(solution['X'][:, 0] - x_center))
+    iy = np.argmin(np.abs(solution['Y'][0, :] - y_center))
+    cu = [c1[ix, iy] for c1 in solution['c1_preds']]
+    ni = [c2[ix, iy] for c2 in solution['c2_preds']]
     return np.array(cu), np.array(ni)
 
-# === 4. Build Sunburst ===
+
+# ----------------------------------------------------------------------
+# 5. BUILD SUNBURST MATRICES
+# ----------------------------------------------------------------------
 def build_sunburst_matrices(solutions, params_list, interpolator):
-    cu_matrix = np.zeros((N_TIME_STEPS, N_LY))
-    ni_matrix = np.zeros((N_TIME_STEPS, N_LY))
+    cu_mat = np.zeros((N_TIME_STEPS, N_LY))
+    ni_mat = np.zeros((N_TIME_STEPS, N_LY))
 
-    progress = st.progress(0)
+    prog = st.progress(0)
     for j, ly in enumerate(LY_VALUES):
-        with st.spinner(f"Interpolating Ly = {ly} μm..."):
-            sol = interpolator(solutions, params_list, ly, C_CU_TARGET, C_NI_TARGET)
-            cu_center, ni_center = get_center_concentration(sol)
-            cu_matrix[:, j] = cu_center
-            ni_matrix[:, j] = ni_center
-        progress.progress((j + 1) / N_LY)
-    progress.empty()
-    return cu_matrix, ni_matrix
+        sol = interpolator(solutions, params_list,
+                           ly, C_CU_TARGET, C_NI_TARGET)
+        cu, ni = get_center_concentration(sol)
+        cu_mat[:, j] = cu
+        ni_mat[:, j] = ni
+        prog.progress((j + 1) / N_LY)
+    prog.empty()
+    return cu_mat, ni_mat
 
-# === 5. Plot Sunburst ===
-def plot_sunburst_polar(data, title, cmap, vmin, vmax, filename):
+
+# ----------------------------------------------------------------------
+# 6. POLAR SUNBURST PLOT
+# ----------------------------------------------------------------------
+def plot_sunburst_polar(data, title, cmap, vmin, vmax, fname):
     fig, ax = plt.subplots(figsize=(10, 10), subplot_kw=dict(projection='polar'))
 
     theta = np.linspace(0, 2*np.pi, N_LY + 1)
-    r = np.linspace(0, 1, N_TIME_STEPS + 1)
+    r     = np.linspace(0, 1, N_TIME_STEPS + 1)
     Theta, R = np.meshgrid(theta, r)
     Z = np.hstack([data, data[:, 0:1]])
 
@@ -222,7 +255,7 @@ def plot_sunburst_polar(data, title, cmap, vmin, vmax, filename):
     ax.set_xticklabels([f"{ly}" for ly in LY_VALUES], fontsize=14, fontweight='bold')
 
     r_labels = [0, 50, 100, 150, 200]
-    r_ticks = np.array(r_labels) / T_MAX
+    r_ticks  = np.array(r_labels) / T_MAX
     ax.set_yticks(r_ticks)
     ax.set_yticklabels([f"{int(t)} s" for t in r_labels], fontsize=12)
 
@@ -234,55 +267,60 @@ def plot_sunburst_polar(data, title, cmap, vmin, vmax, filename):
     cbar.set_label('Concentration (mol/cc)', fontsize=14)
 
     plt.tight_layout()
-    path_png = os.path.join(OUTPUT_DIR, f"{filename}.png")
-    path_pdf = os.path.join(OUTPUT_DIR, f"{filename}.pdf")
-    plt.savefig(path_png, dpi=300, bbox_inches='tight')
-    plt.savefig(path_pdf, bbox_inches='tight')
+    png = os.path.join(OUTPUT_DIR, f"{fname}.png")
+    pdf = os.path.join(OUTPUT_DIR, f"{fname}.pdf")
+    plt.savefig(png, dpi=300, bbox_inches='tight')
+    plt.savefig(pdf, bbox_inches='tight')
     plt.close()
-    return fig, path_png, path_pdf
+    return fig, png, pdf
 
-# === Streamlit App ===
+
+# ----------------------------------------------------------------------
+# 7. STREAMLIT UI
+# ----------------------------------------------------------------------
 def main():
     st.set_page_config(page_title="Sunburst Centerpoint", layout="wide")
     st.title("Interpolation & Sunburst Visualization of Centerpoint Concentrations")
 
-    solutions, params_list, _, _, _, load_logs = load_solutions(PINN_DIR)
+    sols, params, _, _, _, logs = load_solutions(PINN_DIR)
 
     with st.expander("Load Logs"):
-        for log in load_logs:
-            st.write(log)
+        for l in logs:
+            st.write(l)
 
-    if not solutions:
+    if not sols:
         st.stop()
 
-    interpolator = AttentionInterpolator()
+    interpolator = MultiParamAttentionInterpolator(sigma=0.2)
 
-    cu_data, ni_data = build_sunburst_matrices(solutions, params_list, interpolator)
+    cu_data, ni_data = build_sunburst_matrices(sols, params, interpolator)
 
     col1, col2 = st.columns(2)
+
     with col1:
         fig_cu, png_cu, pdf_cu = plot_sunburst_polar(
             cu_data, "Cu Concentration at Center (x=30, y=Ly/2)",
-            cmap='plasma', vmin=0, vmax=1.5e-3, filename="sunburst_cu_center"
+            cmap='plasma', vmin=0, vmax=1.5e-3, fname="sunburst_cu_center"
         )
         st.pyplot(fig_cu)
         with open(png_cu, "rb") as f:
-            st.download_button("Download Cu (PNG)", f, "sunburst_cu_center.png", "image/png")
+            st.download_button("Cu (PNG)", f, "sunburst_cu_center.png", "image/png")
         with open(pdf_cu, "rb") as f:
-            st.download_button("Download Cu (PDF)", f, "sunburst_cu_center.pdf", "application/pdf")
+            st.download_button("Cu (PDF)", f, "sunburst_cu_center.pdf", "application/pdf")
 
     with col2:
         fig_ni, png_ni, pdf_ni = plot_sunburst_polar(
             ni_data, "Ni Concentration at Center (x=30, y=Ly/2)",
-            cmap='viridis', vmin=0, vmax=3e-4, filename="sunburst_ni_center"
+            cmap='viridis', vmin=0, vmax=3e-4, fname="sunburst_ni_center"
         )
         st.pyplot(fig_ni)
         with open(png_ni, "rb") as f:
-            st.download_button("Download Ni (PNG)", f, "sunburst_ni_center.png", "image/png")
+            st.download_button("Ni (PNG)", f, "sunburst_ni_center.png", "image/png")
         with open(pdf_ni, "rb") as f:
-            st.download_button("Download Ni (PDF)", f, "sunburst_ni_center.pdf", "application/pdf")
+            st.download_button("Ni (PDF)", f, "sunburst_ni_center.pdf", "application/pdf")
 
-    st.success(f"Sunburst plots saved to `{OUTPUT_DIR}/`")
+    st.success(f"Sunburst figures saved to `{OUTPUT_DIR}/`")
+
 
 if __name__ == "__main__":
     main()
