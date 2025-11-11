@@ -1095,12 +1095,11 @@ def main():
             st.warning(f"Failed to load or interpolate solution for Ly={ly:.1f}, C_Cu={c_cu:.1e}, C_Ni={c_ni:.1e}: {str(e)}")
    
     # Plot parameter sweep
-    sweep_time_index = st.slider("Select Time Index for Sweep", 0, len(solution['times'])-1, len(solution['times'])-1, key="sweep_time")
-    # Corrected Indentation applied below:
-    if sweep_solutions:
+    # Plot parameter sweep
+    sweep_time_index = st.slider("Select Time Index for Sweep", 0, len(solution['times'])-1, len(solution['times'])-1)
+    if sweep_solutions and sweep_params_list:
         fig_sweep, filename_sweep = plot_parameter_sweep(
-            sweep_solutions, sweep_params_list, selected_params, sweep_time_index,
-            sidebar_metric=sidebar_metric,
+            sweep_solutions, sweep_params_list, sweep_params_list, sweep_time_index, sidebar_metric=sidebar_metric,
             label_size=label_size, title_size=title_size, tick_label_size=tick_label_size,
             legend_loc=legend_loc, curve_colormap=curve_colormap,
             axis_linewidth=axis_linewidth, tick_major_width=tick_major_width,
@@ -1121,8 +1120,8 @@ def main():
             file_name=f"{filename_sweep}.pdf",
             mime="application/pdf"
         )
-    else:
-        st.warning("No valid solutions selected for parameter sweep.")
+
+    
     # Summary Table across all solutions
     st.subheader("Summary Table: Uphill Diffusion Metrics Across All Solutions")
     summary_time_index = st.slider("Select Time Index for Summary Table", 0, len(solutions[0]['times'])-1, len(solutions[0]['times'])-1, key="summary_time")
