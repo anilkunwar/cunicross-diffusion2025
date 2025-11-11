@@ -689,15 +689,30 @@ def plot_uphill_heatmap(solution, time_index, cmap='viridis', vmin=None, vmax=No
     for ax in axes:
         ax.grid(True, linestyle='--', linewidth=0.6, alpha=0.3)
 
-    if colorbar:
-        #cbar = fig.colorbar(im2, ax=axes.ravel().tolist(), orientation='vertical',
+    #if colorbar:
+        ##cbar = fig.colorbar(im2, ax=axes.ravel().tolist(), orientation='vertical',
+        ##                    fraction=0.046, pad=0.08, shrink=0.8)
+        #cbar = fig.colorbar(im1, ax=axes.ravel().tolist(), orientation='vertical',
         #                    fraction=0.046, pad=0.08, shrink=0.8)
-        cbar = fig.colorbar(im1, ax=axes.ravel().tolist(), orientation='vertical',
-                            fraction=0.046, pad=0.08, shrink=0.8)
-        cbar.set_label(cbar_label, fontsize=label_fontsize, labelpad=10)
-        cbar.ax.tick_params(labelsize=label_fontsize-2)
+        #cbar.set_label(cbar_label, fontsize=label_fontsize, labelpad=10)
+        #cbar.ax.tick_params(labelsize=label_fontsize-2)
 
-                            # Add colorbar beside the heatmaps with adjusted padding and fraction
+    if colorbar:
+        # Make space for colorbars
+        from mpl_toolkits.axes_grid1 import make_axes_locatable
+        divider0 = make_axes_locatable(axes[0])
+        cax0 = divider0.append_axes("right", size="5%", pad=0.1)
+        cbar0 = fig.colorbar(im1, cax=cax0)
+        cbar0.set_label(cbar_label, fontsize=label_fontsize, labelpad=10)
+        cbar0.ax.tick_params(labelsize=label_fontsize-2)
+
+        divider1 = make_axes_locatable(axes[1])
+        cax1 = divider1.append_axes("right", size="5%", pad=0.1)
+        cbar1 = fig.colorbar(im2, cax=cax1)
+        cbar1.set_label(cbar_label, fontsize=label_fontsize, labelpad=10)
+        cbar1.ax.tick_params(labelsize=label_fontsize-2)
+
+    # Add colorbar beside the heatmaps with adjusted padding and fraction
     
     fig.suptitle(f'Uphill Diffusion (positive J·∇c) @ t = {t_val:.2f} s',
                  fontsize=title_fontsize + 2, y=0.96)
