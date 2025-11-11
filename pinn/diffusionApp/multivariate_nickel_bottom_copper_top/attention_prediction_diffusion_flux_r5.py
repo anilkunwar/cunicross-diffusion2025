@@ -1094,7 +1094,7 @@ def main():
         except Exception as e:
             st.warning(f"Failed to load or interpolate solution for Ly={ly:.1f}, C_Cu={c_cu:.1e}, C_Ni={c_ni:.1e}: {str(e)}")
     # Plot parameter sweep
-    sweep_time_index = st.slider("Select Time Index for Sweep", 0, len(solution['times'])-1, len(solution['times'])-1, key="sweep_time")
+        sweep_time_index = st.slider("Select Time Index for Sweep", 0, len(solution['times'])-1, len(solution['times'])-1, key="sweep_time")
         if sweep_solutions:
             fig_sweep, filename_sweep = plot_parameter_sweep(
                 sweep_solutions, sweep_params_list, selected_params, sweep_time_index,
