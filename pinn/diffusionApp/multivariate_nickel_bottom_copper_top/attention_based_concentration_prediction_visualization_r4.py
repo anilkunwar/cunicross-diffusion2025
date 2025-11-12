@@ -283,10 +283,7 @@ def plot_sunburst(data, title, cmap, vmin, vmax, conc_log_scale, time_log_scale,
 # ----------------------------------------------------------------------
 # 6. CORRECTED radar charts for Cu and Ni with label toggle
 # ----------------------------------------------------------------------
-# ----------------------------------------------------------------------
-# 6. Radar chart – value labels on the *spokes* (radial axes)
-# ----------------------------------------------------------------------
-def plot_radar_single(data, element, t_val, fname, ly_spokes):
+def plot_radar_single(data, element, t_val, fname, ly_spokes, show_labels=True):
     angles = np.linspace(0, 2*np.pi, len(ly_spokes), endpoint=False)
     angles = np.concatenate([angles, [angles[0]]])
     data_cyclic = np.concatenate([data, [data[0]]])
@@ -306,11 +303,15 @@ def plot_radar_single(data, element, t_val, fname, ly_spokes):
     ax.legend(loc='upper right', bbox_to_anchor=(1.2, 1.0), fontsize=14)
     ax.grid(True, linewidth=1.5)  # Thicker grid
 
-    # Add value annotations
-    for i, (angle, value) in enumerate(zip(angles[:-1], data)):
-        ax.annotate(f'{value:.2e}', (angle, value), 
-                   textcoords='offset points', xytext=(0,10), 
-                   ha='center', fontsize=10, fontweight='bold')
+    # Add value annotations only if enabled and if values are meaningful
+    if show_labels and max(data) > 1e-10:  # Only show labels for non-zero data
+        for i, (angle, value) in enumerate(zip(angles[:-1], data)):
+            # Only label significant values to avoid clutter
+            if value > max(data) * 0.1:  # Only label values > 10% of max
+                ax.annotate(f'{value:.1e}', (angle, value), 
+                           textcoords='offset points', xytext=(0,10), 
+                           ha='center', fontsize=10, fontweight='bold',
+                           bbox=dict(boxstyle='round,pad=0.2', facecolor='white', alpha=0.7))
 
     png = os.path.join(FIGURE_DIR, f"{fname}.png")
     pdf = os.path.join(FIGURE_DIR, f"{fname}.pdf")
