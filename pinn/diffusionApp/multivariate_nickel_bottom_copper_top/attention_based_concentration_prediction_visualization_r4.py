@@ -298,7 +298,13 @@ def plot_radar_single(data, element, t_val, fname, ly_spokes, show_labels=True, 
 
     ax.set_xticks(angles[:-1])
     ax.set_xticklabels([f"{ly}" for ly in ly_spokes], fontsize=14)  # Increased font
-    ax.set_ylim(0, max(data)*1.2)
+    #ax.set_ylim(0, max(data)*1.2)
+    max_val = max(data) * 1.2
+    ax.set_ylim(0, max_val)
+    # Define radial tick positions
+    yticks = np.linspace(0, max_val, 5)  # 5 ticks from 0 to max_val
+    # Set the tick positions
+    ax.set_yticks(yticks)
     ax.set_title(f"{element} Concentration at t = {t_val:.1f} s", fontsize=18, pad=25)  # Larger title
     ax.legend(loc='upper right', bbox_to_anchor=(1.2, 1.0), fontsize=14)
     ax.grid(True, linewidth=1.5)  # Thicker grid
@@ -306,11 +312,10 @@ def plot_radar_single(data, element, t_val, fname, ly_spokes, show_labels=True, 
      # Control radial axis labels visibility
     if show_radial_labels:
         #ax.set_yticks(ax.get_yticks())  # Show default radial ticks
-        yticks = np.linspace(0, max(data)*1.2, 5) 
-        ax.set_yticks(yticks)  # Show default radial ticks
         #ax.set_yticklabels([f"{int(tick):d}" if tick >= 0 else "" for tick in ax.get_yticks()], fontsize=12)
-        ax.set_yticklabels([f"{tick:.5f}" if tick >= 0 else "" for tick in ax.get_yticks()], fontsize=12)
+        #ax.set_yticklabels([f"{tick:.5f}" if tick >= 0 else "" for tick in ax.get_yticks()], fontsize=12)
         #ax.set_yticklabels([f"{tick:.2e}" if tick >= 0 else "" for tick in ax.get_yticks()], fontsize=12)
+        ax.set_yticklabels([f"{tick:.2e}" for tick in yticks], fontsize=12)
     else:
         ax.set_yticklabels([])  # Hide radial axis labels
 
