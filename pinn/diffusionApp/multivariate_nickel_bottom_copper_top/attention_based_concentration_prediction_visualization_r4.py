@@ -283,7 +283,7 @@ def plot_sunburst(data, title, cmap, vmin, vmax, conc_log_scale, time_log_scale,
 # ----------------------------------------------------------------------
 # 6. CORRECTED radar charts for Cu and Ni with label toggle
 # ----------------------------------------------------------------------
-def plot_radar_single(data, element, t_val, fname, ly_spokes, show_labels=True):
+def plot_radar_single(data, element, t_val, fname, ly_spokes, show_labels=True, show_radial_labels=True):
     angles = np.linspace(0, 2*np.pi, len(ly_spokes), endpoint=False)
     angles = np.concatenate([angles, [angles[0]]])
     data_cyclic = np.concatenate([data, [data[0]]])
@@ -513,7 +513,7 @@ def main():
     
     with radar_col1:
         fig_radar_cu, png_rcu, pdf_rcu = plot_radar_single(
-            cu_row, "Cu", t_val, f"radar_cu_t{t_val:.0f}", LY_SPOKES, show_radar_labels, show_radial_labels
+            cu_row, "Cu", t_val, f"radar_cu_t{t_val:.0f}", LY_SPOKES, show_labels=show_radar_labels, show_radial_labels=show_radial_labels
         )
         st.pyplot(fig_radar_cu)
         with open(png_rcu,"rb") as f:
@@ -521,7 +521,7 @@ def main():
 
     with radar_col2:
         fig_radar_ni, png_rni, pdf_rni = plot_radar_single(
-            ni_row, "Ni", t_val, f"radar_ni_t{t_val:.0f}", LY_SPOKES, show_radar_labels, show_radial_labels
+            ni_row, "Ni", t_val, f"radar_ni_t{t_val:.0f}", LY_SPOKES, show_labels=show_radar_labels, show_radial_labels=show_radial_labels
         )
         st.pyplot(fig_radar_ni)
         with open(png_rni,"rb") as f:
