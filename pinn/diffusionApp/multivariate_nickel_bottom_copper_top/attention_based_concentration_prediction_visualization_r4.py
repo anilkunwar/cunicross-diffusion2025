@@ -307,7 +307,8 @@ def plot_radar_single(data, element, t_val, fname, ly_spokes, show_labels=True, 
     if show_radial_labels:
         ax.set_yticks(ax.get_yticks())  # Show default radial ticks
         #ax.set_yticklabels([f"{int(tick):d}" if tick >= 0 else "" for tick in ax.get_yticks()], fontsize=12)
-        ax.set_yticklabels([f"{tick:.2f}" if tick >= 0 else "" for tick in ax.get_yticks()], fontsize=12)
+        #ax.set_yticklabels([f"{tick:.2f}" if tick >= 0 else "" for tick in ax.get_yticks()], fontsize=12)
+        ax.set_yticklabels([f"{tick:.2e}" if tick >= 0 else "" for tick in ax.get_yticks()], fontsize=12)
     else:
         ax.set_yticklabels([])  # Hide radial axis labels
 
