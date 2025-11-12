@@ -78,6 +78,10 @@ with training datasets for 0 BCs (Transformer-inspired Attention): [![meaningtow
    [![meaningtowords](https://img.shields.io/badge/radarchart4-streamlit-red)](https://attention-concentration-prediction-visualization4.streamlit.app/) (indexing error in the Cu's and Ni's radar chart)
 
    [![meaningtowords](https://img.shields.io/badge/radarchart5-streamlit-red)](https://attention-concentration-prediction-visualization5.streamlit.app/)
+
+   [![meaningtowords](https://img.shields.io/badge/radarchart6-streamlit-red)](https://attention-concentration-prediction-visualization6.streamlit.app/)
+
+   [![meaningtowords](https://img.shields.io/badge/radarchart7-streamlit-red)](https://attention-concentration-prediction-visualization7.streamlit.app/)  (radar chart visualization based upon the previous saved data)
    
 
    Understanding the Attention Weights and Engineering Applications 
