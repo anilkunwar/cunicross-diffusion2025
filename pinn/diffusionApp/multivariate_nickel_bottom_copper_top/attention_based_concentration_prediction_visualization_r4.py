@@ -286,51 +286,25 @@ def plot_sunburst(data, title, cmap, vmin, vmax, conc_log_scale, time_log_scale,
 # ----------------------------------------------------------------------
 # 6. Radar chart – value labels on the *spokes* (radial axes)
 # ----------------------------------------------------------------------
-def plot_radar_single(data, element, t_val, fname, ly_spokes, show_labels=True):
-    """
-    Plot a single-element radar chart.
-    If `show_labels=True` the numeric concentration is written
-    **next to each radial axis** (outside the circle) instead of on the points.
-    """
-    angles = np.linspace(0, 2*np.pi, len(ly_spokes), endpoint=False)
+def plot_radar(cu_row, ni_row, t_val, fname):
+    angles = np.linspace(0, 2*np.pi, len(LY_SPOKES), endpoint=False)
     angles = np.concatenate([angles, [angles[0]]])
-    data_cyclic = np.concatenate([data, [data[0]]])
 
-    fig, ax = plt.subplots(figsize=(8, 8), subplot_kw=dict(projection='polar'))
+    fig, ax = plt.subplots(figsize=(7,7), subplot_kw=dict(projection='polar'))
 
-    # colour per element
-    color = 'red' if element == 'Cu' else 'blue'
+    ax.plot(angles, np.concatenate([cu_row, [cu_row[0]]]), 'o-', linewidth=2, label='Cu')
+    ax.fill(angles, np.concatenate([cu_row, [cu_row[0]]]), alpha=0.25)
 
-    # line + fill
-    ax.plot(angles, data_cyclic, 'o-', linewidth=3, markersize=8,
-            color=color, label=element)
-    ax.fill(angles, data_cyclic, alpha=0.25, color=color)
+    ax.plot(angles, np.concatenate([ni_row, [ni_row[0]]]), 's--', linewidth=2, label='Ni')
+    ax.fill(angles, np.concatenate([ni_row, [ni_row[0]]]), alpha=0.25)
 
-    # ----- radial (spoke) ticks & labels -----
     ax.set_xticks(angles[:-1])
-    ax.set_xticklabels([])                     # hide default Ly numbers
+    ax.set_xticklabels([f"{ly}" for ly in LY_SPOKES], fontsize=12)
+    ax.set_ylim(0, max(cu_row.max(), ni_row.max())*1.1)
+    ax.set_title(f"t = {t_val:.1f} s", fontsize=15, pad=20)
+    ax.legend(loc='upper right', bbox_to_anchor=(1.2,1.0))
+    ax.grid(True)
 
-    # ----- concentration values on the spokes (optional) -----
-    if show_labels:
-        # place label a little outside the data point
-        radius_offset = max(data) * 1.25
-        for ang, ly, val in zip(angles[:-1], ly_spokes, data):
-            # scientific notation, 2 digits
-            txt = f"{ly} µm\n{val:.2e}"
-            ax.text(ang, radius_offset, txt,
-                    ha='center', va='center',
-                    fontsize=11, fontweight='bold',
-                    bbox=dict(boxstyle='round,pad=0.3',
-                              facecolor='white', edgecolor='none', alpha=0.85))
-
-    # ----- y-axis (concentration) -----
-    ax.set_ylim(0, max(data) * 1.45)           # extra headroom for the labels
-    ax.set_title(f"{element} Concentration at t = {t_val:.1f} s",
-                 fontsize=18, pad=25)
-    ax.legend(loc='upper right', bbox_to_anchor=(1.2, 1.0), fontsize=14)
-    ax.grid(True, linewidth=1.5)
-
-    # ----- save -----
     png = os.path.join(FIGURE_DIR, f"{fname}.png")
     pdf = os.path.join(FIGURE_DIR, f"{fname}.pdf")
     plt.savefig(png, dpi=300, bbox_inches='tight')
