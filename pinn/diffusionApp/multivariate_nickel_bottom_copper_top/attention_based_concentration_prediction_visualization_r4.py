@@ -303,6 +303,13 @@ def plot_radar_single(data, element, t_val, fname, ly_spokes, show_labels=True):
     ax.legend(loc='upper right', bbox_to_anchor=(1.2, 1.0), fontsize=14)
     ax.grid(True, linewidth=1.5)  # Thicker grid
 
+     # Control radial axis labels visibility
+    if show_radial_labels:
+        ax.set_yticks(ax.get_yticks())  # Show default radial ticks
+        ax.set_yticklabels([f"{int(tick):d}" if tick >= 0 else "" for tick in ax.get_yticks()], fontsize=12)
+    else:
+        ax.set_yticklabels([])  # Hide radial axis labels
+
     # Add value annotations only if enabled and if values are meaningful
     if show_labels and max(data) > 1e-10:  # Only show labels for non-zero data
         for i, (angle, value) in enumerate(zip(angles[:-1], data)):
@@ -435,6 +442,8 @@ def main():
     # Radar chart options
     show_radar_labels = st.sidebar.checkbox("Show Radar Value Labels", value=True,
                                            help="Toggle value annotations on radar charts to prevent overlapping")
+    show_radial_labels = st.sidebar.checkbox("Show Radial Axis Labels", value=True,
+                                         help="Toggle visibility of the radar chart's radial axis labels")
 
     # Concentration inputs
     c_cu_target = st.sidebar.number_input(
@@ -504,7 +513,7 @@ def main():
     
     with radar_col1:
         fig_radar_cu, png_rcu, pdf_rcu = plot_radar_single(
-            cu_row, "Cu", t_val, f"radar_cu_t{t_val:.0f}", LY_SPOKES, show_radar_labels
+            cu_row, "Cu", t_val, f"radar_cu_t{t_val:.0f}", LY_SPOKES, show_radar_labels, show_radial_labels
         )
         st.pyplot(fig_radar_cu)
         with open(png_rcu,"rb") as f:
@@ -512,7 +521,7 @@ def main():
 
     with radar_col2:
         fig_radar_ni, png_rni, pdf_rni = plot_radar_single(
-            ni_row, "Ni", t_val, f"radar_ni_t{t_val:.0f}", LY_SPOKES, show_radar_labels
+            ni_row, "Ni", t_val, f"radar_ni_t{t_val:.0f}", LY_SPOKES, show_radar_labels, show_radial_labels
         )
         st.pyplot(fig_radar_ni)
         with open(png_rni,"rb") as f:
