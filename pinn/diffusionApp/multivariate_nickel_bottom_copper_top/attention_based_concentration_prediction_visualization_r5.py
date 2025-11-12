@@ -286,7 +286,7 @@ def plot_sunburst(data, title, cmap, vmin, vmax, conc_log_scale, time_log_scale,
 def plot_radar_single(data, element, t_val, fname, ly_spokes,
                       show_labels=True, show_radial_labels=True):
 
-    # Helper: rescale data to [0,1]
+    # Rescale data to [0,1]
     def rescale_0_1(arr):
         min_val, max_val = np.min(arr), np.max(arr)
         if max_val - min_val < 1e-12:
@@ -295,7 +295,9 @@ def plot_radar_single(data, element, t_val, fname, ly_spokes,
 
     data_scaled = rescale_0_1(data)
     angles = np.linspace(0, 2*np.pi, len(ly_spokes), endpoint=False)
-    data_cyclic = np.concatenate([data_scaled, [data_scaled[0]]])
+    angles = np.concatenate([angles, [angles[0]]])  # Close the polygon by connecting last to first
+
+    data_cyclic = np.concatenate([data_scaled, [data_scaled[0]]])  # Same length as angles
 
     fig, ax = plt.subplots(figsize=(8, 8), subplot_kw=dict(projection='polar'))
     color = 'red' if element == 'Cu' else 'blue'
@@ -303,9 +305,9 @@ def plot_radar_single(data, element, t_val, fname, ly_spokes,
     ax.plot(angles, data_cyclic, 'o-', linewidth=3, markersize=8, color=color, label=element)
     ax.fill(angles, data_cyclic, alpha=0.25, color=color)
 
-    ax.set_xticks(angles)
+    ax.set_xticks(angles[:-1])
     ax.set_xticklabels([f"{ly}" for ly in ly_spokes], fontsize=14)
-    ax.set_ylim(0, 1.1)  # normalized radial limits
+    ax.set_ylim(0, 1.1)  # Radial limits normalized
 
     if show_radial_labels:
         yticks = np.linspace(0, 1, 5)
@@ -318,9 +320,9 @@ def plot_radar_single(data, element, t_val, fname, ly_spokes,
     ax.legend(loc='upper right', bbox_to_anchor=(1.2, 1.0), fontsize=14)
     ax.grid(True, linewidth=1.5)
 
-    # Annotate values by raw data for clarity, only significant scaled values
+    # Annotate raw data values at corresponding scaled locations
     if show_labels and np.any(data_scaled > 0.1):
-        for angle, value_scaled, value_raw in zip(angles, data_scaled, data):
+        for angle, value_scaled, value_raw in zip(angles[:-1], data_scaled, data):
             if value_scaled > 0.1:
                 ax.annotate(f'{value_raw:.2e}', (angle, value_scaled),
                             textcoords='offset points', xytext=(0, 10),
@@ -333,6 +335,7 @@ def plot_radar_single(data, element, t_val, fname, ly_spokes,
     plt.savefig(pdf, bbox_inches='tight')
     plt.close()
     return fig, png, pdf
+
 
 
 
