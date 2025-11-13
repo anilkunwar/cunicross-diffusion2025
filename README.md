@@ -225,6 +225,7 @@ Concentration Fields, Flux and Others:
 
 [![meaningtowords](https://img.shields.io/badge/selfcrossdiffpost7-streamlit-red)](https://self-and-cross-diffusioncomparison7.streamlit.app/) 
 
+[![meaningtowords](https://img.shields.io/badge/selfcrossdiffpost8-streamlit-red)](https://self-and-cross-diffusioncomparison8.streamlit.app/)  (Robust visualization of flux fields) 
 
 
 # For analysis of uphill diffusion
