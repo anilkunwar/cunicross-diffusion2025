@@ -26,7 +26,7 @@ mpl.rcParams['figure.dpi'] = 300
 logging.basicConfig(level=logging.INFO, filename=os.path.join(OUTPUT_DIR, 'training.log'), filemode='a')
 logger = logging.getLogger(__name__)
 # Fixed parameters
-C_CU_TOP = 0.0 # Top boundary (y=Ly): Cu-rich
+C_CU_TOP = 0.0 # Top boundary (y=Ly): Cu-poor
 C_NI_TOP = 0.0 # Top (y=Ly): Ni-poor
 C_NI_BOTTOM = 0.0 # Bottom (y=0): Ni-poor
 Lx = 60.0 # Domain width (μm)
@@ -40,10 +40,10 @@ lr = 1e-3
 # Set random seeds
 torch.manual_seed(42)
 np.random.seed(42)
-# Helper function for cache key
-def get_cache_key(*args):
-    key_string = "_".join(str(arg) for arg in args)
-    return hashlib.md5(key_string.encode()).hexdigest()
+# Helper function for cache key and file naming
+def get_cache_key(Ly, C_Cu_bottom):
+    key_string = f"Ly_{Ly:.1f}_C_Cu_bottom_{C_Cu_bottom:.2e}"
+    return hashlib.md5(key_string.encode()).hexdigest(), key_string.replace(".", "p").replace("-", "m")
 class SmoothSigmoid(nn.Module):
     def __init__(self, slope=1.0):
         super().__init__()
@@ -52,7 +52,7 @@ class SmoothSigmoid(nn.Module):
     def forward(self, x):
         return self.scale * 1 / (1 + torch.exp(-self.k * x))
 class DualScaledPINN(nn.Module):
-    def __init__(self, D11, D12, D21, D22, Lx, Ly, T_max, C_Cu, C_Ni):
+    def __init__(self, D11, D12, D21, D22, Lx, Ly, T_max, C_Cu_bottom):
         super().__init__()
         self.D11 = D11
         self.D12 = D12
@@ -61,11 +61,10 @@ class DualScaledPINN(nn.Module):
         self.Lx = Lx
         self.Ly = Ly
         self.T_max = T_max
-        self.C_Cu = C_Cu
-        self.C_Ni = C_Ni
+        self.C_Cu_bottom = C_Cu_bottom
        
-        self.C_Cu_norm = (C_Cu - 1.5e-3) / (2.9e-3 - 1.5e-3)
-        self.C_Ni_norm = (C_Ni - 4.0e-4) / (1.8e-3 - 4.0e-4)
+        self.C_Cu_norm = (C_Cu_bottom - 1.5e-3) / (2.9e-3 - 1.5e-3)
+        self.C_Ni_norm = 0.0 # Since Ni is fixed at 0
        
         self.shared_net = nn.Sequential(
             nn.Linear(5, 128), nn.Tanh(),
@@ -85,8 +84,8 @@ class DualScaledPINN(nn.Module):
             nn.Linear(1, 1, bias=False),
         )
        
-        self.cu_head[2].weight.data.fill_(C_Cu)
-        self.ni_head[2].weight.data.fill_(C_Ni)
+        self.cu_head[2].weight.data.fill_(C_Cu_bottom)
+        self.ni_head[2].weight.data.fill_(0.0)
     def forward(self, x, y, t):
         x_norm = x / self.Lx
         y_norm = y / self.Ly
@@ -132,7 +131,7 @@ def boundary_loss_bottom(model):
     t = torch.rand(num, 1, requires_grad=True) * model.T_max
    
     c_pred = model(x, y, t)
-    return (torch.mean((c_pred[:, 0] - C_CU_BOTTOM)**2) +
+    return (torch.mean((c_pred[:, 0] - model.C_Cu_bottom)**2) +
             torch.mean((c_pred[:, 1] - C_NI_BOTTOM)**2))
 def boundary_loss_top(model):
     num = 200
@@ -216,8 +215,8 @@ def validate_boundary_conditions(solution, tolerance=1e-6):
     c1 = solution['c1_preds'][t_idx]
     c2 = solution['c2_preds'][t_idx]
    
-    top_cu_mean = np.mean(c1[-1, :])
-    top_ni_mean = np.mean(c2[-1, :])
+    top_cu_mean = np.mean(c1[:, -1])
+    top_ni_mean = np.mean(c2[:, -1])
     if abs(top_cu_mean - C_CU_TOP) > tolerance:
         results['top_bc_cu'] = False
         results['details'].append(f"Top Cu: {top_cu_mean:.2e} != {C_CU_TOP:.2e}")
@@ -225,19 +224,19 @@ def validate_boundary_conditions(solution, tolerance=1e-6):
         results['top_bc_ni'] = False
         results['details'].append(f"Top Ni: {top_ni_mean:.2e} != {C_NI_TOP:.2e}")
    
-    bottom_cu_mean = np.mean(c1[0, :])
-    bottom_ni_mean = np.mean(c2[0, :])
-    if abs(bottom_cu_mean - C_CU_BOTTOM) > tolerance:
+    bottom_cu_mean = np.mean(c1[:, 0])
+    bottom_ni_mean = np.mean(c2[:, 0])
+    if abs(bottom_cu_mean - solution['params']['C_Cu_bottom']) > tolerance:
         results['bottom_bc_cu'] = False
-        results['details'].append(f"Bottom Cu: {bottom_cu_mean:.2e} != {C_CU_BOTTOM:.2e}")
+        results['details'].append(f"Bottom Cu: {bottom_cu_mean:.2e} != {solution['params']['C_Cu_bottom']:.2e}")
     if abs(bottom_ni_mean - C_NI_BOTTOM) > tolerance:
         results['bottom_bc_ni'] = False
         results['details'].append(f"Bottom Ni: {bottom_ni_mean:.2e} != {C_NI_BOTTOM:.2e}")
    
-    left_flux_cu = np.mean(np.abs(c1[:,1] - c1[:,0]))
-    left_flux_ni = np.mean(np.abs(c2[:,1] - c2[:,0]))
-    right_flux_cu = np.mean(np.abs(c1[:,-1] - c1[:,-2]))
-    right_flux_ni = np.mean(np.abs(c2[:,-1] - c2[:,-2]))
+    left_flux_cu = np.mean(np.abs(c1[1, :] - c1[0, :]))
+    left_flux_ni = np.mean(np.abs(c2[1, :] - c2[0, :]))
+    right_flux_cu = np.mean(np.abs(c1[-1, :] - c1[-2, :]))
+    right_flux_ni = np.mean(np.abs(c2[-1, :] - c2[-2, :]))
     if left_flux_cu > tolerance:
         results['left_flux_cu'] = False
         results['details'].append(f"Left flux Cu: {left_flux_cu:.2e}")
@@ -259,7 +258,7 @@ def validate_boundary_conditions(solution, tolerance=1e-6):
     ])
     return results
 @st.cache_data(ttl=3600, show_spinner=False)
-def plot_losses(loss_history, output_dir, _hash, Ly, C_CU_BOTTOM):
+def plot_losses(loss_history, output_dir, file_suffix):
     epochs = np.array(loss_history['epochs'])
     total_loss = np.array(loss_history['total'])
     physics_loss = np.array(loss_history['physics'])
@@ -279,28 +278,26 @@ def plot_losses(loss_history, output_dir, _hash, Ly, C_CU_BOTTOM):
     plt.yscale('log')
     plt.xlabel('Epoch')
     plt.ylabel('Loss')
-    plt.title(f'Training Loss for Ly = {Ly:.1f} μm, C_Cu_bottom = {C_CU_BOTTOM:.2e} mol/cc')
+    plt.title(f'Training Loss for {file_suffix}')
     plt.grid(True, which="both", ls="--", alpha=0.7)
     plt.legend(loc='upper right')
     plt.tight_layout()
    
     os.makedirs(output_dir, exist_ok=True)
-    ly_str = "{:.1f}".format(Ly)
-    ccub_str = "{:.2e}".format(C_CU_BOTTOM).replace('e-', 'em')
-    plot_filename = os.path.join(output_dir, f'loss_plot_ly_{ly_str}_ccub_{ccub_str}.png')
+    plot_filename = os.path.join(output_dir, f'loss_plot_{file_suffix}.png')
     plt.savefig(plot_filename, dpi=300, bbox_inches='tight')
     plt.close()
     logger.info(f"Saved loss plot to {plot_filename}")
     return plot_filename
 @st.cache_data(ttl=3600, show_spinner=False)
-def plot_2d_profiles(solution, time_idx, output_dir, _hash, Ly, C_CU_BOTTOM):
+def plot_2d_profiles(solution, time_idx, output_dir, file_suffix):
     t_val = solution['times'][time_idx]
    
     plt.figure(figsize=(12, 5))
     plt.subplot(1, 2, 1)
     im1 = plt.imshow(solution['c1_preds'][time_idx], origin='lower',
-                     extent=[0, Lx, 0, Ly], cmap='viridis',
-                     vmin=0, vmax=C_CU_TOP)
+                     extent=[0, Lx, 0, solution['params']['Ly']], cmap='viridis',
+                     vmin=0, vmax=solution['params']['C_Cu_bottom'])
     plt.title(f'Cu Concentration (t={t_val:.1f} s)')
     plt.xlabel('x (μm)')
     plt.ylabel('y (μm)')
@@ -309,7 +306,7 @@ def plot_2d_profiles(solution, time_idx, output_dir, _hash, Ly, C_CU_BOTTOM):
    
     plt.subplot(1, 2, 2)
     im2 = plt.imshow(solution['c2_preds'][time_idx], origin='lower',
-                     extent=[0, Lx, 0, Ly], cmap='magma',
+                     extent=[0, Lx, 0, solution['params']['Ly']], cmap='magma',
                      vmin=0, vmax=C_NI_TOP)
     plt.title(f'Ni Concentration (t={t_val:.1f} s)')
     plt.xlabel('x (μm)')
@@ -317,22 +314,20 @@ def plot_2d_profiles(solution, time_idx, output_dir, _hash, Ly, C_CU_BOTTOM):
     plt.grid(True, alpha=0.3)
     plt.colorbar(im2, label='Ni Conc. (mol/cc)', format='%.1e')
    
-    plt.suptitle(f'2D Profiles (Ly={Ly:.0f} μm, C_Cu_bottom={C_CU_BOTTOM:.2e} mol/cc)', fontsize=14)
+    plt.suptitle(f'2D Profiles ({file_suffix})', fontsize=14)
     plt.tight_layout(rect=[0, 0, 1, 0.95])
    
     os.makedirs(output_dir, exist_ok=True)
-    ly_str = "{:.1f}".format(Ly)
-    ccub_str = "{:.2e}".format(C_CU_BOTTOM).replace('e-', 'em')
-    plot_filename = os.path.join(output_dir, f'profile_ly_{ly_str}_ccub_{ccub_str}_t_{t_val:.1f}.png')
+    plot_filename = os.path.join(output_dir, f'profile_{file_suffix}_t_{t_val:.1f}.png')
     plt.savefig(plot_filename, dpi=300, bbox_inches='tight')
     plt.close()
     logger.info(f"Saved profile plot to {plot_filename}")
     return plot_filename
 @st.cache_resource(ttl=3600, show_spinner=False)
-def train_model(D11, D12, D21, D22, Lx, Ly, T_max, C_Cu, C_Ni, epochs, lr, output_dir, _hash):
+def train_model(D11, D12, D21, D22, Lx, Ly, T_max, C_Cu_bottom, epochs, lr, output_dir, _hash):
     os.makedirs(output_dir, exist_ok=True)
-    logger.info(f"Starting training with Ly={Ly}, C_Cu={C_Cu}, C_Ni={C_Ni}, epochs={epochs}, lr={lr}")
-    model = DualScaledPINN(D11, D12, D21, D22, Lx, Ly, T_max, C_Cu, C_Ni)
+    logger.info(f"Starting training with Ly={Ly}, C_Cu_bottom={C_Cu_bottom}, epochs={epochs}, lr={lr}")
+    model = DualScaledPINN(D11, D12, D21, D22, Lx, Ly, T_max, C_Cu_bottom)
     optimizer = optim.Adam(model.parameters(), lr=lr)
    
     x_pde = torch.rand(1000, 1, requires_grad=True) * Lx
@@ -417,7 +412,7 @@ def evaluate_model(_model, times, Lx, Ly, D11, D12, D21, D22, _hash):
    
     return X.numpy(), Y.numpy(), c1_preds, c2_preds
 @st.cache_data(ttl=3600, show_spinner=False)
-def generate_and_save_solution(_model, times, param_set, output_dir, _hash, Ly, C_CU_BOTTOM):
+def generate_and_save_solution(_model, times, param_set, output_dir, file_suffix):
     os.makedirs(output_dir, exist_ok=True)
     if _model is None:
         logger.error("Model is None, cannot generate solution")
@@ -426,7 +421,7 @@ def generate_and_save_solution(_model, times, param_set, output_dir, _hash, Ly, 
     try:
         X, Y, c1_preds, c2_preds = evaluate_model(
             _model, times, param_set['Lx'], param_set['Ly'],
-            param_set['D11'], param_set['D12'], param_set['D21'], param_set['D22'], _hash
+            param_set['D11'], param_set['D12'], param_set['D21'], param_set['D22'], file_suffix
         )
     except RuntimeError as e:
         logger.error(f"evaluate_model failed: {str(e)}")
@@ -444,10 +439,8 @@ def generate_and_save_solution(_model, times, param_set, output_dir, _hash, Ly, 
         'orientation_note': 'c1_preds and c2_preds are arrays of shape (50,50) where rows (i) correspond to y-coordinates and columns (j) correspond to x-coordinates for matplotlib.'
     }
    
-    ly_str = "{:.1f}".format(Ly)
-    ccub_str = "{:.2e}".format(C_CU_BOTTOM).replace('e-', 'em')
     solution_filename = os.path.join(output_dir,
-        f"solution_cu_selfdiffusion_ly_{ly_str}_ccub_{ccub_str}_tmax_{param_set['t_max']:.1f}.pkl")
+        f"solution_cu_selfdiffusion_{file_suffix}_tmax_{param_set['t_max']:.1f}.pkl")
    
     try:
         with open(solution_filename, 'wb') as f:
@@ -460,7 +453,7 @@ def generate_and_save_solution(_model, times, param_set, output_dir, _hash, Ly, 
    
     return solution_filename, solution
 @st.cache_data(ttl=3600, show_spinner=False)
-def generate_vts_time_series(solution, output_dir, _hash, Ly, C_CU_BOTTOM):
+def generate_vts_time_series(solution, output_dir, file_suffix):
     os.makedirs(output_dir, exist_ok=True)
     Lx = solution['params']['Lx']
     Ly = solution['params']['Ly']
@@ -468,9 +461,6 @@ def generate_vts_time_series(solution, output_dir, _hash, Ly, C_CU_BOTTOM):
    
     vts_files = []
     nx, ny = 50, 50
-   
-    ly_str = "{:.1f}".format(Ly)
-    ccub_str = "{:.2e}".format(C_CU_BOTTOM).replace('e-', 'em')
    
     for t_idx, t_val in enumerate(times):
         c1_xy = solution['c1_preds'][t_idx].T # [x,y] for VTK
@@ -489,7 +479,7 @@ def generate_vts_time_series(solution, output_dir, _hash, Ly, C_CU_BOTTOM):
         grid.point_data['Ni_Concentration'] = c2_xy.ravel()
        
         vts_filename = os.path.join(output_dir,
-            f'concentration_ly_{ly_str}_ccub_{ccub_str}_t_{t_val:.1f}.vts')
+            f'concentration_{file_suffix}_t_{t_val:.1f}.vts')
        
         try:
             grid.save(vts_filename)
@@ -500,7 +490,7 @@ def generate_vts_time_series(solution, output_dir, _hash, Ly, C_CU_BOTTOM):
             st.error(f"Failed to save VTS file for t={t_val:.1f}: {str(e)}")
    
     pvd_filename = os.path.join(output_dir,
-        f'concentration_time_series_ly_{ly_str}_ccub_{ccub_str}.pvd')
+        f'concentration_time_series_{file_suffix}.pvd')
    
     try:
         pvd_content = ['<?xml version="1.0"?>']
@@ -525,7 +515,7 @@ def generate_vts_time_series(solution, output_dir, _hash, Ly, C_CU_BOTTOM):
    
     return vts_files, pvd_filename
 @st.cache_data(ttl=3600, show_spinner=False)
-def generate_vtu_time_series(solution, output_dir, _hash, Ly, C_CU_BOTTOM):
+def generate_vtu_time_series(solution, output_dir, file_suffix):
     os.makedirs(output_dir, exist_ok=True)
     Lx = solution['params']['Lx']
     Ly = solution['params']['Ly']
@@ -556,10 +546,8 @@ def generate_vtu_time_series(solution, output_dir, _hash, Ly, C_CU_BOTTOM):
         grid.point_data[f'Cu_Concentration_t{t_val:.1f}'] = c1_xy.ravel()
         grid.point_data[f'Ni_Concentration_t{t_val:.1f}'] = c2_xy.ravel()
    
-    ly_str = "{:.1f}".format(Ly)
-    ccub_str = "{:.2e}".format(C_CU_BOTTOM).replace('e-', 'em')
     vtu_filename = os.path.join(output_dir,
-        f'concentration_time_series_ly_{ly_str}_ccub_{ccub_str}.vtu')
+        f'concentration_time_series_{file_suffix}.vtu')
    
     try:
         grid.save(vtu_filename)
@@ -571,7 +559,7 @@ def generate_vtu_time_series(solution, output_dir, _hash, Ly, C_CU_BOTTOM):
    
     return vtu_filename
 @st.cache_data(ttl=3600, show_spinner=False)
-def create_zip_file(_files, output_dir, _hash, Ly, C_CU_BOTTOM):
+def create_zip_file(_files, output_dir, file_suffix):
     os.makedirs(output_dir, exist_ok=True)
     zip_buffer = io.BytesIO()
     try:
@@ -582,9 +570,7 @@ def create_zip_file(_files, output_dir, _hash, Ly, C_CU_BOTTOM):
                 else:
                     logger.warning(f"File not found for zipping: {file_path}")
        
-        ly_str = "{:.1f}".format(Ly)
-        ccub_str = "{:.2e}".format(C_CU_BOTTOM).replace('e-', 'em')
-        zip_filename = os.path.join(output_dir, f'pinn_solutions_cu_selfdiffusion_ly_{ly_str}_ccub_{ccub_str}.zip')
+        zip_filename = os.path.join(output_dir, f'pinn_solutions_cu_selfdiffusion_{file_suffix}.zip')
         with open(zip_filename, 'wb') as f:
             f.write(zip_buffer.getvalue())
         logger.info(f"Created ZIP file: {zip_filename}")
@@ -600,7 +586,7 @@ def get_file_bytes(file_path):
             return f.read()
     return None
 @st.cache_data(ttl=3600, show_spinner=False)
-def train_and_generate_solution(_model, loss_history, output_dir, _hash_key, Ly, C_CU_BOTTOM):
+def train_and_generate_solution(_model, loss_history, output_dir, file_suffix, C_Cu_bottom):
     os.makedirs(output_dir, exist_ok=True)
    
     if _model is None or loss_history is None:
@@ -610,12 +596,12 @@ def train_and_generate_solution(_model, loss_history, output_dir, _hash_key, Ly,
     param_set = {
         'D11': D11, 'D12': D12, 'D21': D21, 'D22': D22,
         'Lx': Lx, 'Ly': Ly, 't_max': T_max,
-        'C_Cu': C_CU_BOTTOM, 'C_Ni': 0.0,
+        'C_Cu_bottom': C_Cu_bottom,
         'epochs': epochs
     }
    
     solution_filename, solution = generate_and_save_solution(
-        _model, times, param_set, output_dir, _hash_key, Ly, C_CU_BOTTOM
+        _model, times, param_set, output_dir, file_suffix
     )
    
     if solution is None:
@@ -623,10 +609,10 @@ def train_and_generate_solution(_model, loss_history, output_dir, _hash_key, Ly,
    
     solution['loss_history'] = loss_history
    
-    loss_plot_filename = plot_losses(loss_history, output_dir, _hash_key, Ly, C_CU_BOTTOM)
-    profile_plot_filename = plot_2d_profiles(solution, -1, output_dir, _hash_key, Ly, C_CU_BOTTOM)
-    vts_files, pvd_file = generate_vts_time_series(solution, output_dir, _hash_key, Ly, C_CU_BOTTOM)
-    vtu_file = generate_vtu_time_series(solution, output_dir, _hash_key, Ly, C_CU_BOTTOM)
+    loss_plot_filename = plot_losses(loss_history, output_dir, file_suffix)
+    profile_plot_filename = plot_2d_profiles(solution, -1, output_dir, file_suffix)
+    vts_files, pvd_file = generate_vts_time_series(solution, output_dir, file_suffix)
+    vtu_file = generate_vtu_time_series(solution, output_dir, file_suffix)
    
     return solution, {
         'solution_file': solution_filename,
@@ -654,16 +640,16 @@ def store_solution_in_session(_hash_key, solution, file_info, model):
     st.session_state.model = model
     st.session_state.current_hash = _hash_key
 def main():
-    st.title("2D PINN Simulation: Cu Self-Diffusion")
+    st.title("2D PINN Simulation: Cu Self-Diffusion in Liquid Solder")
    
-    Ly = st.number_input("Domain height (Ly, μm)", min_value=10.0, max_value=100.0, value=50.0)
-    C_CU_BOTTOM = st.number_input("Bottom Cu concentration (mol/cc)", min_value=0.0, value=1.59e-3, format="%.2e")
+    # User inputs
+    Ly = st.sidebar.number_input("Domain height Ly (μm)", min_value=10.0, max_value=200.0, value=50.0, step=10.0)
+    C_Cu_bottom = st.sidebar.number_input("Cu concentration at bottom (mol/cc)", min_value=1e-6, max_value=2e-3, value=1.59e-3, format="%.2e")
    
-    C_Cu = C_CU_BOTTOM
-    C_Ni = 0.0
+    _hash, file_suffix = get_cache_key(Ly, C_Cu_bottom)
    
     initialize_session_state()
-    current_hash = get_cache_key(Ly, C_CU_BOTTOM, epochs, lr)
+    current_hash = _hash
    
     # Check for cached results
     if st.session_state.training_complete and st.session_state.current_hash == current_hash:
@@ -682,7 +668,7 @@ def main():
         try:
             with st.spinner("Running simulation..."):
                 model, loss_history = train_model(
-                    D11, D12, D21, D22, Lx, Ly, T_max, C_Cu, C_Ni, epochs, lr, OUTPUT_DIR, current_hash
+                    D11, D12, D21, D22, Lx, Ly, T_max, C_Cu_bottom, epochs, lr, OUTPUT_DIR, current_hash
                 )
                
                 if model is None or loss_history is None:
@@ -690,7 +676,7 @@ def main():
                     return
                
                 solution, file_info = train_and_generate_solution(
-                    model, loss_history, OUTPUT_DIR, current_hash, Ly, C_CU_BOTTOM
+                    model, loss_history, OUTPUT_DIR, file_suffix, C_Cu_bottom
                 )
                
                 if solution is None:
@@ -804,7 +790,7 @@ def main():
                 if file_info.get('vtu_file'):
                     files_to_zip.append(file_info['vtu_file'])
                
-                zip_filename = create_zip_file(files_to_zip, OUTPUT_DIR, (Ly,), Ly, C_CU_BOTTOM)
+                zip_filename = create_zip_file(files_to_zip, OUTPUT_DIR, file_suffix)
                
                 if zip_filename and os.path.exists(zip_filename):
                     zip_data = get_file_bytes(zip_filename)
