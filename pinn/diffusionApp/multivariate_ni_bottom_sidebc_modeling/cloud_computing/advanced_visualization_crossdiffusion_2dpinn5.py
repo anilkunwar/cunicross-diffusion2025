@@ -649,7 +649,8 @@ def main():
         max_selections=2
     )
     time_index = st.sidebar.slider("Select Time", 0, len(solutions[0]['times'])-1, len(solutions[0]['times'])-1)
-    downsample = st.sidebar.slider("Detail Level", 1, 5, 2)
+    #downsample = st.sidebar.slider("Detail Level", 1, 5, 2)
+    downsample = st.sidebar.slider("Detail Level", 1, 15, 2)
     st.sidebar.header("Visualization Options")
     cu_colormap = st.sidebar.selectbox("Cu Colormap", options=COLORSCALES, index=COLORSCALES.index('viridis'))
     ni_colormap = st.sidebar.selectbox("Ni Colormap", options=COLORSCALES, index=COLORSCALES.index('magma'))
