@@ -235,12 +235,10 @@ def plot_solution(solution, time_index, downsample, title_suffix="", cu_colormap
     fig.update_xaxes(title_text="x (μm)", range=[0, Lx], gridcolor='white', zeroline=False, row=1, col=2, dtick=x_tick_interval)
     fig.update_yaxes(title_text="y (μm)", range=[0, Ly], gridcolor='white', zeroline=False, row=1, col=2, dtick=y_tick_interval)
     st.plotly_chart(fig, use_container_width=False)
-def create_flux_fig(sol, Ly, diff_type, t_val, time_index, downsample,
-                    font_size=12, x_tick_interval=10, y_tick_interval=10,
-                    show_grid=True, grid_thickness=0.5, border_thickness=1,
-                    arrow_thickness=1):
-    """Flux figure with true physical aspect ratio."""
-    Lx = sol['params']['Lx']                     # always 60 µm
+def create_flux_fig(sol, Ly, diff_type, t_val, time_index, downsample=3,
+                    font_size=14, x_tick_interval=10, y_tick_interval=10,
+                    show_grid=True, grid_thickness=0.5, border_thickness=2, arrow_thickness=1.5):
+    Lx = sol['params']['Lx']  # 60.0
     x_coords = sol['X'][:, 0]
     y_coords = sol['Y'][0, :]
 
@@ -248,7 +246,7 @@ def create_flux_fig(sol, Ly, diff_type, t_val, time_index, downsample,
     x_ds = x_coords[::ds]
     y_ds = y_coords[::ds]
 
-    # Extract data (rows = y, cols = x)
+    # Extract data
     J1_x = sol['J1_preds'][time_index][0][::ds, ::ds]
     J1_y = sol['J1_preds'][time_index][1][::ds, ::ds]
     J2_x = sol['J2_preds'][time_index][0][::ds, ::ds]
@@ -270,108 +268,104 @@ def create_flux_fig(sol, Ly, diff_type, t_val, time_index, downsample,
         horizontal_spacing=0.12,
     )
 
-    # ---------- Row 1: magnitude ----------
+    # Magnitude (log scale)
     fig.add_trace(go.Heatmap(z=np.log10(np.maximum(J1_mag, 1e-12)), x=x_ds, y=y_ds,
-                             colorscale='viridis', colorbar=dict(title='log|J<sub>Cu</sub>|', x=1.02)),
-                  row=1, col=1)
-    fig.add_trace(go.Contour(z=c1, x=x_ds, y=y_ds, showscale=False, line_width=1, opacity=0.4), row=1, col=1)
+                             colorscale='viridis', showscale=False), row=1, col=1)
+    fig.add_trace(go.Contour(z=c1, x=x_ds, y=y_ds, showscale=False, line_width=1, opacity=0.4,
+                             contours=dict(start=0.1, end=0.9, size=0.2)), row=1, col=1)
 
     fig.add_trace(go.Heatmap(z=np.log10(np.maximum(J2_mag, 1e-12)), x=x_ds, y=y_ds,
-                             colorscale='cividis', colorbar=dict(title='log|J<sub>Ni</sub>|', x=1.15)),
-                  row=1, col=2)
-    fig.add_trace(go.Contour(z=c2, x=x_ds, y=y_ds, showscale=False, line_width=1, opacity=0.4), row=1, col=2)
+                             colorscale='cividis', showscale=False), row=1, col=2)
+    fig.add_trace(go.Contour(z=c2, x=x_ds, y=y_ds, showscale=False, line_width=1, opacity=0.4,
+                             contours=dict(start=0.1, end=0.9, size=0.2)), row=1, col=2)
 
-    # ---------- Row 2 & 3: components ----------
+    # Components
     for row, (d1, d2, name) in enumerate([(J1_x, J2_x, "J₁x"), (J1_y, J2_y, "J₁y")], start=2):
-        fig.add_trace(go.Heatmap(z=d1, x=x_ds, y=y_ds, colorscale='rdbu', zmid=0,
-                                 colorbar=dict(title=f'Cu {name}', x=1.02)), row=row, col=1)
-        fig.add_trace(go.Heatmap(z=d2, x=x_ds, y=y_ds, colorscale='rdbu', zmid=0,
-                                 colorbar=dict(title=f'Ni {name}', x=1.15)), row=row, col=2)
+        fig.add_trace(go.Heatmap(z=d1, x=x_ds, y=y_ds, colorscale='RdBu', zmid=0, showscale=False), row=row, col=1)
+        fig.add_trace(go.Heatmap(z=d2, x=x_ds, y=y_ds, colorscale='RdBu', zmid=0, showscale=False), row=row, col=2)
 
-    # ---------- Quiver arrows (only on magnitude panels) ----------
+    # Arrows on magnitude plots only
     scale = 0.12 * Lx
     stride = max(1, len(x_ds)//10)
     arrows = []
     for i in range(0, len(x_ds), stride):
         for j in range(0, len(y_ds), stride):
-            if J1_mag[j, i] > 1e-10:
+            if J1_mag[j,i] > 1e-10:
                 arrows.append(dict(x=x_ds[i], y=y_ds[j],
-                                   ax=x_ds[i] + scale*J1_x[j,i]/(J1_mag.max()+1e-12),
-                                   ay=y_ds[j] + scale*J1_y[j,i]/(J1_mag.max()+1e-12),
+                                   ax=x_ds[i] + scale*J1_x[j,i]/max(J1_mag.max(), 1e-12),
+                                   ay=y_ds[j] + scale*J1_y[j,i]/max(J1_mag.max(), 1e-12),
                                    xref='x', yref='y', axref='x', ayref='y',
-                                   showarrow=True, arrowhead=2, arrowsize=1.2,
+                                   showarrow=True, arrowhead=2, arrowsize=1.3,
                                    arrowwidth=arrow_thickness, arrowcolor='white'))
-            if J2_mag[j, i] > 1e-10:
+            if J2_mag[j,i] > 1e-10:
                 arrows.append(dict(x=x_ds[i], y=y_ds[j],
-                                   ax=x_ds[i] + scale*J2_x[j,i]/(J2_mag.max()+1e-12),
-                                   ay=y_ds[j] + scale*J2_y[j,i]/(J2_mag.max()+1e-12),
+                                   ax=x_ds[i] + scale*J2_x[j,i]/max(J2_mag.max(), 1e-12),
+                                   ay=y_ds[j] + scale*J2_y[j,i]/max(J2_mag.max(), 1e-12),
                                    xref='x2', yref='y2', axref='x2', ayref='y2',
-                                   showarrow=True, arrowhead=2, arrowsize=1.2,
+                                   showarrow=True, arrowhead=2, arrowsize=1.3,
                                    arrowwidth=arrow_thickness, arrowcolor='white'))
 
-    # ---------- Grid & border ----------
+    # Grid & border
     for r in range(1, 4):
         for c in range(1, 3):
-            ref = f"x{r if r>1 else ''}{c if c>1 else ''}" if (r>1 or c>1) else "x"
-            yref = f"y{r if r>1 else ''}{c if c>1 else ''}" if (r>1 or c>1) else "y"
+            xref = f'x{r if r>1 else ""}{c if c>1 else ""}' if (r>1 or c>1) else 'x'
+            yref = f'y{r if r>1 else ""}{c if c>1 else ""}' if (r>1 or c>1) else 'y'
             if show_grid:
                 for val in np.arange(0, Lx + x_tick_interval, x_tick_interval):
                     fig.add_shape(type="line", x0=val, x1=val, y0=0, y1=Ly,
-                                  line=dict(color="gray", width=grid_thickness, dash="dot"),
-                                  xref=ref, yref=yref)
+                                  line=dict(color="lightgray", width=grid_thickness, dash="dot"),
+                                  xref=xref, yref=yref)
                 for val in np.arange(0, Ly + y_tick_interval, y_tick_interval):
                     fig.add_shape(type="line", x0=0, x1=Lx, y0=val, y1=val,
-                                  line=dict(color="gray", width=grid_thickness, dash="dot"),
-                                  xref=ref, yref=yref)
+                                  line=dict(color="lightgray", width=grid_thickness, dash="dot"),
+                                  xref=xref, yref=yref)
             fig.add_shape(type="rect", x0=0, y0=0, x1=Lx, y1=Ly,
                           line=dict(color="black", width=border_thickness),
-                          xref=ref, yref=yref)
+                          xref=xref, yref=yref)
 
-    # ---------- PHYSICAL ASPECT RATIO (the magic line) ----------
-    for row in range(1, 4):
-        for col in range(1, 3):
-            fig.update_xaxes(title="x (µm)", range=[0, Lx], dtick=x_tick_interval,
-                             row=row, col=col, constrain="domain")
-            fig.update_yaxes(title="y (µm)", range=[0, Ly], dtick=y_tick_interval,
-                             scaleanchor=f"x{row if row>1 else ''}{col if col>1 else ''}",
-                             scaleratio=Ly/Lx,          # ← forces true geometry
-                             row=row, col=col)
+    # CRITICAL: True physical aspect ratio
+    for r in range(1, 4):
+        for c in range(1, 3):
+            fig.update_xaxes(title="x (µm)" if r==3 else None, range=[0, Lx], dtick=x_tick_interval,
+                             row=r, col=c, constrain="domain")
+            fig.update_yaxes(title="y (µm)" if c==1 else None, range=[0, Ly], dtick=y_tick_interval,
+                             scaleanchor=f"x{r if r>1 else ''}{c if c>1 else ''}",
+                             scaleratio=Ly/Lx, row=r, col=c)
 
     fig.update_layout(
         height=1000,
-        title=f"Flux Fields – {diff_type.replace('_',' ')} | t = {t_val:.1f} s | {Lx}×{Ly} µm",
+        title=f"Flux Fields Comparison — {diff_type.replace('_', ' ')} | t = {t_val:.1f} s | Domain: {Lx} × {Ly} µm",
         font=dict(size=font_size),
         template="plotly_white",
         annotations=arrows,
-        margin=dict(l=70, r=230, t=100, b=60)
+        margin=dict(l=80, r=100, t=100, b=60)
     )
     return fig
 def plot_flux_comparison(solutions, diff_type, ly_values, time_index, downsample,
-                          font_size=12, x_tick_interval=10, y_tick_interval=10,
-                          show_grid=True, grid_thickness=0.5, border_thickness=1,
-                          arrow_thickness=1):
+                          font_size, x_tick_interval, y_tick_interval,
+                          show_grid, grid_thickness, border_thickness, arrow_thickness):
     if len(ly_values) != 2:
-        st.error("Select exactly two Ly values.")
+        st.error("Please select exactly two Ly values for comparison.")
         return
 
     sol1 = load_and_interpolate_solution(solutions, diff_type, ly_values[0])
     sol2 = load_and_interpolate_solution(solutions, diff_type, ly_values[1])
     if not sol1 or not sol2:
-        st.error("Could not load solutions.")
+        st.error("Failed to load one or both solutions.")
         return
 
     t_val = sol1['times'][time_index]
 
     col1, col2 = st.columns(2)
     with col1:
-        st.subheader(f"Ly = {ly_values[0]:.1f} µm")
+        st.markdown(f"### Ly = {ly_values[0]:.1f} µm")
         fig1 = create_flux_fig(sol1, ly_values[0], diff_type, t_val, time_index, downsample,
                                font_size, x_tick_interval, y_tick_interval,
                                show_grid, grid_thickness, border_thickness, arrow_thickness)
         st.plotly_chart(fig1, use_container_width=True)
 
     with col2:
-        st.subheader(f"Ly = {ly_values[1]:.1f} µm")
+        st.markdown(f"### Ly = {ly_values[1]:.1f} µm")
         fig2 = create_flux_fig(sol2, ly_values[1], diff_type, t_val, time_index, downsample,
                                font_size, x_tick_interval, y_tick_interval,
                                show_grid, grid_thickness, border_thickness, arrow_thickness)
