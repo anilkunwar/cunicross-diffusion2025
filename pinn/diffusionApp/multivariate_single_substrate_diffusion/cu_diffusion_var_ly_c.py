@@ -609,7 +609,7 @@ def get_file_bytes(file_path):
     return None
 
 @st.cache_data(ttl=3600, show_spinner=False)
-def train_and_generate_solution(_model, loss_history, output_dir, file_suffix):
+def train_and_generate_solution(_model, loss_history, output_dir, file_suffix, Ly, C_Cu_bottom):
     os.makedirs(output_dir, exist_ok=True)
     
     if _model is None or loss_history is None:
@@ -619,7 +619,7 @@ def train_and_generate_solution(_model, loss_history, output_dir, file_suffix):
     param_set = {
         'D11': D11, 'D12': D12, 'D21': D21, 'D22': D22,
         'Lx': Lx, 'Ly': Ly, 't_max': T_max,
-        'C_Cu_bottom': param_set.get('C_Cu_bottom', 1.59e-3),  # Dynamic
+        'C_Cu_bottom': C_Cu_bottom,
         'epochs': epochs
     }
     
@@ -692,6 +692,8 @@ def main():
     # Run simulation only when button is clicked
     if st.button("Run Simulation"):
         try:
+            progress = st.progress(0)
+            status_text = st.empty()
             with st.spinner("Running simulation..."):
                 model, loss_history = train_model(
                     D11, D12, D21, D22, Lx, Ly, T_max, C_Cu_bottom, epochs, lr, OUTPUT_DIR, current_hash
@@ -702,7 +704,7 @@ def main():
                     return
                 
                 solution, file_info = train_and_generate_solution(
-                    model, loss_history, OUTPUT_DIR, file_suffix
+                    model, loss_history, OUTPUT_DIR, file_suffix, Ly, C_Cu_bottom
                 )
                 
                 if solution is None:
