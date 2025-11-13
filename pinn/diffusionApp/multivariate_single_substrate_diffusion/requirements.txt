@@ -12,3 +12,4 @@ langchain-core
 langchain-community
 openai
 openllm
+pyvista
