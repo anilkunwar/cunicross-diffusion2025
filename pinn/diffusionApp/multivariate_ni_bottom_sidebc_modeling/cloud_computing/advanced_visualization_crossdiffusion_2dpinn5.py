@@ -235,156 +235,134 @@ def plot_solution(solution, time_index, downsample, title_suffix="", cu_colormap
     fig.update_xaxes(title_text="x (μm)", range=[0, Lx], gridcolor='white', zeroline=False, row=1, col=2, dtick=x_tick_interval)
     fig.update_yaxes(title_text="y (μm)", range=[0, Ly], gridcolor='white', zeroline=False, row=1, col=2, dtick=y_tick_interval)
     st.plotly_chart(fig, use_container_width=False)
-def create_flux_fig(sol, Ly, diff_type, t_val, time_index, downsample, font_size=12, x_tick_interval=10, y_tick_interval=10, show_grid=True, grid_thickness=0.5, border_thickness=1, arrow_thickness=1, height_multiplier=5, width_multiplier=5):
-    """Create flux figure for a single Ly value."""
+def create_flux_fig(sol, Ly, diff_type, t_val, time_index, downsample,
+                    font_size=12, x_tick_interval=10, y_tick_interval=10,
+                    show_grid=True, grid_thickness=0.5, border_thickness=1,
+                    arrow_thickness=1):
+    """Create flux figure with CORRECT physical aspect ratio."""
     fig = make_subplots(
         rows=3, cols=2,
         subplot_titles=(
             "Cu Flux Mag", "Ni Flux Mag",
-            "Cu J_1x", "Ni J_2x",
-            "Cu J_1y", "Ni J_2y"
+            "Cu J₁x", "Ni J₂x",
+            "Cu J₁y", "Ni J₂y"
         ),
-        vertical_spacing=0.15, # increased vertical spacing
-        horizontal_spacing=0.20 # increased horizontal spacing
+        vertical_spacing=0.08,
+        horizontal_spacing=0.10,
+        # This is the key: shared axes + fixed aspect ratio
+        shared_xaxes=False,
+        shared_yaxes=False,
     )
-    annotations_all = []
+
     x_coords = sol['X'][:, 0]
     y_coords = sol['Y'][0, :]
-    Lx = sol['params']['Lx']
+    Lx = sol['params']['Lx']  # Always 60.0
     ds = max(1, downsample)
     x_indices = np.unique(np.linspace(0, len(x_coords)-1, num=max(2, len(x_coords)//ds), dtype=int))
     y_indices = np.unique(np.linspace(0, len(y_coords)-1, num=max(2, len(y_coords)//ds), dtype=int))
     x_ds = x_coords[x_indices]
     y_ds = y_coords[y_indices]
-    X_ds, Y_ds = np.meshgrid(x_ds, y_ds, indexing='ij')
+
     J1_x = sol['J1_preds'][time_index][0][np.ix_(y_indices, x_indices)]
     J1_y = sol['J1_preds'][time_index][1][np.ix_(y_indices, x_indices)]
     J2_x = sol['J2_preds'][time_index][0][np.ix_(y_indices, x_indices)]
     J2_y = sol['J2_preds'][time_index][1][np.ix_(y_indices, x_indices)]
     c1 = sol['c1_preds'][time_index][np.ix_(y_indices, x_indices)]
     c2 = sol['c2_preds'][time_index][np.ix_(y_indices, x_indices)]
-    # Flux magnitudes (log for display)
-    J1_magnitude = np.sqrt(J1_x**2 + J1_y**2)
-    J2_magnitude = np.sqrt(J2_x**2 + J2_y**2)
-    # Heatmap for log flux magnitude (Cu)
-    fig.add_trace(go.Heatmap(
-        x=x_ds, y=y_ds, z=np.log10(np.maximum(J1_magnitude, 1e-10)),
-        colorscale='viridis',
-        colorbar=dict(title=dict(text='Log |JCu|', side='top', font=dict(size=font_size - 2)), x=1.05, len=0.25, y=0.85),
-        zsmooth='best', hovertemplate='x: %{x:.1f} μm<br>y: %{y:.1f} μm<br>Flux: %{z:.2e}'
-    ), row=1, col=1)
-    # Overlay contour of concentration
-    fig.add_trace(go.Contour(
-        z=c1, x=x_ds, y=y_ds, colorscale='blues', showscale=False, opacity=0.35,
-        contours=dict(showlabels=False),
-        line=dict(width=1)
-    ), row=1, col=1)
-    # Heatmap for log flux magnitude (Ni)
-    fig.add_trace(go.Heatmap(
-        x=x_ds, y=y_ds, z=np.log10(np.maximum(J2_magnitude, 1e-10)),
-        colorscale='cividis',
-        colorbar=dict(title=dict(text='Log |JNi|', side='top', font=dict(size=font_size - 2)), x=1.3, len=0.25, y=0.85),
-        zsmooth='best', hovertemplate='x: %{x:.1f} μm<br>y: %{y:.1f} μm<br>Flux: %{z:.2e}'
-    ), row=1, col=2)
-    fig.add_trace(go.Contour(
-        z=c2, x=x_ds, y=y_ds, colorscale='reds', showscale=False, opacity=0.35,
-        contours=dict(showlabels=False),
-        line=dict(width=1)
-    ), row=1, col=2)
-    # Jx components (row 2)
-    fig.add_trace(go.Heatmap(
-        x=x_ds, y=y_ds, z=J1_x, colorscale='rdbu', zmid=0,
-        colorbar=dict(title=dict(text='Cu J_1x', side='top', font=dict(size=font_size - 2)), x=1.05, len=0.25, y=0.5),
-        zsmooth='best', hovertemplate='x: %{x:.1f} μm<br>y: %{y:.1f} μm<br>J_1x: %{z:.2e}'
-    ), row=2, col=1)
-    fig.add_trace(go.Contour(
-        z=c1, x=x_ds, y=y_ds, colorscale='blues', showscale=False, opacity=0.25, line=dict(width=1)
-    ), row=2, col=1)
-    fig.add_trace(go.Heatmap(
-        x=x_ds, y=y_ds, z=J2_x, colorscale='rdbu', zmid=0,
-        colorbar=dict(title=dict(text='Ni J_2x', side='top', font=dict(size=font_size - 2)), x=1.3, len=0.25, y=0.5),
-        zsmooth='best', hovertemplate='x: %{x:.1f} μm<br>y: %{y:.1f} μm<br>J_2x: %{z:.2e}'
-    ), row=2, col=2)
-    fig.add_trace(go.Contour(
-        z=c2, x=x_ds, y=y_ds, colorscale='reds', showscale=False, opacity=0.25, line=dict(width=1)
-    ), row=2, col=2)
-    # Jy components (row 3)
-    fig.add_trace(go.Heatmap(
-        x=x_ds, y=y_ds, z=J1_y, colorscale='rdbu', zmid=0,
-        colorbar=dict(title=dict(text='Cu J_1y', side='top', font=dict(size=font_size - 2)), x=1.05, len=0.25, y=0.15),
-        zsmooth='best', hovertemplate='x: %{x:.1f} μm<br>y: %{y:.1f} μm<br>J_1y: %{z:.2e}'
-    ), row=3, col=1)
-    fig.add_trace(go.Contour(
-        z=c1, x=x_ds, y=y_ds, colorscale='blues', showscale=False, opacity=0.25, line=dict(width=1)
-    ), row=3, col=1)
-    fig.add_trace(go.Heatmap(
-        x=x_ds, y=y_ds, z=J2_y, colorscale='rdbu', zmid=0,
-        colorbar=dict(title=dict(text='Ni J_2y', side='top', font=dict(size=font_size - 2)), x=1.3, len=0.25, y=0.15),
-        zsmooth='best', hovertemplate='x: %{x:.1f} μm<br>y: %{y:.1f} μm<br>J_2y: %{z:.2e}'
-    ), row=3, col=2)
-    fig.add_trace(go.Contour(
-        z=c2, x=x_ds, y=y_ds, colorscale='reds', showscale=False, opacity=0.25, line=dict(width=1)
-    ), row=3, col=2)
-    # Add vector annotations (quiver-like arrows) but convert to annotation arrows to avoid overlap with colorbars.
-    scale = 0.12 * Lx
-    # sample stride for annotations to keep them readable
-    stride = max(1, len(x_ds) // 10)
+
+    J1_mag = np.sqrt(J1_x**2 + J1_y**2)
+    J2_mag = np.sqrt(J2_x**2 + J2_y**2)
+
+    # Common aspect ratio: width/height = Lx / Ly → x/y pixel ratio
+    aspect_ratio = dict(x=1, y=Lx/Ly, z=1)  # This forces correct physical proportions
+
+    # Row 1: Magnitude
+    fig.add_trace(go.Heatmap(z=np.log10(np.maximum(J1_mag, 1e-10)), x=x_ds, y=y_ds,
+                             colorscale='viridis', showscale=True,
+                             colorbar=dict(title="Log |JCu|", x=1.02, len=0.25, y=0.85)),
+                  row=1, col=1)
+    fig.add_trace(go.Contour(z=c1, x=x_ds, y=y_ds, showscale=False, contours_coloring='lines',
+                             line_width=1, opacity=0.4), row=1, col=1)
+
+    fig.add_trace(go.Heatmap(z=np.log10(np.maximum(J2_mag, 1e-10)), x=x_ds, y=y_ds,
+                             colorscale='cividis', showscale=True,
+                             colorbar=dict(title="Log |JNi|", x=1.15, len=0.25, y=0.85)),
+                  row=1, col=2)
+    fig.add_trace(go.Contour(z=c2, x=x_ds, y=y_ds, showscale=False, contours_coloring='lines',
+                             line_width=1, opacity=0.4), row=1, col=2)
+
+    # Row 2 & 3: Components
+    for row, (data1, data2, name1, name2) in enumerate([
+        (J1_x, J2_x, "Cu J₁x", "Ni J₂x"),
+        (J1_y, J2_y, "Cu J₁y", "Ni J₂y")
+    ], start=2):
+        fig.add_trace(go.Heatmap(z=data1, x=x_ds, y=y_ds, colorscale='rdbu', zmid=0,
+                                 colorbar=dict(title=name1, x=1.02, len=0.25, y=(4-row)/3)),
+                      row=row, col=1)
+        fig.add_trace(go.Heatmap(z=data2, x=x_ds, y=y_ds, colorscale='rdbu', zmid=0,
+                                 colorbar=dict(title=name2, x=1.15, len=0.25, y=(4-row)/3)),
+                      row=row, col=2)
+
+    # Add quiver arrows (only on magnitude plots for clarity)
+    scale = 0.15 * Lx
+    stride = max(1, len(x_ds)//10)
+    annotations = []
     for i in range(0, len(x_ds), stride):
         for j in range(0, len(y_ds), stride):
-            if J1_magnitude[j, i] > 1e-12:
-                annotations_all.append(dict(
+            if J1_mag[j,i] > 1e-10:
+                annotations.append(dict(
                     x=x_ds[i], y=y_ds[j],
-                    ax=x_ds[i] + scale * (J1_x[j, i] / (np.max(J1_magnitude) + 1e-12)),
-                    ay=y_ds[j] + scale * (J1_y[j, i] / (np.max(J1_magnitude) + 1e-12)),
-                    xref="x", yref="y",
-                    axref="x", ayref="y",
-                    showarrow=True, arrowhead=2, arrowsize=1, arrowwidth=arrow_thickness, arrowcolor='white'
+                    ax=x_ds[i] + scale * J1_x[j,i] / (J1_mag.max() + 1e-12),
+                    ay=y_ds[j] + scale * J1_y[j,i] / (J1_mag.max() + 1e-12),
+                    xref="x", yref="y", axref="x", ayref="y",
+                    showarrow=True, arrowhead=2, arrowsize=1.2,
+                    arrowwidth=arrow_thickness, arrowcolor="white"
                 ))
-            if J2_magnitude[j, i] > 1e-12:
-                annotations_all.append(dict(
+            if J2_mag[j,i] > 1e-10:
+                annotations.append(dict(
                     x=x_ds[i], y=y_ds[j],
-                    ax=x_ds[i] + scale * (J2_x[j, i] / (np.max(J2_magnitude) + 1e-12)),
-                    ay=y_ds[j] + scale * (J2_y[j, i] / (np.max(J2_magnitude) + 1e-12)),
-                    xref="x2", yref="y2",
-                    axref="x2", ayref="y2",
-                    showarrow=True, arrowhead=2, arrowsize=1, arrowwidth=arrow_thickness, arrowcolor='white'
+                    ax=x_ds[i] + scale * J2_x[j,i] / (J2_mag.max() + 1e-12),
+                    ay=y_ds[j] + scale * J2_y[j,i] / (J2_mag.max() + 1e-12),
+                    xref="x2", yref="y2", axref="x2", ayref="y2",
+                    showarrow=True, arrowhead=2, arrowsize=1.2,
+                    arrowwidth=arrow_thickness, arrowcolor="white"
                 ))
-    # Add grid lines and border shapes per subplot
-    subplot_refs = [
-        (1, 1, 'x', 'y'), (1, 2, 'x2', 'y2'),
-        (2, 1, 'x3', 'y3'), (2, 2, 'x4', 'y4'),
-        (3, 1, 'x5', 'y5'), (3, 2, 'x6', 'y6')
-    ]
-    if show_grid:
-        for row, col, xref, yref in subplot_refs:
-            for x in np.arange(0, Lx + x_tick_interval, x_tick_interval):
-                fig.add_shape(type='line', x0=x, y0=0, x1=x, y1=Ly, xref=xref, yref=yref,
-                              line=dict(color='gray', width=grid_thickness, dash='dot'))
-            for y in np.arange(0, Ly + y_tick_interval, y_tick_interval):
-                fig.add_shape(type='line', x0=0, y0=y, x1=Lx, y1=y, xref=xref, yref=yref,
-                              line=dict(color='gray', width=grid_thickness, dash='dot'))
+
+    # Grid + borders
+    subplot_refs = [(1,1,'x','y'), (1,2,'x2','y2'), (2,1,'x3','y3'), (2,2,'x4','y4'), (3,1,'x5','y5'), (3,2,'x6','y6')]
     for row, col, xref, yref in subplot_refs:
-        fig.add_shape(type='line', x0=0, y0=Ly, x1=Lx, y1=Ly, xref=xref, yref=yref,
-                      line=dict(color='black', width=border_thickness))
-        fig.add_shape(type='rect', x0=0, y0=0, x1=Lx, y1=Ly, xref=xref, yref=yref,
-                      line=dict(color='black', width=border_thickness))
-    height = int(3 * height_multiplier * Ly)
-    width = int(width_multiplier * Lx * 2)
+        # Grid
+        if show_grid:
+            for val in np.arange(0, Lx + x_tick_interval, x_tick_interval):
+                fig.add_shape(type="line", x0=val, x1=val, y0=0, y1=Ly,
+                              line=dict(color="gray", width=grid_thickness, dash="dot"),
+                              xref=xref, yref=yref)
+            for val in np.arange(0, Ly + y_tick_interval, y_tick_interval):
+                fig.add_shape(type="line", x0=0, x1=Lx, y0=val, y1=val,
+                              line=dict(color="gray", width=grid_thickness, dash="dot"),
+                              xref=xref, yref=yref)
+        # Border
+        fig.add_shape(type="rect", x0=0, y0=0, x1=Lx, y1=Ly,
+                      line=dict(color="black", width=border_thickness),
+                      xref=xref, yref=yref)
+
+    # CRITICAL: Force correct physical aspect ratio on ALL subplots
+    for i in range(1, 7):
+        fig.update_xaxes(row=(i-1)//2 + 1, col=((i-1)%2)+1,
+                         range=[0, Lx], title="x (μm)", dtick=x_tick_interval)
+        fig.update_yaxes(row=(i-1)//2 + 1, col=((i-1)%2)+1,
+                         range=[0, Ly], title="y (μm)", dtick=y_tick_interval,
+                         scaleanchor=f"x{i}", scaleratio=Ly/Lx)  # This locks y/x ratio
+
     fig.update_layout(
-        height=height,
-        width=width,
-        margin=dict(l=30, r=250, t=150, b=30), # Increased right and top margin for colorbars and titles
-        title=f"Flux Fields: {diff_type.replace('_', ' ')} @ t={t_val:.1f}s, Ly={Ly:.1f}μm",
-        annotations=annotations_all,
-        showlegend=False,
-        template='plotly_white',
-        font=dict(size=font_size)
+        height=900,  # Fixed reasonable height
+        margin=dict(l=60, r=200, t=100, b=60),
+        title=f"Flux Fields ({diff_type.replace('_', ' ')}) @ t = {t_val:.1f} s | Domain: {Lx} × {Ly} μm",
+        font=dict(size=font_size),
+        template="plotly_white",
+        annotations=annotations
     )
-    # axis formatting for all subplots
-    for row in range(1, 4):
-        for col in range(1, 3):
-            fig.update_xaxes(title_text="x (μm)", range=[0, Lx], gridcolor='white', zeroline=False, row=row, col=col, dtick=x_tick_interval)
-            fig.update_yaxes(title_text="y (μm)", range=[0, Ly], gridcolor='white', zeroline=False, row=row, col=col, dtick=y_tick_interval)
+
     return fig
 def plot_flux_comparison(solutions, diff_type, ly_values, time_index, downsample, font_size=12, x_tick_interval=10, y_tick_interval=10, show_grid=True, grid_thickness=0.5, border_thickness=1, arrow_thickness=1, height_multiplier=5, width_multiplier=5):
     """Plot flux fields for two Ly values for a given diffusion type (enhanced spacing/colorbar handling)."""
