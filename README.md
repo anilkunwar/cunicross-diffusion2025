@@ -159,9 +159,9 @@ Concentration Fields, Flux and Others:
 *Training models for study of diffusion with single substrate at bottom interface*
 --------------------------------------------------------------------------------
 
-[![meaningtowords](https://img.shields.io/badge/cu30lyclow-streamlit-red)](https://cudiffusion-ly3090-clow-high.streamlit.app/) (Cu diffusion in liquid solder)
+[![meaningtowords](https://img.shields.io/badge/culycvar-streamlit-red)](https://cu-diffusion-ly3090-clow-high.streamlit.app/) (Cu diffusion, Ly and c_Ni var)
 
-[![meaningtowords](https://img.shields.io/badge/cu60lyclow-streamlit-red)](https://cu-diffusion-60lyclow.streamlit.app/)
+[![meaningtowords](https://img.shields.io/badge/nilycvar-streamlit-red)](https://ni-diffusion-length-concentration-variation.streamlit.app/) (Ni diffusion, Ly and c_Ni var)
 
 
 
