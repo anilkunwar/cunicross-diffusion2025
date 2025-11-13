@@ -83,7 +83,7 @@ with training datasets for 0 BCs (Transformer-inspired Attention): [![meaningtow
 
    [![meaningtowords](https://img.shields.io/badge/radarchart7-streamlit-red)](https://attention-concentration-prediction-visualization7.streamlit.app/)  (radar chart visualization based upon the previous saved data)
 
-    [![meaningtowords](https://img.shields.io/badge/radarchart8-streamlit-red)](https://attention-concentration-prediction-visualization8.streamlit.app/) 
+   [![meaningtowords](https://img.shields.io/badge/radarchart8-streamlit-red)](https://attention-concentration-prediction-visualization8.streamlit.app/)  (both single and multiple substrates prediction via attention mechanism)
    
 
    Understanding the Attention Weights and Engineering Applications 
