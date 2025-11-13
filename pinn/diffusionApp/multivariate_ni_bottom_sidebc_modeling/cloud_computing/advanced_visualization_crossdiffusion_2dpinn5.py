@@ -12,6 +12,8 @@ from scipy.spatial.distance import cdist
 import matplotlib.pyplot as plt
 import seaborn as sns
 import re
+from matplotlib.colors import LogNorm
+
 # --- Page config & Streamlit helper UI ---
 st.set_page_config(page_title="Cu/Ni Cross-Diffusion Viewer", layout="wide")
 # Directory containing .pkl solution files (ensure exists)
@@ -94,15 +96,15 @@ def compute_fluxes(c1_preds, c2_preds, x_coords, y_coords, params):
         grad_c1_y = np.gradient(c1, dy, axis=0)
         grad_c2_x = np.gradient(c2, dx, axis=1)
         grad_c2_y = np.gradient(c2, dy, axis=0)
-       
+        
         J1_x = -(D11 * grad_c1_x + D12 * grad_c2_x)
         J1_y = -(D11 * grad_c1_y + D12 * grad_c2_y)
         J2_x = -(D21 * grad_c1_x + D22 * grad_c2_x)
         J2_y = -(D21 * grad_c1_y + D22 * grad_c2_y)
-       
+        
         J1_preds.append([J1_x, J1_y])
         J2_preds.append([J2_x, J2_y])
-   
+    
     return J1_preds, J2_preds
 @st.cache_data
 def attention_weighted_interpolation(solutions, lys, ly_target, diff_type, sigma=2.5):
@@ -386,7 +388,7 @@ def create_flux_fig(sol, Ly, diff_type, t_val, time_index, downsample, font_size
             fig.update_xaxes(title_text="x (μm)", range=[0, Lx], gridcolor='white', zeroline=False, row=row, col=col, dtick=x_tick_interval)
             fig.update_yaxes(title_text="y (μm)", range=[0, Ly], gridcolor='white', zeroline=False, row=row, col=col, dtick=y_tick_interval)
     return fig
-def plot_flux_comparison(solutions, diff_type, ly_values, time_index, downsample, font_size=12, x_tick_interval=10, y_tick_interval=10, show_grid=True, grid_thickness=0.5, border_thickness=1, arrow_thickness=1, height_multiplier=5, width_multiplier=5):
+def plot_flux_comparison_plotly(solutions, diff_type, ly_values, time_index, downsample, font_size=12, x_tick_interval=10, y_tick_interval=10, show_grid=True, grid_thickness=0.5, border_thickness=1, arrow_thickness=1, height_multiplier=5, width_multiplier=5):
     """Plot flux fields for two Ly values for a given diffusion type (enhanced spacing/colorbar handling)."""
     if len(ly_values) != 2:
         st.error("Please select exactly two Ly values for comparison.")
@@ -404,6 +406,69 @@ def plot_flux_comparison(solutions, diff_type, ly_values, time_index, downsample
     with col2:
         fig2 = create_flux_fig(sol2, ly_values[1], diff_type, t_val, time_index, downsample, font_size, x_tick_interval, y_tick_interval, show_grid, grid_thickness, border_thickness, arrow_thickness, height_multiplier, width_multiplier)
         st.plotly_chart(fig2, use_container_width=False)
+def plot_flux_comparison_matplotlib(solutions, diff_type, ly_values, time_index, downsample, font_size=12, x_tick_interval=10, y_tick_interval=10, show_grid=True, grid_thickness=0.5, border_thickness=1, arrow_thickness=1, height_multiplier=5, width_multiplier=5):
+    """Plot flux fields for two Ly values using Matplotlib."""
+    if len(ly_values) != 2:
+        st.error("Please select exactly two Ly values for comparison.")
+        return
+    sol1 = load_and_interpolate_solution(solutions, diff_type, ly_values[0])
+    sol2 = load_and_interpolate_solution(solutions, diff_type, ly_values[1])
+    if not sol1 or not sol2:
+        st.error(f"Could not load solutions for {diff_type}, Ly={ly_values}")
+        return
+    t_val = sol1['times'][time_index]
+    Lx = sol1['params']['Lx']
+    ds = max(1, downsample)
+    def prepare_data(sol, Ly):
+        J1_x = sol['J1_preds'][time_index][0][::ds, ::ds]
+        J1_y = sol['J1_preds'][time_index][1][::ds, ::ds]
+        J2_x = sol['J2_preds'][time_index][0][::ds, ::ds]
+        J2_y = sol['J2_preds'][time_index][1][::ds, ::ds]
+        c1 = sol['c1_preds'][time_index][::ds, ::ds]
+        c2 = sol['c2_preds'][time_index][::ds, ::ds]
+        J1_magnitude = np.sqrt(J1_x**2 + J1_y**2)
+        J2_magnitude = np.sqrt(J2_x**2 + J2_y**2)
+        x_coords = np.linspace(0, Lx, J1_x.shape[1])
+        y_coords = np.linspace(0, Ly, J1_x.shape[0])
+        X, Y = np.meshgrid(x_coords, y_coords)
+        return X, Y, J1_x, J1_y, J2_x, J2_y, J1_magnitude, J2_magnitude, c1, c2
+    data1 = prepare_data(sol1, ly_values[0])
+    data2 = prepare_data(sol2, ly_values[1])
+    fig = plt.figure(figsize=(20, 30), dpi=150)
+    gs = fig.add_gridspec(3, 2, hspace=0.3, wspace=0.4)
+    fig.suptitle(f"Flux Fields Comparison: {diff_type.replace('_', ' ')} @ t={t_val:.1f}s", fontsize=font_size + 4)
+    for idx, (ly, data) in enumerate(zip(ly_values, [data1, data2])):
+        X, Y, J1_x, J1_y, J2_x, J2_y, J1_mag, J2_mag, c1, c2 = data
+        ax_mag_cu = fig.add_subplot(gs[0, idx])
+        ax_mag_ni = fig.add_subplot(gs[1, idx])
+        ax_vec = fig.add_subplot(gs[2, idx])
+        # Magnitude Cu
+        im_cu = ax_mag_cu.pcolormesh(X, Y, np.log10(np.maximum(J1_mag, 1e-10)), cmap='viridis')
+        ax_mag_cu.contour(X, Y, c1, levels=5, colors='white', linewidths=0.5)
+        ax_mag_cu.set_title(f"Log |JCu| - Ly={ly:.1f}μm", fontsize=font_size)
+        ax_mag_cu.set_aspect('equal')
+        ax_mag_cu.set_xlabel("x (μm)")
+        ax_mag_cu.set_ylabel("y (μm)")
+        # Magnitude Ni
+        im_ni = ax_mag_ni.pcolormesh(X, Y, np.log10(np.maximum(J2_mag, 1e-10)), cmap='cividis')
+        ax_mag_ni.contour(X, Y, c2, levels=5, colors='white', linewidths=0.5)
+        ax_mag_ni.set_title(f"Log |JNi| - Ly={ly:.1f}μm", fontsize=font_size)
+        ax_mag_ni.set_aspect('equal')
+        ax_mag_ni.set_xlabel("x (μm)")
+        ax_mag_ni.set_ylabel("y (μm)")
+        # Vector field
+        scale = 1 / max(np.max(J1_mag), np.max(J2_mag), 1e-10) * 0.05
+        ax_vec.quiver(X, Y, J1_x, J1_y, color='blue', alpha=0.7, scale=scale, label='Cu')
+        ax_vec.quiver(X, Y, J2_x, J2_y, color='red', alpha=0.7, scale=scale, label='Ni')
+        ax_vec.set_title(f"Flux Vectors - Ly={ly:.1f}μm", fontsize=font_size)
+        ax_vec.legend()
+        ax_vec.set_aspect('equal')
+        ax_vec.set_xlabel("x (μm)")
+        ax_vec.set_ylabel("y (μm)")
+    plt.colorbar(im_cu, ax=fig.get_axes()[0], label='Log |JCu|')
+    plt.colorbar(im_ni, ax=fig.get_axes()[1], label='Log |JNi|')
+    st.pyplot(fig)
+    plt.close()
 def plot_line_comparison(solutions, diff_type, ly_values, time_index, line_thickness=2, label_font_size=12, tick_font_size=10, conc_x_tick_interval=0.0005, line_y_tick_interval=10, spine_thickness=1.5, color_ly1='#1f77b4', color_ly2='#ff7f0e', fig_width=12, fig_height=6, legend_loc='upper right', show_grid=True, cu_x_label='Cu Concentration (mol/cm³)', cu_y_label='y (μm)', ni_x_label='Ni Concentration (mol/cm³)', ni_y_label='y (μm)', legend_label1='', legend_label2='', rotate_ticks=False):
     """Plot central line profiles for two Ly values for a given diffusion type."""
     if len(ly_values) != 2:
@@ -654,6 +719,7 @@ def main():
     st.sidebar.header("Visualization Options")
     cu_colormap = st.sidebar.selectbox("Cu Colormap", options=COLORSCALES, index=COLORSCALES.index('viridis'))
     ni_colormap = st.sidebar.selectbox("Ni Colormap", options=COLORSCALES, index=COLORSCALES.index('magma'))
+    flux_backend = st.sidebar.selectbox("Flux Visualization Backend", ["Plotly", "Matplotlib"])
     st.sidebar.header("Plot Customization")
     font_size = st.sidebar.slider("Font Size", 8, 24, 12)
     x_tick_interval = st.sidebar.slider("X Tick Interval (μm)", 5, 50, 10)
@@ -704,7 +770,10 @@ def main():
                 st.error(f"No solution for {diff_type}, Ly={ly:.1f}")
     with tab2:
         st.subheader("Flux Fields Comparison")
-        plot_flux_comparison(solutions, diff_type, ly_values, time_index, downsample, font_size=font_size, x_tick_interval=x_tick_interval, y_tick_interval=y_tick_interval, show_grid=show_grid, grid_thickness=grid_thickness, border_thickness=border_thickness, arrow_thickness=arrow_thickness, height_multiplier=size_multiplier, width_multiplier=size_multiplier)
+        if flux_backend == "Plotly":
+            plot_flux_comparison_plotly(solutions, diff_type, ly_values, time_index, downsample, font_size=font_size, x_tick_interval=x_tick_interval, y_tick_interval=y_tick_interval, show_grid=show_grid, grid_thickness=grid_thickness, border_thickness=border_thickness, arrow_thickness=arrow_thickness, height_multiplier=size_multiplier, width_multiplier=size_multiplier)
+        else:
+            plot_flux_comparison_matplotlib(solutions, diff_type, ly_values, time_index, downsample, font_size=font_size, x_tick_interval=x_tick_interval, y_tick_interval=y_tick_interval, show_grid=show_grid, grid_thickness=grid_thickness, border_thickness=border_thickness, arrow_thickness=arrow_thickness, height_multiplier=size_multiplier, width_multiplier=size_multiplier)
     with tab3:
         st.subheader("Central Line Profiles Comparison")
         plot_line_comparison(solutions, diff_type, ly_values, time_index, line_thickness=line_thickness, label_font_size=label_font_size, tick_font_size=tick_font_size, conc_x_tick_interval=line_conc_x_tick_interval, line_y_tick_interval=line_y_tick_interval, spine_thickness=spine_thickness, color_ly1=color_ly1, color_ly2=color_ly2, fig_width=fig_width, fig_height=fig_height, legend_loc=legend_loc, show_grid=show_grid, cu_x_label=cu_x_label, cu_y_label=cu_y_label, ni_x_label=ni_x_label, ni_y_label=ni_y_label, legend_label1=legend_label1, legend_label2=legend_label2, rotate_ticks=rotate_ticks)
