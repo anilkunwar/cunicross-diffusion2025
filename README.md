@@ -154,6 +154,13 @@ MWE:  [![meaningtowords](https://img.shields.io/badge/openaichat-streamlit-red)]
 Concentration Fields, Flux and Others:
 [![meaningtowords](https://img.shields.io/badge/solutions-streamlit-red)](https://multivariatecrossdiffusion2d-cuni.streamlit.app/)
 
+
+--------------------------------------------------------------------------------
+*Training models for study of diffusion with single substrate at bottom interface*
+--------------------------------------------------------------------------------
+[![meaningtowords](https://img.shields.io/badge/cu30lyclow-streamlit-red)](https://cu-diffusion-30lyclow.streamlit.app/)
+
+
 ------------------------------------------------------------------
 
 *Cu Pillar Bottom and Cu Pillar Top ( SelfDiffusion - Symmetry)/ Cu Substrate on Top (C_Cu=S_sat) with Preset BC on bottom for Cu (C_Cu = 0)*
