@@ -691,7 +691,7 @@ def main():
                 st.error(f"No solution for {diff_type}, Ly={ly:.1f}")
     with tab2:
         st.subheader("Flux Fields Comparison")
-        plot_flux_comparison(solutions, diff_type, ly_values, time_index, downsample, font_size=font_size, x_tick_interval=x_tick_interval, y_tick_interval=y_tick_interval, show_grid=show_grid, grid_thickness=grid_thickness, border_thickness=border_thickness, arrow_thickness=arrow_thickness, height_multiplier=size_multiplier, width_multiplier=size_multiplier)
+        plot_flux_comparison(solutions, diff_type, ly_values=ly_values, time_index, downsample, font_size=font_size, x_tick_interval=x_tick_interval, y_tick_interval=y_tick_interval, show_grid=show_grid, grid_thickness=grid_thickness, border_thickness=border_thickness, arrow_thickness=arrow_thickness, height_multiplier=size_multiplier, width_multiplier=size_multiplier)
     with tab3:
         st.subheader("Central Line Profiles Comparison")
         plot_line_comparison(solutions, diff_type, ly_values, time_index, line_thickness=line_thickness, label_font_size=label_font_size, tick_font_size=tick_font_size, conc_x_tick_interval=line_conc_x_tick_interval, line_y_tick_interval=line_y_tick_interval, spine_thickness=spine_thickness, color_ly1=color_ly1, color_ly2=color_ly2, fig_width=fig_width, fig_height=fig_height, legend_loc=legend_loc, show_grid=show_grid, cu_x_label=cu_x_label, cu_y_label=cu_y_label, ni_x_label=ni_x_label, ni_y_label=ni_y_label, legend_label1=legend_label1, legend_label2=legend_label2, rotate_ticks=rotate_ticks)
