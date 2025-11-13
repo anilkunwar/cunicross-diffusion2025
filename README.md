@@ -86,6 +86,8 @@ with training datasets for 0 BCs (Transformer-inspired Attention): [![meaningtow
    [![meaningtowords](https://img.shields.io/badge/radarchart8-streamlit-red)](https://attention-concentration-prediction-visualization8.streamlit.app/)  (both single and multiple substrates prediction via attention mechanism, hallucinates in context of Pure species diffusion)
 
    [![meaningtowords](https://img.shields.io/badge/radarchart9-streamlit-red)](https://attention-concentration-prediction-visualization9.streamlit.app/) (correction for single species diffusion)
+
+   [![meaningtowords](https://img.shields.io/badge/radarchart10-streamlit-red)](https://attention-concentration-prediction-visualization10.streamlit.app/) 
    
 
    Understanding the Attention Weights and Engineering Applications 
