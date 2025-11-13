@@ -239,149 +239,156 @@ def create_flux_fig(sol, Ly, diff_type, t_val, time_index, downsample,
                     font_size=12, x_tick_interval=10, y_tick_interval=10,
                     show_grid=True, grid_thickness=0.5, border_thickness=1,
                     arrow_thickness=1):
-    """Create flux figure with CORRECT physical aspect ratio."""
-    fig = make_subplots(
-        rows=3, cols=2,
-        subplot_titles=(
-            "Cu Flux Mag", "Ni Flux Mag",
-            "Cu J₁x", "Ni J₂x",
-            "Cu J₁y", "Ni J₂y"
-        ),
-        vertical_spacing=0.08,
-        horizontal_spacing=0.10,
-        # This is the key: shared axes + fixed aspect ratio
-        shared_xaxes=False,
-        shared_yaxes=False,
-    )
-
+    """
+    Flux figure with perfect physical aspect ratio:
+        • 60 µm horizontal must look longer than 50 µm vertical
+        • 90 µm vertical must be exactly 1.5× longer than 60 µm horizontal
+    """
+    Lx = sol['params']['Lx']                     # always 60.0 µm
     x_coords = sol['X'][:, 0]
     y_coords = sol['Y'][0, :]
-    Lx = sol['params']['Lx']  # Always 60.0
-    ds = max(1, downsample)
-    x_indices = np.unique(np.linspace(0, len(x_coords)-1, num=max(2, len(x_coords)//ds), dtype=int))
-    y_indices = np.unique(np.linspace(0, len(y_coords)-1, num=max(2, len(y_coords)//ds), dtype=int))
-    x_ds = x_coords[x_indices]
-    y_ds = y_coords[y_indices]
 
-    J1_x = sol['J1_preds'][time_index][0][np.ix_(y_indices, x_indices)]
-    J1_y = sol['J1_preds'][time_index][1][np.ix_(y_indices, x_indices)]
-    J2_x = sol['J2_preds'][time_index][0][np.ix_(y_indices, x_indices)]
-    J2_y = sol['J2_preds'][time_index][1][np.ix_(y_indices, x_indices)]
-    c1 = sol['c1_preds'][time_index][np.ix_(y_indices, x_indices)]
-    c2 = sol['c2_preds'][time_index][np.ix_(y_indices, x_indices)]
+    ds = max(1, downsample)
+    x_idx = slice(None, None, ds)
+    y_idx = slice(None, None, ds)
+    x_ds = x_coords[x_idx]
+    y_ds = y_coords[y_idx]
+
+    # Data (already rows=y, cols=x)
+    J1_x = sol['J1_preds'][time_index][0][y_idx, x_idx]
+    J1_y = sol['J1_preds'][time_index][1][y_idx, x_idx]
+    J2_x = sol['J2_preds'][time_index][0][y_idx, x_idx]
+    J2_y = sol['J2_preds'][time_index][1][y_idx, x_idx]
+    c1   = sol['c1_preds'][time_index][y_idx, x_idx]
+    c2   = sol['c2_preds'][time_index][y_idx, x_idx]
 
     J1_mag = np.sqrt(J1_x**2 + J1_y**2)
     J2_mag = np.sqrt(J2_x**2 + J2_y**2)
 
-    # Common aspect ratio: width/height = Lx / Ly → x/y pixel ratio
-    aspect_ratio = dict(x=1, y=Lx/Ly, z=1)  # This forces correct physical proportions
-
-    # Row 1: Magnitude
-    fig.add_trace(go.Heatmap(z=np.log10(np.maximum(J1_mag, 1e-10)), x=x_ds, y=y_ds,
-                             colorscale='viridis', showscale=True,
-                             colorbar=dict(title="Log |JCu|", x=1.02, len=0.25, y=0.85)),
-                  row=1, col=1)
-    fig.add_trace(go.Contour(z=c1, x=x_ds, y=y_ds, showscale=False, contours_coloring='lines',
-                             line_width=1, opacity=0.4), row=1, col=1)
-
-    fig.add_trace(go.Heatmap(z=np.log10(np.maximum(J2_mag, 1e-10)), x=x_ds, y=y_ds,
-                             colorscale='cividis', showscale=True,
-                             colorbar=dict(title="Log |JNi|", x=1.15, len=0.25, y=0.85)),
-                  row=1, col=2)
-    fig.add_trace(go.Contour(z=c2, x=x_ds, y=y_ds, showscale=False, contours_coloring='lines',
-                             line_width=1, opacity=0.4), row=1, col=2)
-
-    # Row 2 & 3: Components
-    for row, (data1, data2, name1, name2) in enumerate([
-        (J1_x, J2_x, "Cu J₁x", "Ni J₂x"),
-        (J1_y, J2_y, "Cu J₁y", "Ni J₂y")
-    ], start=2):
-        fig.add_trace(go.Heatmap(z=data1, x=x_ds, y=y_ds, colorscale='rdbu', zmid=0,
-                                 colorbar=dict(title=name1, x=1.02, len=0.25, y=(4-row)/3)),
-                      row=row, col=1)
-        fig.add_trace(go.Heatmap(z=data2, x=x_ds, y=y_ds, colorscale='rdbu', zmid=0,
-                                 colorbar=dict(title=name2, x=1.15, len=0.25, y=(4-row)/3)),
-                      row=row, col=2)
-
-    # Add quiver arrows (only on magnitude plots for clarity)
-    scale = 0.15 * Lx
-    stride = max(1, len(x_ds)//10)
-    annotations = []
-    for i in range(0, len(x_ds), stride):
-        for j in range(0, len(y_ds), stride):
-            if J1_mag[j,i] > 1e-10:
-                annotations.append(dict(
-                    x=x_ds[i], y=y_ds[j],
-                    ax=x_ds[i] + scale * J1_x[j,i] / (J1_mag.max() + 1e-12),
-                    ay=y_ds[j] + scale * J1_y[j,i] / (J1_mag.max() + 1e-12),
-                    xref="x", yref="y", axref="x", ayref="y",
-                    showarrow=True, arrowhead=2, arrowsize=1.2,
-                    arrowwidth=arrow_thickness, arrowcolor="white"
-                ))
-            if J2_mag[j,i] > 1e-10:
-                annotations.append(dict(
-                    x=x_ds[i], y=y_ds[j],
-                    ax=x_ds[i] + scale * J2_x[j,i] / (J2_mag.max() + 1e-12),
-                    ay=y_ds[j] + scale * J2_y[j,i] / (J2_mag.max() + 1e-12),
-                    xref="x2", yref="y2", axref="x2", ayref="y2",
-                    showarrow=True, arrowhead=2, arrowsize=1.2,
-                    arrowwidth=arrow_thickness, arrowcolor="white"
-                ))
-
-    # Grid + borders
-    subplot_refs = [(1,1,'x','y'), (1,2,'x2','y2'), (2,1,'x3','y3'), (2,2,'x4','y4'), (3,1,'x5','y5'), (3,2,'x6','y6')]
-    for row, col, xref, yref in subplot_refs:
-        # Grid
-        if show_grid:
-            for val in np.arange(0, Lx + x_tick_interval, x_tick_interval):
-                fig.add_shape(type="line", x0=val, x1=val, y0=0, y1=Ly,
-                              line=dict(color="gray", width=grid_thickness, dash="dot"),
-                              xref=xref, yref=yref)
-            for val in np.arange(0, Ly + y_tick_interval, y_tick_interval):
-                fig.add_shape(type="line", x0=0, x1=Lx, y0=val, y1=val,
-                              line=dict(color="gray", width=grid_thickness, dash="dot"),
-                              xref=xref, yref=yref)
-        # Border
-        fig.add_shape(type="rect", x0=0, y0=0, x1=Lx, y1=Ly,
-                      line=dict(color="black", width=border_thickness),
-                      xref=xref, yref=yref)
-
-    # CRITICAL: Force correct physical aspect ratio on ALL subplots
-    for i in range(1, 7):
-        fig.update_xaxes(row=(i-1)//2 + 1, col=((i-1)%2)+1,
-                         range=[0, Lx], title="x (μm)", dtick=x_tick_interval)
-        fig.update_yaxes(row=(i-1)//2 + 1, col=((i-1)%2)+1,
-                         range=[0, Ly], title="y (μm)", dtick=y_tick_interval,
-                         scaleanchor=f"x{i}", scaleratio=Ly/Lx)  # This locks y/x ratio
-
-    fig.update_layout(
-        height=900,  # Fixed reasonable height
-        margin=dict(l=60, r=200, t=100, b=60),
-        title=f"Flux Fields ({diff_type.replace('_', ' ')}) @ t = {t_val:.1f} s | Domain: {Lx} × {Ly} μm",
-        font=dict(size=font_size),
-        template="plotly_white",
-        annotations=annotations
+    # ---------- Subplots ----------
+    fig = make_subplots(
+        rows=3, cols=2,
+        subplot_titles=(
+            "Cu Flux Magnitude", "Ni Flux Magnitude",
+            "Cu J₁x",            "Ni J₂x",
+            "Cu J₁y",            "Ni J₂y"
+        ),
+        vertical_spacing=0.09,
+        horizontal_spacing=0.12,
     )
 
+    # Row 1 – magnitude (log scale)
+    fig.add_trace(go.Heatmap(z=np.log10(np.maximum(J1_mag, 1e-12)), x=x_ds, y=y_ds,
+                             colorscale='viridis', showscale=True,
+                             colorbar=dict(title='log|J<sub>Cu</sub>|', x=1.02, y=0.85, len=0.25)),
+                  row=1, col=1)
+    fig.add_trace(go.Contour(z=c1, x=x_ds, y=y_ds, showscale=False, line_width=1, opacity=0.4), row=1, col=1)
+
+    fig.add_trace(go.Heatmap(z=np.log10(np.maximum(J2_mag, 1e-12)), x=x_ds, y=y_ds,
+                             colorscale='cividis', showscale=True,
+                             colorbar=dict(title='log|J<sub>Ni</sub>|', x=1.15, y=0.85, len=0.25)),
+                  row=1, col=2)
+    fig.add_trace(go.Contour(z=c2, x=x_ds, y=y_ds, showscale=False, line_width=1, opacity=0.4), row=1, col=2)
+
+    # Row 2 & 3 – components
+    for row, (data1, data2, name) in enumerate([(J1_x, J2_x, "J₁x"), (J1_y, J2_y, "J₁y")], start=2):
+        fig.add_trace(go.Heatmap(z=data1, x=x_ds, y=y_ds, colorscale='rdbu', zmid=0,
+                                 colorbar=dict(title=f'Cu {name}', x=1.02, len=0.25)), row=row, col=1)
+        fig.add_trace(go.Heatmap(z=data2, x=x_ds, y=y_ds, colorscale='rdbu', zmid=0,
+                                 colorbar=dict(title=f'Ni {name}', x=1.15, len=0.25)), row=row, col=2)
+
+    # ---------- Quiver arrows (only on magnitude panels) ----------
+    scale = 0.12 * Lx
+    stride = max(1, len(x_ds)//10)
+    arrows = []
+    for i in range(0, len(x_ds), stride):
+        for j in range(0, len(y_ds), stride):
+            if J1_mag[j, i] > 1e-10:
+                arrows.append(dict(x=x_ds[i], y=y_ds[j],
+                                   ax=x_ds[i] + scale*J1_x[j,i]/(J1_mag.max()+1e-12),
+                                   ay=y_ds[j] + scale*J1_y[j,i]/(J1_mag.max()+1e-12),
+                                   xref='x', yref='y', axref='x', ayref='y',
+                                   showarrow=True, arrowhead=2, arrowsize=1.2,
+                                   arrowwidth=arrow_thickness, arrowcolor='white'))
+            if J2_mag[j, i] > 1e-10:
+                arrows.append(dict(x=x_ds[i], y=y_ds[j],
+                                   ax=x_ds[i] + scale*J2_x[j,i]/(J2_mag.max()+1e-12),
+                                   ay=y_ds[j] + scale*J2_y[j,i]/(J2_mag.max()+1e-12),
+                                   xref='x2', yref='y2', axref='x2', ayref='y2',
+                                   showarrow=True, arrowhead=2, arrowsize=1.2,
+                                   arrowwidth=arrow_thickness, arrowcolor='white'))
+
+    # ---------- Grid & border ----------
+    for r in range(1, 4):
+        for c in range(1, 3):
+            xref = f'x{r if r>1 else ""}{c if c>1 else ""}' if r>1 or c>1 else 'x'
+            yref = f'y{r if r>1 else ""}{c if c>1 else ""}' if r>1 or c>1 else 'y'
+            # grid
+            if show_grid:
+                for val in np.arange(0, Lx + x_tick_interval, x_tick_interval):
+                    fig.add_shape(type="line", x0=val, x1=val, y0=0, y1=Ly,
+                                  line=dict(color="gray", width=grid_thickness, dash="dot"),
+                                  xref=xref, yref=yref)
+                for val in np.arange(0, Ly + y_tick_interval, y_tick_interval):
+                    fig.add_shape(type="line", x0=0, x1=Lx, y0=val, y1=val,
+                                  line=dict(color="gray", width=grid_thickness, dash="dot"),
+                                  xref=xref, yref=yref)
+            # border
+            fig.add_shape(type="rect", x0=0, y0=0, x1=Lx, y1=Ly,
+                          line=dict(color="black", width=border_thickness),
+                          xref=xref, yref=yref)
+
+    # ---------- CRITICAL: enforce true physical aspect ratio ----------
+    # Every subplot must have the same pixel-per-µm ratio
+    for row in range(1, 4):
+        for col in range(1, 3):
+            fig.update_xaxes(title_text="x (µm)", range=[0, Lx], dtick=x_tick_interval,
+                             row=row, col=col, constrain="domain")
+            fig.update_yaxes(title_text="y (µm)", range=[0, Ly], dtick=y_tick_interval,
+                             scaleanchor=f"x{row if row>1 else ''}{col if col>1 else ''}",
+                             scaleratio=Ly/Lx,                     # <-- this line does the magic
+                             row=row, col=col)
+
+    fig.update_layout(
+        height=1000,
+        margin=dict(l=70, r=220, t=100, b=60),
+        title=f"Flux Fields – {diff_type.replace('_',' ')} | t = {t_val:.1f} s | {Lx} × {Ly} µm",
+        font=dict(size=font_size),
+        template="plotly_white",
+        annotations=arrows
+    )
     return fig
-def plot_flux_comparison(solutions, diff_type, ly_values, time_index, downsample, font_size=12, x_tick_interval=10, y_tick_interval=10, show_grid=True, grid_thickness=0.5, border_thickness=1, arrow_thickness=1, height_multiplier=5, width_multiplier=5):
-    """Plot flux fields for two Ly values for a given diffusion type (enhanced spacing/colorbar handling)."""
+def plot_flux_comparison(solutions, diff_type, ly_values, time_index, downsample,
+                          font_size=12, x_tick_interval=10, y_tick_interval=10,
+                          show_grid=True, grid_thickness=0.5, border_thickness=1,
+                          arrow_thickness=1):
+    """Side-by-side comparison with correct geometry (no extra multipliers needed)."""
     if len(ly_values) != 2:
-        st.error("Please select exactly two Ly values for comparison.")
+        st.error("Select exactly two Ly values.")
         return
+
     sol1 = load_and_interpolate_solution(solutions, diff_type, ly_values[0])
     sol2 = load_and_interpolate_solution(solutions, diff_type, ly_values[1])
     if not sol1 or not sol2:
-        st.error(f"Could not load solutions for {diff_type}, Ly={ly_values}")
+        st.error("Could not load one of the solutions.")
         return
+
     t_val = sol1['times'][time_index]
+
     col1, col2 = st.columns(2)
     with col1:
-        fig1 = create_flux_fig(sol1, ly_values[0], diff_type, t_val, time_index, downsample, font_size, x_tick_interval, y_tick_interval, show_grid, grid_thickness, border_thickness, arrow_thickness, height_multiplier, width_multiplier)
-        st.plotly_chart(fig1, use_container_width=False)
+        st.subheader(f"Ly = {ly_values[0]:.1f} µm")
+        fig1 = create_flux_fig(sol1, ly_values[0], diff_type, t_val, time_index, downsample,
+                               font_size, x_tick_interval, y_tick_interval,
+                               show_grid, grid_thickness, border_thickness, arrow_thickness)
+        st.plotly_chart(fig1, use_container_width=True)
+
     with col2:
-        fig2 = create_flux_fig(sol2, ly_values[1], diff_type, t_val, time_index, downsample, font_size, x_tick_interval, y_tick_interval, show_grid, grid_thickness, border_thickness, arrow_thickness, height_multiplier, width_multiplier)
-        st.plotly_chart(fig2, use_container_width=False)
+        st.subheader(f"Ly = {ly_values[1]:.1f} µm")
+        fig2 = create_flux_fig(sol2, ly_values[1], diff_type, t_val, time_index, downsample,
+                               font_size, x_tick_interval, y_tick_interval,
+                               show_grid, grid_thickness, border_thickness, arrow_thickness)
+        st.plotly_chart(fig2, use_container_width=True)
 def plot_line_comparison(solutions, diff_type, ly_values, time_index, line_thickness=2, label_font_size=12, tick_font_size=10, conc_x_tick_interval=0.0005, line_y_tick_interval=10, spine_thickness=1.5, color_ly1='#1f77b4', color_ly2='#ff7f0e', fig_width=12, fig_height=6, legend_loc='upper right', show_grid=True, cu_x_label='Cu Concentration (mol/cm³)', cu_y_label='y (μm)', ni_x_label='Ni Concentration (mol/cm³)', ni_y_label='y (μm)', legend_label1='', legend_label2='', rotate_ticks=False):
     """Plot central line profiles for two Ly values for a given diffusion type."""
     if len(ly_values) != 2:
