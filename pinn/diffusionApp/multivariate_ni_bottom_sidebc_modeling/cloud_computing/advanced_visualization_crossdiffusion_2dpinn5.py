@@ -239,63 +239,54 @@ def create_flux_fig(sol, Ly, diff_type, t_val, time_index, downsample,
                     font_size=12, x_tick_interval=10, y_tick_interval=10,
                     show_grid=True, grid_thickness=0.5, border_thickness=1,
                     arrow_thickness=1):
-    """
-    Flux figure with perfect physical aspect ratio:
-        • 60 µm horizontal must look longer than 50 µm vertical
-        • 90 µm vertical must be exactly 1.5× longer than 60 µm horizontal
-    """
-    Lx = sol['params']['Lx']                     # always 60.0 µm
+    """Flux figure with true physical aspect ratio."""
+    Lx = sol['params']['Lx']                     # always 60 µm
     x_coords = sol['X'][:, 0]
     y_coords = sol['Y'][0, :]
 
     ds = max(1, downsample)
-    x_idx = slice(None, None, ds)
-    y_idx = slice(None, None, ds)
-    x_ds = x_coords[x_idx]
-    y_ds = y_coords[y_idx]
+    x_ds = x_coords[::ds]
+    y_ds = y_coords[::ds]
 
-    # Data (already rows=y, cols=x)
-    J1_x = sol['J1_preds'][time_index][0][y_idx, x_idx]
-    J1_y = sol['J1_preds'][time_index][1][y_idx, x_idx]
-    J2_x = sol['J2_preds'][time_index][0][y_idx, x_idx]
-    J2_y = sol['J2_preds'][time_index][1][y_idx, x_idx]
-    c1   = sol['c1_preds'][time_index][y_idx, x_idx]
-    c2   = sol['c2_preds'][time_index][y_idx, x_idx]
+    # Extract data (rows = y, cols = x)
+    J1_x = sol['J1_preds'][time_index][0][::ds, ::ds]
+    J1_y = sol['J1_preds'][time_index][1][::ds, ::ds]
+    J2_x = sol['J2_preds'][time_index][0][::ds, ::ds]
+    J2_y = sol['J2_preds'][time_index][1][::ds, ::ds]
+    c1   = sol['c1_preds'][time_index][::ds, ::ds]
+    c2   = sol['c2_preds'][time_index][::ds, ::ds]
 
     J1_mag = np.sqrt(J1_x**2 + J1_y**2)
     J2_mag = np.sqrt(J2_x**2 + J2_y**2)
 
-    # ---------- Subplots ----------
     fig = make_subplots(
         rows=3, cols=2,
         subplot_titles=(
             "Cu Flux Magnitude", "Ni Flux Magnitude",
-            "Cu J₁x",            "Ni J₂x",
-            "Cu J₁y",            "Ni J₂y"
+            "Cu J₁x", "Ni J₂x",
+            "Cu J₁y", "Ni J₂y"
         ),
         vertical_spacing=0.09,
         horizontal_spacing=0.12,
     )
 
-    # Row 1 – magnitude (log scale)
+    # ---------- Row 1: magnitude ----------
     fig.add_trace(go.Heatmap(z=np.log10(np.maximum(J1_mag, 1e-12)), x=x_ds, y=y_ds,
-                             colorscale='viridis', showscale=True,
-                             colorbar=dict(title='log|J<sub>Cu</sub>|', x=1.02, y=0.85, len=0.25)),
+                             colorscale='viridis', colorbar=dict(title='log|J<sub>Cu</sub>|', x=1.02)),
                   row=1, col=1)
     fig.add_trace(go.Contour(z=c1, x=x_ds, y=y_ds, showscale=False, line_width=1, opacity=0.4), row=1, col=1)
 
     fig.add_trace(go.Heatmap(z=np.log10(np.maximum(J2_mag, 1e-12)), x=x_ds, y=y_ds,
-                             colorscale='cividis', showscale=True,
-                             colorbar=dict(title='log|J<sub>Ni</sub>|', x=1.15, y=0.85, len=0.25)),
+                             colorscale='cividis', colorbar=dict(title='log|J<sub>Ni</sub>|', x=1.15)),
                   row=1, col=2)
     fig.add_trace(go.Contour(z=c2, x=x_ds, y=y_ds, showscale=False, line_width=1, opacity=0.4), row=1, col=2)
 
-    # Row 2 & 3 – components
-    for row, (data1, data2, name) in enumerate([(J1_x, J2_x, "J₁x"), (J1_y, J2_y, "J₁y")], start=2):
-        fig.add_trace(go.Heatmap(z=data1, x=x_ds, y=y_ds, colorscale='rdbu', zmid=0,
-                                 colorbar=dict(title=f'Cu {name}', x=1.02, len=0.25)), row=row, col=1)
-        fig.add_trace(go.Heatmap(z=data2, x=x_ds, y=y_ds, colorscale='rdbu', zmid=0,
-                                 colorbar=dict(title=f'Ni {name}', x=1.15, len=0.25)), row=row, col=2)
+    # ---------- Row 2 & 3: components ----------
+    for row, (d1, d2, name) in enumerate([(J1_x, J2_x, "J₁x"), (J1_y, J2_y, "J₁y")], start=2):
+        fig.add_trace(go.Heatmap(z=d1, x=x_ds, y=y_ds, colorscale='rdbu', zmid=0,
+                                 colorbar=dict(title=f'Cu {name}', x=1.02)), row=row, col=1)
+        fig.add_trace(go.Heatmap(z=d2, x=x_ds, y=y_ds, colorscale='rdbu', zmid=0,
+                                 colorbar=dict(title=f'Ni {name}', x=1.15)), row=row, col=2)
 
     # ---------- Quiver arrows (only on magnitude panels) ----------
     scale = 0.12 * Lx
@@ -321,48 +312,44 @@ def create_flux_fig(sol, Ly, diff_type, t_val, time_index, downsample,
     # ---------- Grid & border ----------
     for r in range(1, 4):
         for c in range(1, 3):
-            xref = f'x{r if r>1 else ""}{c if c>1 else ""}' if r>1 or c>1 else 'x'
-            yref = f'y{r if r>1 else ""}{c if c>1 else ""}' if r>1 or c>1 else 'y'
-            # grid
+            ref = f"x{r if r>1 else ''}{c if c>1 else ''}" if (r>1 or c>1) else "x"
+            yref = f"y{r if r>1 else ''}{c if c>1 else ''}" if (r>1 or c>1) else "y"
             if show_grid:
                 for val in np.arange(0, Lx + x_tick_interval, x_tick_interval):
                     fig.add_shape(type="line", x0=val, x1=val, y0=0, y1=Ly,
                                   line=dict(color="gray", width=grid_thickness, dash="dot"),
-                                  xref=xref, yref=yref)
+                                  xref=ref, yref=yref)
                 for val in np.arange(0, Ly + y_tick_interval, y_tick_interval):
                     fig.add_shape(type="line", x0=0, x1=Lx, y0=val, y1=val,
                                   line=dict(color="gray", width=grid_thickness, dash="dot"),
-                                  xref=xref, yref=yref)
-            # border
+                                  xref=ref, yref=yref)
             fig.add_shape(type="rect", x0=0, y0=0, x1=Lx, y1=Ly,
                           line=dict(color="black", width=border_thickness),
-                          xref=xref, yref=yref)
+                          xref=ref, yref=yref)
 
-    # ---------- CRITICAL: enforce true physical aspect ratio ----------
-    # Every subplot must have the same pixel-per-µm ratio
+    # ---------- PHYSICAL ASPECT RATIO (the magic line) ----------
     for row in range(1, 4):
         for col in range(1, 3):
-            fig.update_xaxes(title_text="x (µm)", range=[0, Lx], dtick=x_tick_interval,
+            fig.update_xaxes(title="x (µm)", range=[0, Lx], dtick=x_tick_interval,
                              row=row, col=col, constrain="domain")
-            fig.update_yaxes(title_text="y (µm)", range=[0, Ly], dtick=y_tick_interval,
+            fig.update_yaxes(title="y (µm)", range=[0, Ly], dtick=y_tick_interval,
                              scaleanchor=f"x{row if row>1 else ''}{col if col>1 else ''}",
-                             scaleratio=Ly/Lx,                     # <-- this line does the magic
+                             scaleratio=Ly/Lx,          # ← forces true geometry
                              row=row, col=col)
 
     fig.update_layout(
         height=1000,
-        margin=dict(l=70, r=220, t=100, b=60),
-        title=f"Flux Fields – {diff_type.replace('_',' ')} | t = {t_val:.1f} s | {Lx} × {Ly} µm",
+        title=f"Flux Fields – {diff_type.replace('_',' ')} | t = {t_val:.1f} s | {Lx}×{Ly} µm",
         font=dict(size=font_size),
         template="plotly_white",
-        annotations=arrows
+        annotations=arrows,
+        margin=dict(l=70, r=230, t=100, b=60)
     )
     return fig
 def plot_flux_comparison(solutions, diff_type, ly_values, time_index, downsample,
                           font_size=12, x_tick_interval=10, y_tick_interval=10,
                           show_grid=True, grid_thickness=0.5, border_thickness=1,
                           arrow_thickness=1):
-    """Side-by-side comparison with correct geometry (no extra multipliers needed)."""
     if len(ly_values) != 2:
         st.error("Select exactly two Ly values.")
         return
@@ -370,7 +357,7 @@ def plot_flux_comparison(solutions, diff_type, ly_values, time_index, downsample
     sol1 = load_and_interpolate_solution(solutions, diff_type, ly_values[0])
     sol2 = load_and_interpolate_solution(solutions, diff_type, ly_values[1])
     if not sol1 or not sol2:
-        st.error("Could not load one of the solutions.")
+        st.error("Could not load solutions.")
         return
 
     t_val = sol1['times'][time_index]
