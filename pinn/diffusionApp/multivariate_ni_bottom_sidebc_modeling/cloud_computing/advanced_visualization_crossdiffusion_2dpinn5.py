@@ -607,124 +607,193 @@ def download_data(solution, time_index, all_times=False):
 def main():
     st.sidebar.header("Simulation Parameters")
     solutions, metadata, load_logs = load_solutions(SOLUTION_DIR)
+
+    # Optional: Show loading log
     if load_logs:
-        st.subheader("Solution Load Log")
-        selected_log = st.selectbox("View load status for solutions", load_logs, index=0)
-        st.write(selected_log)
+        with st.expander("Solution Load Log", expanded=False):
+            selected_log = st.selectbox("View load status", load_logs, index=0)
+            st.code(selected_log, language="text")
+
     if not solutions:
-        st.error("No valid solution files found in pinn_solutions directory.")
-        st.write("Expected files:")
-        st.write("- solution_crossdiffusion_ly_50.0_tmax_200.pkl")
-        st.write("- solution_crossdiffusion_ly_90.0_tmax_200.pkl")
-        st.write("- solution_cu_selfdiffusion_ly_50.0_tmax_200.pkl")
-        st.write("- solution_cu_selfdiffusion_ly_90.0_tmax_200.pkl")
-        st.write("- solution_ni_selfdiffusion_ly_50.0_tmax_200.pkl")
+        st.error("No valid solution files found in `pinn_solutions` directory.")
+        st.info("""
+        Expected files (examples):
+        - `solution_crossdiffusion_ly_50.0_tmax_200.pkl`
+        - `solution_crossdiffusion_ly_90.0_tmax_200.pkl`
+        - `solution_cu_selfdiffusion_ly_50.0_tmax_200.pkl`
+        - etc.
+        """)
         return
+
+    # Diffusion type selector
     diff_type = st.sidebar.selectbox(
         "Select Diffusion Type",
         options=DIFFUSION_TYPES,
         format_func=lambda x: x.replace('_', ' ').title()
     )
-    available_lys = sorted(set(s['Ly_parsed'] for s in solutions if s['diffusion_type'] == diff_type))
-    if len(available_lys) < 2:
+
+    # Extract available Ly values for this diffusion type
+    available_lys_raw = sorted({
+        s['Ly_parsed'] for s in solutions 
+        if s['diffusion_type'] == diff_type
+    })
+
+    if len(available_lys_raw) < 2:
         st.sidebar.error(f"Not enough Ly values for {diff_type}. Need at least two.")
-        return
-    ly_values = st.sidebar.multiselect(
-        "Select Two Ly Values for Comparison (μm)",
-        options=available_lys,
-        default=available_lys[:2] if len(available_lys) >= 2 else available_lys,
-        format_func=lambda x: f"{x:.1f}",
+        st.stop()
+
+    # Convert to float once and for all
+    available_lys = [float(ly) for ly in available_lys_raw]
+    ly_display = [f"{ly:.1f} μm" for ly in available_lys]
+
+    # Let user pick two Ly values
+    selected_labels = st.sidebar.multiselect(
+        "Select Two Ly Values for Comparison",
+        options=ly_display,
+        default=ly_display[:2],
         max_selections=2
     )
-    time_index = st.sidebar.slider("Select Time", 0, len(solutions[0]['times'])-1, len(solutions[0]['times'])-1)
-    downsample = st.sidebar.slider("Detail Level", 1, 5, 2)
-    st.sidebar.header("Visualization Options")
-    cu_colormap = st.sidebar.selectbox("Cu Colormap", options=COLORSCALES, index=COLORSCALES.index('viridis'))
-    ni_colormap = st.sidebar.selectbox("Ni Colormap", options=COLORSCALES, index=COLORSCALES.index('magma'))
+
+    if len(selected_labels) != 2:
+        st.sidebar.warning("Please select **exactly two** Ly values.")
+        st.stop()
+
+    # Convert back: "50.0 μm" → 50.0
+    ly_values = [
+        float(label.replace('μm', '').strip()) for label in selected_labels
+    ]
+
+    # Time & detail
+    max_time_idx = len(solutions[0]['times']) - 1
+    time_index = st.sidebar.slider("Select Time Index", 0, max_time_idx, max_time_idx)
+    downsample = st.sidebar.slider("Visualization Detail Level (higher = faster)", 1, 6, 2)
+
+    # === Visualization Options ===
     st.sidebar.header("Plot Customization")
-    font_size = st.sidebar.slider("Font Size", 8, 24, 12)
-    x_tick_interval = st.sidebar.slider("X Tick Interval (μm)", 5, 50, 10)
-    y_tick_interval = st.sidebar.slider("Y Tick Interval (μm)", 5, 50, 10)
+    font_size = st.sidebar.slider("Font Size", 8, 20, 13)
+    x_tick_interval = st.sidebar.slider("X Tick Interval (μm)", 5, 30, 10)
+    y_tick_interval = st.sidebar.slider("Y Tick Interval (μm)", 5, 30, 10)
     show_grid = st.sidebar.checkbox("Show Grid", value=True)
-    grid_thickness = st.sidebar.slider("Grid Line Thickness", 0.1, 2.0, 0.5, step=0.1)
-    border_thickness = st.sidebar.slider("Border Thickness", 0.5, 5.0, 1.0, step=0.5)
-    arrow_thickness = st.sidebar.slider("Arrow Thickness (Flux)", 0.5, 3.0, 1.0, step=0.5)
-    line_thickness = st.sidebar.slider("Line Thickness (Curves)", 1.0, 5.0, 2.0, step=0.5)
-    label_font_size = st.sidebar.slider("Label Font Size", 8, 24, 12)
-    tick_font_size = st.sidebar.slider("Tick Font Size", 6, 18, 10)
-    spine_thickness = st.sidebar.slider("Spine Thickness", 0.5, 3.0, 1.5, step=0.5)
-    color_ly1 = st.sidebar.color_picker("Line Color for First Ly", "#1f77b4")
-    color_ly2 = st.sidebar.color_picker("Line Color for Second Ly", "#ff7f0e")
-    fig_width = st.sidebar.slider("Figure Width", 6, 20, 12)
-    fig_height = st.sidebar.slider("Figure Height", 4, 15, 6)
-    legend_loc = st.sidebar.selectbox("Legend Location", options=['upper left', 'upper right', 'lower left', 'lower right', 'best'], index=1)
-    rotate_ticks = st.sidebar.checkbox("Rotate Tick Labels", value=False)
-    size_multiplier = st.sidebar.slider("Size Multiplier", 1, 10, 5)
-    cu_x_label = st.sidebar.text_input("Cu X Label", "Cu Concentration (mol/cm³)")
-    cu_y_label = st.sidebar.text_input("Cu Y Label", "y (μm)")
-    ni_x_label = st.sidebar.text_input("Ni X Label", "Ni Concentration (mol/cm³)")
-    ni_y_label = st.sidebar.text_input("Ni Y Label", "y (μm)")
-    legend_label1 = st.sidebar.text_input("Legend Label 1", "")
-    legend_label2 = st.sidebar.text_input("Legend Label 2", "")
-    cu_conc_x_label = st.sidebar.text_input("Cu Conc X Label", "Time (s)")
-    cu_conc_y_label = st.sidebar.text_input("Cu Conc Y Label", "Cu Concentration (mol/cm³)")
-    ni_conc_x_label = st.sidebar.text_input("Ni Conc X Label", "Time (s)")
-    ni_conc_y_label = st.sidebar.text_input("Ni Conc Y Label", "Ni Concentration (mol/cm³)")
-    cu_flux_x_label = st.sidebar.text_input("Cu Flux X Label", "Time (s)")
-    cu_flux_y_label = st.sidebar.text_input("Cu Flux Y Label", "Cu Flux Magnitude")
-    ni_flux_x_label = st.sidebar.text_input("Ni Flux X Label", "Time (s)")
-    ni_flux_y_label = st.sidebar.text_input("Ni Flux Y Label", "Ni Flux Magnitude")
-    line_conc_x_tick_interval = st.sidebar.slider("Line Conc X Tick Interval (mol/cm³)", 0.0001, 0.001, 0.0005, step=0.0001, format="%.4f")
-    line_y_tick_interval = st.sidebar.slider("Line Y Tick Interval (μm)", 5, 50, 10)
-    center_time_tick_interval = st.sidebar.slider("Center Time Tick Interval (s)", 10, 100, 50)
-    center_conc_y_tick_interval = st.sidebar.slider("Center Conc Y Tick Interval (mol/cm³)", 0.0001, 0.001, 0.0001, step=0.0001, format="%.4f")
-    center_flux_y_tick_interval = st.sidebar.slider("Center Flux Y Tick Interval", 0.0001, 0.001, 0.0001, step=0.0001, format="%.4f")
+    grid_thickness = st.sidebar.slider("Grid Thickness", 0.1, 2.0, 0.5, 0.1)
+    border_thickness = st.sidebar.slider("Domain Border Thickness", 0.5, 4.0, 1.5, 0.5)
+    arrow_thickness = st.sidebar.slider("Flux Arrow Thickness", 0.5, 3.0, 1.2, 0.1)
+
+    # Colormaps
+    cu_colormap = st.sidebar.selectbox("Cu Colormap", options=COLORSCALES, index=COLORSCALES.index('viridis'))
+    ni_colormap = st.sidebar.selectbox("Ni Colormap", options=COLORSCALES, index=COLORSCALES.index('plasma'))
+
+    # Line plot styling
+    color_ly1 = st.sidebar.color_picker("Color for First Ly", "#2ca02c")
+    color_ly2 = st.sidebar.color_picker("Color for Second Ly", "#d62728")
+    line_thickness = st.sidebar.slider("Line Thickness (Profiles)", 1.5, 4.0, 2.5, 0.5)
+    fig_width = st.sidebar.slider("Matplotlib Figure Width (inches)", 8, 20, 14)
+    fig_height = st.sidebar.slider("Matplotlib Figure Height (inches)", 5, 12, 7)
+
     # Tabs
-    tab1, tab2, tab3, tab4 = st.tabs(["Concentration", "Flux Comparison", "Central Line Comparison", "Center Point Comparison"])
+    tab1, tab2, tab3, tab4 = st.tabs([
+        "Concentration Fields",
+        "Flux Fields Comparison",
+        "Central Line Profiles",
+        "Center Point Evolution"
+    ])
+
     with tab1:
-        st.subheader("Concentration Fields")
+        st.subheader("Concentration Fields (True Physical Aspect Ratio)")
         for ly in ly_values:
-            solution = load_and_interpolate_solution(solutions, diff_type, ly)
-            if solution:
-                plot_solution(solution, time_index, downsample, title_suffix=f"[{diff_type.replace('_', ' ')}, Ly={ly:.1f}]", cu_colormap=cu_colormap, ni_colormap=ni_colormap, font_size=font_size, x_tick_interval=x_tick_interval, y_tick_interval=y_tick_interval, show_grid=show_grid, grid_thickness=grid_thickness, border_thickness=border_thickness, height_multiplier=size_multiplier, width_multiplier=size_multiplier)
+            sol = load_and_interpolate_solution(solutions, diff_type, ly)
+            if sol:
+                st.write(f"**Ly = {ly:.1f} μm**")
+                plot_solution(
+                    sol, time_index, downsample,
+                    title_suffix=f"Ly = {ly:.1f} μm",
+                    cu_colormap=cu_colormap,
+                    ni_colormap=ni_colormap,
+                    font_size=font_size,
+                    x_tick_interval=x_tick_interval,
+                    y_tick_interval=y_tick_interval,
+                    show_grid=show_grid,
+                    grid_thickness=grid_thickness,
+                    border_thickness=border_thickness
+                )
             else:
-                st.error(f"No solution for {diff_type}, Ly={ly:.1f}")
+                st.error(f"Failed to load solution for Ly = {ly:.1f}")
+
     with tab2:
-        st.subheader("Flux Fields Comparison")
-        plot_flux_comparison(solutions, diff_type, ly_values=ly_values, time_index, downsample, font_size=font_size, x_tick_interval=x_tick_interval, y_tick_interval=y_tick_interval, show_grid=show_grid, grid_thickness=grid_thickness, border_thickness=border_thickness, arrow_thickness=arrow_thickness, height_multiplier=size_multiplier, width_multiplier=size_multiplier)
+        st.subheader("Flux Fields Comparison — True Physical Geometry")
+        st.info("60 μm horizontal is **longer** than 50 μm vertical | 90 μm vertical is **taller** than 60 μm horizontal")
+        
+        plot_flux_comparison(
+            solutions=solutions,
+            diff_type=diff_type,
+            ly_values=ly_values,           # ← Now guaranteed floats
+            time_index=time_index,
+            downsample=downsample,
+            font_size=font_size,
+            x_tick_interval=x_tick_interval,
+            y_tick_interval=y_tick_interval,
+            show_grid=show_grid,
+            grid_thickness=grid_thickness,
+            border_thickness=border_thickness,
+            arrow_thickness=arrow_thickness
+        )
+
     with tab3:
-        st.subheader("Central Line Profiles Comparison")
-        plot_line_comparison(solutions, diff_type, ly_values, time_index, line_thickness=line_thickness, label_font_size=label_font_size, tick_font_size=tick_font_size, conc_x_tick_interval=line_conc_x_tick_interval, line_y_tick_interval=line_y_tick_interval, spine_thickness=spine_thickness, color_ly1=color_ly1, color_ly2=color_ly2, fig_width=fig_width, fig_height=fig_height, legend_loc=legend_loc, show_grid=show_grid, cu_x_label=cu_x_label, cu_y_label=cu_y_label, ni_x_label=ni_x_label, ni_y_label=ni_y_label, legend_label1=legend_label1, legend_label2=legend_label2, rotate_ticks=rotate_ticks)
+        st.subheader("Central Vertical Line Profiles (x = 30 μm)")
+        plot_line_comparison(
+            solutions=solutions,
+            diff_type=diff_type,
+            ly_values=ly_values,
+            time_index=time_index,
+            line_thickness=line_thickness,
+            color_ly1=color_ly1,
+            color_ly2=color_ly2,
+            fig_width=fig_width,
+            fig_height=fig_height
+        )
+
     with tab4:
-        st.subheader("Center Point Concentration and Flux Magnitude Comparison")
-        center_concentrations = compute_center_concentrations(solutions, diff_type, ly_values)
-        if center_concentrations:
-            plot_center_concentrations(center_concentrations, diff_type, line_thickness=line_thickness, label_font_size=label_font_size, tick_font_size=tick_font_size, center_time_tick_interval=center_time_tick_interval, center_conc_y_tick_interval=center_conc_y_tick_interval, center_flux_y_tick_interval=center_flux_y_tick_interval, spine_thickness=spine_thickness, color_ly1=color_ly1, color_ly2=color_ly2, fig_width=fig_width, fig_height=fig_height, legend_loc=legend_loc, show_grid=show_grid, cu_conc_x_label=cu_conc_x_label, cu_conc_y_label=cu_conc_y_label, ni_conc_x_label=ni_conc_x_label, ni_conc_y_label=ni_conc_y_label, cu_flux_x_label=cu_flux_x_label, cu_flux_y_label=cu_flux_y_label, ni_flux_x_label=ni_flux_x_label, ni_flux_y_label=ni_flux_y_label, legend_label1=legend_label1, legend_label2=legend_label2, rotate_ticks=rotate_ticks)
+        st.subheader("Center Point (x=30, y=Ly/2) Evolution Over Time")
+        center_data = compute_center_concentrations(solutions, diff_type, ly_values)
+        if center_data:
+            plot_center_concentrations(
+                center_data, diff_type,
+                line_thickness=line_thickness,
+                color_ly1=color_ly1,
+                color_ly2=color_ly2,
+                fig_width=fig_width,
+                fig_height=fig_height
+            )
         else:
-            st.error(f"Could not compute center concentrations for {diff_type}, Ly={ly_values}")
-    # Download
-    st.subheader("Download Data")
+            st.error("Could not extract center point data.")
+
+    # === Download Section ===
+    st.markdown("---")
+    st.subheader("Download Simulation Data")
     for ly in ly_values:
-        solution = load_and_interpolate_solution(solutions, diff_type, ly)
-        if not solution:
+        sol = load_and_interpolate_solution(solutions, diff_type, ly)
+        if not sol:
             continue
-        st.write(f"Data for Ly = {ly:.1f} μm")
+        t_val = sol['times'][time_index]
+        st.write(f"**Ly = {ly:.1f} μm** | t = {t_val:.1f} s")
+
         col1, col2 = st.columns(2)
         with col1:
-            data_bytes, filename = download_data(solution, time_index, all_times=False)
+            csv_bytes, csv_name = download_data(sol, time_index, all_times=False)
             st.download_button(
-                label=f"Download CSV (t={solution['times'][time_index]:.1f}s, Ly={ly:.1f})",
-                data=data_bytes,
-                file_name=filename,
+                label=f"Download CSV (Current Time)",
+                data=csv_bytes,
+                file_name=csv_name,
                 mime="text/csv"
             )
         with col2:
-            data_bytes, filename = download_data(solution, time_index, all_times=True)
+            zip_bytes, zip_name = download_data(sol, time_index, all_times=True)
             st.download_button(
-                label=f"Download ZIP (All Times, Ly={ly:.1f})",
-                data=data_bytes,
-                file_name=filename,
+                label=f"Download ZIP (All Times)",
+                data=zip_bytes,
+                file_name=zip_name,
                 mime="application/zip"
             )
+
+
 if __name__ == "__main__":
     main()
