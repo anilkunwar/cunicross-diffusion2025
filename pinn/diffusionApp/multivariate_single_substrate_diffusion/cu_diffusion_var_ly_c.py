@@ -31,11 +31,11 @@ logger = logging.getLogger(__name__)
 
 # Fixed parameters
 C_CU_TOP = 0.0 #2.85e-3    # Top boundary (y=Ly): Cu-rich
-C_CU_BOTTOM = 2.0e-3      # Bottom (y=0): Cu-poor
+C_CU_BOTTOM = 1.0e-3      # Bottom (y=0): Cu-poor
 #C_CU_BOTTOM = 2.85e-3     # Bottom (y=0): Cu-rich
 C_NI_TOP = 0.0     #  Top (y=Ly): Ni-poor
 C_NI_BOTTOM = 0.0      # Bottom (y=0): Ni-poor
-Ly = 90.0             # Domain height (μm)
+Ly = 30.0             # Domain height (μm)
 Lx = 60.0             # Domain width (μm)
 D11 = 0.006
 D12 = 0.00427
@@ -466,7 +466,7 @@ def generate_and_save_solution(_model, times, param_set, output_dir, _hash):
     }
     
     solution_filename = os.path.join(output_dir, 
-        f"solution_cu_selfdiffusion_ly_{param_set['Ly']:.1f}_tmax_{param_set['t_max']:.1f}.pkl")
+        f"solution_cu_selfdiffusion_ly_{param_set['Ly']:.1f}_c_cu_{param_set['C_CU_BOTTOM']:.1f}_tmax_{param_set['t_max']:.1f}.pkl")
     
     try:
         with open(solution_filename, 'wb') as f:
@@ -599,7 +599,7 @@ def create_zip_file(_files, output_dir, _hash):
                 else:
                     logger.warning(f"File not found for zipping: {file_path}")
         
-        zip_filename = os.path.join(output_dir, f'pinn_solutions_cu_selfdiffusion_ly_{Ly:.1f}.zip')
+        zip_filename = os.path.join(output_dir, f'pinn_solutions_cu_selfdiffusion_ly_{Ly:.1f}_c_cu_{C_CU_BOTTOM:.1f}.zip')
         with open(zip_filename, 'wb') as f:
             f.write(zip_buffer.getvalue())
         logger.info(f"Created ZIP file: {zip_filename}")
@@ -819,7 +819,7 @@ def main():
                 if file_info.get('vtu_file'):
                     files_to_zip.append(file_info['vtu_file'])
                 
-                zip_filename = create_zip_file(files_to_zip, OUTPUT_DIR, (Ly, C_CU_BOTTOM))
+                zip_filename = create_zip_file(files_to_zip, OUTPUT_DIR, (Ly,))
                 
                 if zip_filename and os.path.exists(zip_filename):
                     zip_data = get_file_bytes(zip_filename)
