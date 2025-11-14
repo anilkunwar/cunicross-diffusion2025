@@ -13,27 +13,23 @@ import logging
 import pyvista as pv
 import hashlib
 
-# Ensure output directory exists
-OUTPUT_DIR = '/tmp/pinn_solutions'
-os.makedirs(OUTPUT_DIR, exist_ok=True)
+# === USER INPUTS AT THE TOP ===
+st.set_page_config(page_title="PINN Cu Diffusion", layout="wide")
+st.title("2D PINN Simulation: Cu + Ni Diffusion (Cu bottom BC is user input)")
 
-# Configure Matplotlib
-mpl.rcParams['font.family'] = 'Arial'
-mpl.rcParams['font.size'] = 12
-mpl.rcParams['axes.linewidth'] = 1.5
-mpl.rcParams['xtick.major.width'] = 1.5
-mpl.rcParams['ytick.major.width'] = 1.5
-mpl.rcParams['figure.dpi'] = 300
+# User inputs (Option A style as previously used for Ni; here for Cu bottom)
+col1, col2 = st.columns(2)
+with col1:
+    Ly = st.number_input("Domain Height Ly (μm)", min_value=1.0, max_value=200.0, value=50.0, step=1.0)
+with col2:
+    C_CU_BOTTOM = st.number_input("Bottom Cu Concentration (mol/cc)", min_value=1e-6, max_value=5e-3, value=4.00e-4, format="%.2e")
 
-# Configure logging
-logging.basicConfig(level=logging.INFO, filename=os.path.join(OUTPUT_DIR, 'training.log'), filemode='a')
-logger = logging.getLogger(__name__)
+# Fixed parameters (remaining constants)
+C_CU_TOP = 0.0          # Top boundary (y=Ly): Cu-poor (user only sets bottom)
+C_NI_TOP = 0.0          # Top (y=Ly): Ni-poor
+C_NI_BOTTOM = 0.0       # Bottom (y=0): Ni-poor (kept zero per your request)
 
-# Fixed parameters
-C_CU_TOP = 0.0    # Top boundary (y=Ly): Cu-poor
-C_NI_TOP = 0.0    #  Top (y=Ly): Ni-poor
-C_NI_BOTTOM = 0.0 # Bottom (y=0): Ni-poor
-Lx = 60.0             # Domain width (μm)
+Lx = 60.0               # Domain width (μm)
 D11 = 0.006
 D12 = 0.00427
 D21 = 0.003697
@@ -42,46 +38,65 @@ T_max = 200.0
 epochs = 5000
 lr = 1e-3
 
-# Set random seeds
-torch.manual_seed(42)
-np.random.seed(42)
+# === OUTPUT DIR & LOGGING ===
+OUTPUT_DIR = '/tmp/pinn_solutions'
+os.makedirs(OUTPUT_DIR, exist_ok=True)
 
-# Helper function for cache key
-def get_cache_key(Ly, C_Cu_bottom):
-    key_string = f"Ly_{Ly:.1f}_C_Cu_bottom_{C_Cu_bottom:.2e}"
-    return hashlib.md5(key_string.encode()).hexdigest(), key_string.replace(".", "p").replace("-", "m")
+mpl.rcParams['font.family'] = 'Arial'
+mpl.rcParams['font.size'] = 12
+mpl.rcParams['axes.linewidth'] = 1.5
+mpl.rcParams['xtick.major.width'] = 1.5
+mpl.rcParams['ytick.major.width'] = 1.5
+mpl.rcParams['figure.dpi'] = 300
 
+logging.basicConfig(level=logging.INFO, filename=os.path.join(OUTPUT_DIR, 'training.log'), filemode='a')
+logger = logging.getLogger(__name__)
+
+# === CACHE KEY HELPER ===
+def get_cache_key(*args):
+    key_string = "_".join(str(arg) for arg in args)
+    return hashlib.md5(key_string.encode()).hexdigest()
+
+# === FILENAME FORMATTING HELPER ===
+def format_conc_for_name(conc):
+    # e.g. "4.00e-04"
+    return f"{conc:.2e}".replace("+", "")
+
+CU_BOTTOM_STR = format_conc_for_name(C_CU_BOTTOM)
+
+# === PINN MODEL CLASSES & HELPERS ===
 class SmoothSigmoid(nn.Module):
     def __init__(self, slope=1.0):
         super().__init__()
         self.k = slope
         self.scale = nn.Parameter(torch.tensor(1.0))
-
     def forward(self, x):
         return self.scale * 1 / (1 + torch.exp(-self.k * x))
 
 class DualScaledPINN(nn.Module):
-    def __init__(self, D11, D12, D21, D22, Lx, Ly, T_max, C_Cu_bottom):
+    def __init__(self, D11, D12, D21, D22, Lx, Ly, T_max, C_Cu, C_Ni):
         super().__init__()
         self.D11 = D11
         self.D12 = D12
         self.D21 = D21
         self.D22 = D22
-        self.Lx = Lx
-        self.Ly = Ly
-        self.T_max = T_max
-        self.C_Cu_bottom = C_Cu_bottom
-        
-        self.C_Cu_norm = (C_Cu_bottom - 1.5e-3) / (2.9e-3 - 1.5e-3)
-        self.C_Ni_norm = (0.0 - 4.0e-4) / (1.8e-3 - 4.0e-4)
-        
+        self.Lx = float(Lx)
+        self.Ly = float(Ly)
+        self.T_max = float(T_max)
+        self.C_Cu = float(C_Cu)
+        self.C_Ni = float(C_Ni)
+
+        # normalization placeholders (adapt if you have real ranges)
+        self.C_Cu_norm = (self.C_Cu - 1.5e-3) / (2.9e-3 - 1.5e-3)
+        self.C_Ni_norm = (self.C_Ni - 4.0e-4) / (1.8e-3 - 4.0e-4)
+
         self.shared_net = nn.Sequential(
             nn.Linear(5, 128), nn.Tanh(),
             nn.Linear(128, 128), nn.Tanh(),
             nn.Linear(128, 128), nn.Tanh(),
             nn.Linear(128, 128), nn.Tanh()
         )
-        
+
         self.cu_head = nn.Sequential(
             nn.Linear(128, 1),
             SmoothSigmoid(slope=0.5),
@@ -92,9 +107,11 @@ class DualScaledPINN(nn.Module):
             SmoothSigmoid(slope=0.5),
             nn.Linear(1, 1, bias=False),
         )
-        
-        self.cu_head[2].weight.data.fill_(C_Cu_bottom)
-        self.ni_head[2].weight.data.fill_(0.0)
+
+        # initialize final weights to boundary concentrations
+        with torch.no_grad():
+            self.cu_head[2].weight.fill_(self.C_Cu)
+            self.ni_head[2].weight.fill_(self.C_Ni)
 
     def forward(self, x, y, t):
         x_norm = x / self.Lx
@@ -102,37 +119,37 @@ class DualScaledPINN(nn.Module):
         t_norm = t / self.T_max
         C_Cu_input = torch.full_like(x, self.C_Cu_norm)
         C_Ni_input = torch.full_like(x, self.C_Ni_norm)
-        
+
         inputs = torch.cat([x_norm, y_norm, t_norm, C_Cu_input, C_Ni_input], dim=1)
         features = self.shared_net(inputs)
         cu = self.cu_head(features)
         ni = self.ni_head(features)
         return torch.cat([cu, ni], dim=1)
 
+# === PDE / LOSS HELPERS ===
 def laplacian(c, x, y):
     c_x = torch.autograd.grad(c, x, grad_outputs=torch.ones_like(c),
-                            create_graph=True, retain_graph=True)[0]
+                              create_graph=True, retain_graph=True)[0]
     c_y = torch.autograd.grad(c, y, grad_outputs=torch.ones_like(c),
-                            create_graph=True, retain_graph=True)[0]
-    
+                              create_graph=True, retain_graph=True)[0]
     c_xx = torch.autograd.grad(c_x, x, grad_outputs=torch.ones_like(c_x),
-                             create_graph=True, retain_graph=True)[0]
+                               create_graph=True, retain_graph=True)[0]
     c_yy = torch.autograd.grad(c_y, y, grad_outputs=torch.ones_like(c_y),
-                             create_graph=True, retain_graph=True)[0]
+                               create_graph=True, retain_graph=True)[0]
     return c_xx + c_yy
 
 def physics_loss(model, x, y, t):
     c_pred = model(x, y, t)
     c1_pred, c2_pred = c_pred[:, 0:1], c_pred[:, 1:2]
-    
+
     c1_t = torch.autograd.grad(c1_pred, t, grad_outputs=torch.ones_like(c1_pred),
-                             create_graph=True, retain_graph=True)[0]
+                               create_graph=True, retain_graph=True)[0]
     c2_t = torch.autograd.grad(c2_pred, t, grad_outputs=torch.ones_like(c2_pred),
-                             create_graph=True, retain_graph=True)[0]
-    
+                               create_graph=True, retain_graph=True)[0]
+
     lap_c1 = laplacian(c1_pred, x, y)
     lap_c2 = laplacian(c2_pred, x, y)
-    
+
     residual1 = c1_t - (model.D11 * lap_c1 + model.D12 * lap_c2)
     residual2 = c2_t - (model.D21 * lap_c1 + model.D22 * lap_c2)
     return torch.mean(residual1**2 + residual2**2)
@@ -142,9 +159,9 @@ def boundary_loss_bottom(model):
     x = torch.rand(num, 1, requires_grad=True) * model.Lx
     y = torch.zeros(num, 1, requires_grad=True)
     t = torch.rand(num, 1, requires_grad=True) * model.T_max
-    
+
     c_pred = model(x, y, t)
-    return (torch.mean((c_pred[:, 0] - model.C_Cu_bottom)**2) + 
+    return (torch.mean((c_pred[:, 0] - C_CU_BOTTOM)**2) +
             torch.mean((c_pred[:, 1] - C_NI_BOTTOM)**2))
 
 def boundary_loss_top(model):
@@ -152,9 +169,9 @@ def boundary_loss_top(model):
     x = torch.rand(num, 1, requires_grad=True) * model.Lx
     y = torch.full((num, 1), model.Ly, requires_grad=True)
     t = torch.rand(num, 1, requires_grad=True) * model.T_max
-    
+
     c_pred = model(x, y, t)
-    return (torch.mean((c_pred[:, 0] - C_CU_TOP)**2) + 
+    return (torch.mean((c_pred[:, 0] - C_CU_TOP)**2) +
             torch.mean((c_pred[:, 1] - C_NI_TOP)**2))
 
 def boundary_loss_sides(model):
@@ -163,47 +180,47 @@ def boundary_loss_sides(model):
     y_left = torch.rand(num, 1, requires_grad=True) * model.Ly
     t_left = torch.rand(num, 1, requires_grad=True) * model.T_max
     c_left = model(x_left, y_left, t_left)
-    
+
     x_right = torch.full((num, 1), float(model.Lx), dtype=torch.float32, requires_grad=True)
     y_right = torch.rand(num, 1, requires_grad=True) * model.Ly
     t_right = torch.rand(num, 1, requires_grad=True) * model.T_max
     c_right = model(x_right, y_right, t_right)
-    
+
     try:
         grad_cu_x_left = torch.autograd.grad(
             c_left[:, 0], x_left,
             grad_outputs=torch.ones_like(c_left[:, 0]),
             create_graph=True, retain_graph=True
         )[0]
-        
+
         grad_ni_x_left = torch.autograd.grad(
             c_left[:, 1], x_left,
             grad_outputs=torch.ones_like(c_left[:, 1]),
             create_graph=True, retain_graph=True
         )[0]
-        
+
         grad_cu_x_right = torch.autograd.grad(
             c_right[:, 0], x_right,
             grad_outputs=torch.ones_like(c_right[:, 0]),
             create_graph=True, retain_graph=True
         )[0]
-        
+
         grad_ni_x_right = torch.autograd.grad(
             c_right[:, 1], x_right,
             grad_outputs=torch.ones_like(c_right[:, 1]),
             create_graph=True, retain_graph=True
         )[0]
-        
+
         grad_cu_x_left = grad_cu_x_left if grad_cu_x_left is not None else torch.zeros_like(c_left[:, 0])
         grad_ni_x_left = grad_ni_x_left if grad_ni_x_left is not None else torch.zeros_like(c_left[:, 1])
         grad_cu_x_right = grad_cu_x_right if grad_cu_x_right is not None else torch.zeros_like(c_right[:, 0])
         grad_ni_x_right = grad_ni_x_right if grad_ni_x_right is not None else torch.zeros_like(c_right[:, 1])
-        
-        return (torch.mean(grad_cu_x_left**2) + 
-                torch.mean(grad_ni_x_left**2) + 
-                torch.mean(grad_cu_x_right**2) + 
+
+        return (torch.mean(grad_cu_x_left**2) +
+                torch.mean(grad_ni_x_left**2) +
+                torch.mean(grad_cu_x_right**2) +
                 torch.mean(grad_ni_x_right**2))
-    
+
     except RuntimeError as e:
         logger.error(f"Gradient computation failed in boundary_loss_sides: {str(e)}")
         st.error(f"Gradient computation failed: {str(e)}")
@@ -216,6 +233,7 @@ def initial_loss(model):
     t = torch.zeros(num, 1, requires_grad=True)
     return torch.mean(model(x, y, t)**2)
 
+# === VALIDATION HELPER ===
 def validate_boundary_conditions(solution, tolerance=1e-6):
     results = {
         'top_bc_cu': True,
@@ -228,28 +246,29 @@ def validate_boundary_conditions(solution, tolerance=1e-6):
         'right_flux_ni': True,
         'details': []
     }
+
     t_idx = -1
     c1 = solution['c1_preds'][t_idx]
     c2 = solution['c2_preds'][t_idx]
-    
+
     top_cu_mean = np.mean(c1[:, -1])
     top_ni_mean = np.mean(c2[:, -1])
     if abs(top_cu_mean - C_CU_TOP) > tolerance:
         results['top_bc_cu'] = False
         results['details'].append(f"Top Cu: {top_cu_mean:.2e} != {C_CU_TOP:.2e}")
-    if abs(top_ni_mean - C_NI_TOP) > tolerance:
+    if abs(top_ni_mean - C_NI_BOTTOM) > tolerance:
         results['top_bc_ni'] = False
-        results['details'].append(f"Top Ni: {top_ni_mean:.2e} != {C_NI_TOP:.2e}")
-    
+        results['details'].append(f"Top Ni: {top_ni_mean:.2e} != {C_NI_BOTTOM:.2e}")
+
     bottom_cu_mean = np.mean(c1[:, 0])
     bottom_ni_mean = np.mean(c2[:, 0])
-    if abs(bottom_cu_mean - solution['params']['C_Cu_bottom']) > tolerance:
+    if abs(bottom_cu_mean - C_CU_BOTTOM) > tolerance:
         results['bottom_bc_cu'] = False
-        results['details'].append(f"Bottom Cu: {bottom_cu_mean:.2e} != {solution['params']['C_Cu_bottom']:.2e}")
-    if abs(bottom_ni_mean - C_NI_BOTTOM) > tolerance:
+        results['details'].append(f"Bottom Cu: {bottom_cu_mean:.2e} != {C_CU_BOTTOM:.2e}")
+    if abs(bottom_ni_mean - C_NI_TOP) > tolerance:
         results['bottom_bc_ni'] = False
-        results['details'].append(f"Bottom Ni: {bottom_ni_mean:.2e} != {C_NI_BOTTOM:.2e}")
-    
+        results['details'].append(f"Bottom Ni: {bottom_ni_mean:.2e} != {C_NI_TOP:.2e}")
+
     left_flux_cu = np.mean(np.abs(c1[1, :] - c1[0, :]))
     left_flux_ni = np.mean(np.abs(c2[1, :] - c2[0, :]))
     right_flux_cu = np.mean(np.abs(c1[-1, :] - c1[-2, :]))
@@ -266,7 +285,7 @@ def validate_boundary_conditions(solution, tolerance=1e-6):
     if right_flux_ni > tolerance:
         results['right_flux_ni'] = False
         results['details'].append(f"Right flux Ni: {right_flux_ni:.2e}")
-    
+
     results['valid'] = all([
         results['top_bc_cu'], results['top_bc_ni'],
         results['bottom_bc_cu'], results['bottom_bc_ni'],
@@ -275,118 +294,114 @@ def validate_boundary_conditions(solution, tolerance=1e-6):
     ])
     return results
 
+# === PLOTTING & FILE FUNCTIONS (use Ly & C_CU_BOTTOM in filenames) ===
 @st.cache_data(ttl=3600, show_spinner=False)
-def plot_losses(loss_history, output_dir, file_suffix):
-    epochs = np.array(loss_history['epochs'])
+def plot_losses(loss_history, output_dir, _hash):
+    epochs_arr = np.array(loss_history['epochs'])
     total_loss = np.array(loss_history['total'])
     physics_loss = np.array(loss_history['physics'])
     bottom_loss = np.array(loss_history['bottom'])
     top_loss = np.array(loss_history['top'])
     sides_loss = np.array(loss_history['sides'])
     initial_loss = np.array(loss_history['initial'])
-    
+
     plt.figure(figsize=(10, 6))
-    plt.plot(epochs, total_loss, label='Total Loss', linewidth=2, color='black')
-    plt.plot(epochs, physics_loss, label='Physics Loss', linewidth=1.5, linestyle='--', color='blue')
-    plt.plot(epochs, bottom_loss, label='Bottom Boundary Loss', linewidth=1.5, linestyle='-.', color='red')
-    plt.plot(epochs, top_loss, label='Top Boundary Loss', linewidth=1.5, linestyle=':', color='green')
-    plt.plot(epochs, sides_loss, label='Sides Boundary Loss', linewidth=1.5, linestyle='-', color='purple')
-    plt.plot(epochs, initial_loss, label='Initial Condition Loss', linewidth=1.5, linestyle='--', color='orange')
-    
+    plt.plot(epochs_arr, total_loss, label='Total Loss', linewidth=2)
+    plt.plot(epochs_arr, physics_loss, label='Physics Loss', linewidth=1.5, linestyle='--')
+    plt.plot(epochs_arr, bottom_loss, label='Bottom Boundary Loss', linewidth=1.5, linestyle='-.')
+    plt.plot(epochs_arr, top_loss, label='Top Boundary Loss', linewidth=1.5, linestyle=':')
+    plt.plot(epochs_arr, sides_loss, label='Sides Boundary Loss', linewidth=1.5, linestyle='-')
+    plt.plot(epochs_arr, initial_loss, label='Initial Condition Loss', linewidth=1.5, linestyle='--')
+
     plt.yscale('log')
     plt.xlabel('Epoch')
     plt.ylabel('Loss')
-    plt.title(f'Training Loss for {file_suffix}')
+    plt.title(f'Training Loss (Ly={Ly:.1f} μm, C_Cu_bottom={C_CU_BOTTOM:.2e})')
     plt.grid(True, which="both", ls="--", alpha=0.7)
     plt.legend(loc='upper right')
     plt.tight_layout()
-    
+
     os.makedirs(output_dir, exist_ok=True)
-    plot_filename = os.path.join(output_dir, f'loss_plot_{file_suffix}.png')
+    plot_filename = os.path.join(output_dir, f'loss_plot_Ly{Ly:.1f}_CuBottom{CU_BOTTOM_STR}.png')
     plt.savefig(plot_filename, dpi=300, bbox_inches='tight')
     plt.close()
-    logger.info(f"Saved loss plot to {plot_filename}")
+    logger.info(f"Saved loss plot to %s", plot_filename)
     return plot_filename
 
 @st.cache_data(ttl=3600, show_spinner=False)
-def plot_2d_profiles(solution, time_idx, output_dir, file_suffix):
+def plot_2d_profiles(solution, time_idx, output_dir, _hash):
     t_val = solution['times'][time_idx]
-    
+
     plt.figure(figsize=(12, 5))
     plt.subplot(1, 2, 1)
-    im1 = plt.imshow(solution['c1_preds'][time_idx], origin='lower', 
-                     extent=[0, Lx, 0, solution['params']['Ly']], cmap='viridis',
-                     vmin=0, vmax=solution['params']['C_Cu_bottom'])
+    im1 = plt.imshow(solution['c1_preds'][time_idx], origin='lower',
+                     extent=[0, Lx, 0, Ly], cmap='viridis',
+                     vmin=0, vmax=max(1e-8, C_CU_TOP))
     plt.title(f'Cu Concentration (t={t_val:.1f} s)')
     plt.xlabel('x (μm)')
     plt.ylabel('y (μm)')
     plt.grid(True, alpha=0.3)
     plt.colorbar(im1, label='Cu Conc. (mol/cc)', format='%.1e')
-    
+
     plt.subplot(1, 2, 2)
-    im2 = plt.imshow(solution['c2_preds'][time_idx], origin='lower', 
-                     extent=[0, Lx, 0, solution['params']['Ly']], cmap='magma',
-                     vmin=0, vmax=0.0)
+    im2 = plt.imshow(solution['c2_preds'][time_idx], origin='lower',
+                     extent=[0, Lx, 0, Ly], cmap='magma',
+                     vmin=0, vmax=max(1e-8, C_NI_TOP))
     plt.title(f'Ni Concentration (t={t_val:.1f} s)')
     plt.xlabel('x (μm)')
     plt.ylabel('y (μm)')
     plt.grid(True, alpha=0.3)
     plt.colorbar(im2, label='Ni Conc. (mol/cc)', format='%.1e')
-    
-    plt.suptitle(f'2D Profiles ({file_suffix})', fontsize=14)
+
+    plt.suptitle(f'2D Profiles (Ly={Ly:.0f} μm, C_Cu_bottom={C_CU_BOTTOM:.2e})', fontsize=14)
     plt.tight_layout(rect=[0, 0, 1, 0.95])
-    
+
     os.makedirs(output_dir, exist_ok=True)
-    plot_filename = os.path.join(output_dir, f'profile_{file_suffix}_t_{t_val:.1f}.png')
+    plot_filename = os.path.join(output_dir, f'profile_Ly{Ly:.1f}_CuBottom{CU_BOTTOM_STR}_t{t_val:.1f}.png')
     plt.savefig(plot_filename, dpi=300, bbox_inches='tight')
     plt.close()
-    logger.info(f"Saved profile plot to {plot_filename}")
+    logger.info(f"Saved profile plot to %s", plot_filename)
     return plot_filename
 
+# === TRAINING / EVALUATION FUNCTIONS ===
 @st.cache_resource(ttl=3600, show_spinner=False)
-def train_model(D11, D12, D21, D22, Lx, Ly, T_max, C_Cu_bottom, epochs, lr, output_dir, _hash):
+def train_model(D11, D12, D21, D22, Lx_in, Ly_in, T_max_in, C_Cu, C_Ni, epochs_in, lr_in, output_dir, _hash):
     os.makedirs(output_dir, exist_ok=True)
-    logger.info(f"Starting training with Ly={Ly}, C_Cu_bottom={C_Cu_bottom}, epochs={epochs}, lr={lr}")
-    model = DualScaledPINN(D11, D12, D21, D22, Lx, Ly, T_max, C_Cu_bottom)
-    optimizer = optim.Adam(model.parameters(), lr=lr)
-    
-    x_pde = torch.rand(1000, 1, requires_grad=True) * Lx
-    y_pde = torch.rand(1000, 1, requires_grad=True) * Ly
-    t_pde = torch.rand(1000, 1, requires_grad=True) * T_max
-    
+    logger.info("Starting training with Ly=%s, C_Cu=%s, epochs=%s, lr=%s", Ly_in, C_Cu, epochs_in, lr_in)
+    model = DualScaledPINN(D11, D12, D21, D22, Lx_in, Ly_in, T_max_in, C_Cu, C_Ni)
+    optimizer = optim.Adam(model.parameters(), lr=lr_in)
+
+    x_pde = torch.rand(1000, 1, requires_grad=True) * Lx_in
+    y_pde = torch.rand(1000, 1, requires_grad=True) * Ly_in
+    t_pde = torch.rand(1000, 1, requires_grad=True) * T_max_in
+
     loss_history = {
-        'epochs': [],
-        'total': [],
-        'physics': [],
-        'bottom': [],
-        'top': [],
-        'sides': [],
-        'initial': []
+        'epochs': [], 'total': [], 'physics': [], 'bottom': [], 'top': [], 'sides': [], 'initial': []
     }
-    
-    # Removed st.progress and status_text to avoid crash in cached function
-    
-    for epoch in range(epochs):
+
+    progress = st.progress(0)
+    status_text = st.empty()
+
+    for epoch in range(epochs_in):
         optimizer.zero_grad()
-        
         phys_loss = physics_loss(model, x_pde, y_pde, t_pde)
         bot_loss = boundary_loss_bottom(model)
         top_loss = boundary_loss_top(model)
         side_loss = boundary_loss_sides(model)
         init_loss = initial_loss(model)
-        
-        loss = (10 * phys_loss + 100 * bot_loss + 100 * top_loss + 
+
+        loss = (10 * phys_loss + 100 * bot_loss + 100 * top_loss +
                 100 * side_loss + 100 * init_loss)
-        
+
         try:
             loss.backward(retain_graph=True)
             torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
             optimizer.step()
         except RuntimeError as e:
-            logger.error(f"Backward pass failed at epoch {epoch + 1}: {str(e)}")
+            logger.error("Backward pass failed at epoch %s: %s", epoch + 1, str(e))
             st.error(f"Training failed at epoch {epoch + 1}: {str(e)}")
             return None, None
-        
+
         if (epoch + 1) % 100 == 0:
             loss_history['epochs'].append(epoch + 1)
             loss_history['total'].append(loss.item())
@@ -395,96 +410,89 @@ def train_model(D11, D12, D21, D22, Lx, Ly, T_max, C_Cu_bottom, epochs, lr, outp
             loss_history['top'].append(100 * top_loss.item())
             loss_history['sides'].append(100 * side_loss.item())
             loss_history['initial'].append(100 * init_loss.item())
-            
-            logger.info(
-                f"Epoch {epoch + 1}/{epochs}, Total Loss: {loss.item():.6f}, "
-                f"Physics: {10 * phys_loss.item():.6f}, Bottom: {100 * bot_loss.item():.6f}, "
-                f"Top: {100 * top_loss.item():.6f}, Sides: {100 * side_loss.item():.6f}, "
-                f"Initial: {100 * init_loss.item():.6f}"
-            )
-    
+
+            progress.progress((epoch + 1) / epochs_in)
+            status_text.text(f"Epoch {epoch + 1}/{epochs_in}, Total Loss: {loss.item():.6f}")
+
+    progress.progress(1.0)
+    status_text.text("Training completed!")
     logger.info("Training completed successfully")
-    
     return model, loss_history
 
 @st.cache_data(ttl=3600, show_spinner=False)
-def evaluate_model(_model, times, Lx, Ly, D11, D12, D21, D22, _hash):
-    x = torch.linspace(0, Lx, 50, requires_grad=False)
-    y = torch.linspace(0, Ly, 50, requires_grad=False)
+def evaluate_model(_model, times, Lx_eval, Ly_eval, D11_eval, D12_eval, D21_eval, D22_eval, _hash):
+    x = torch.linspace(0, Lx_eval, 50, requires_grad=False)
+    y = torch.linspace(0, Ly_eval, 50, requires_grad=False)
     X, Y = torch.meshgrid(x, y, indexing='ij')
-    
+
     c1_preds, c2_preds = [], []
     for t_val in times:
         t = torch.full((X.numel(), 1), t_val, requires_grad=False)
         c_pred = _model(X.reshape(-1,1), Y.reshape(-1,1), t)
         try:
-            c1 = c_pred[:,0].detach().numpy().reshape(50,50).T  # [y,x] for matplotlib
-            c2 = c_pred[:,1].detach().numpy().reshape(50,50).T  # [y,x] for matplotlib
+            c1 = c_pred[:,0].detach().numpy().reshape(50,50).T
+            c2 = c_pred[:,1].detach().numpy().reshape(50,50).T
         except RuntimeError as e:
-            logger.error(f"Failed to convert concentration predictions to NumPy: {str(e)}")
+            logger.error("Failed to convert concentration predictions to NumPy: %s", str(e))
             raise e
-        
+
         c1_preds.append(c1)
         c2_preds.append(c2)
-    
+
     return X.numpy(), Y.numpy(), c1_preds, c2_preds
 
 @st.cache_data(ttl=3600, show_spinner=False)
-def generate_and_save_solution(_model, times, param_set, output_dir, file_suffix):
+def generate_and_save_solution(_model, times, param_set, output_dir, _hash):
     os.makedirs(output_dir, exist_ok=True)
     if _model is None:
         logger.error("Model is None, cannot generate solution")
         return None, None
-    
+
     try:
         X, Y, c1_preds, c2_preds = evaluate_model(
             _model, times, param_set['Lx'], param_set['Ly'],
-            param_set['D11'], param_set['D12'], param_set['D21'], param_set['D22'], file_suffix
+            param_set['D11'], param_set['D12'], param_set['D21'], param_set['D22'], _hash
         )
     except RuntimeError as e:
-        logger.error(f"evaluate_model failed: {str(e)}")
+        logger.error("evaluate_model failed: %s", str(e))
         st.error(f"evaluate_model failed: {str(e)}")
         return None, None
-    
+
     solution = {
         'params': param_set,
-        'X': X,
-        'Y': Y,
-        'c1_preds': c1_preds,
-        'c2_preds': c2_preds,
+        'X': X, 'Y': Y,
+        'c1_preds': c1_preds, 'c2_preds': c2_preds,
         'times': times,
         'loss_history': {},
-        'orientation_note': 'c1_preds and c2_preds are arrays of shape (50,50) where rows (i) correspond to y-coordinates and columns (j) correspond to x-coordinates for matplotlib.'
+        'orientation_note': 'c1_preds and c2_preds are arrays shape (50,50) rows->y, cols->x.'
     }
-    
-    solution_filename = os.path.join(output_dir, 
-        f"solution_cu_selfdiffusion_{file_suffix}_tmax_{param_set['t_max']:.1f}.pkl")
-    
+
+    solution_filename = os.path.join(output_dir, f"solution_cu_selfdiffusion_Ly{param_set['Ly']:.1f}_CuBottom{CU_BOTTOM_STR}.pkl")
+
     try:
         with open(solution_filename, 'wb') as f:
             pickle.dump(solution, f)
-        logger.info(f"Saved solution to {solution_filename}")
+        logger.info("Saved solution to %s", solution_filename)
     except Exception as e:
-        logger.error(f"Failed to save solution: {str(e)}")
+        logger.error("Failed to save solution: %s", str(e))
         st.error(f"Failed to save solution: {str(e)}")
         return None, None
-    
+
     return solution_filename, solution
 
 @st.cache_data(ttl=3600, show_spinner=False)
-def generate_vts_time_series(solution, output_dir, file_suffix):
+def generate_vts_time_series(solution, output_dir, _hash):
     os.makedirs(output_dir, exist_ok=True)
     Lx = solution['params']['Lx']
     Ly = solution['params']['Ly']
     times = solution['times']
-    
     vts_files = []
     nx, ny = 50, 50
-    
+
     for t_idx, t_val in enumerate(times):
-        c1_xy = solution['c1_preds'][t_idx].T  # [x,y] for VTK
-        c2_xy = solution['c2_preds'][t_idx].T  # [x,y] for VTK
-        
+        c1_xy = solution['c1_preds'][t_idx].T
+        c2_xy = solution['c2_preds'][t_idx].T
+
         x = np.linspace(0, Lx, nx)
         y = np.linspace(0, Ly, ny)
         z = np.zeros((nx, ny))
@@ -493,113 +501,91 @@ def generate_vts_time_series(solution, output_dir, file_suffix):
         points = np.stack([X.ravel(), Y.ravel(), z.ravel()], axis=1)
         grid.points = points
         grid.dimensions = (nx, ny, 1)
-        
         grid.point_data['Cu_Concentration'] = c1_xy.ravel()
         grid.point_data['Ni_Concentration'] = c2_xy.ravel()
-        
-        vts_filename = os.path.join(output_dir, 
-            f'concentration_{file_suffix}_t_{t_val:.1f}.vts')
-        
+
+        vts_filename = os.path.join(output_dir, f'concentration_Ly{Ly:.1f}_CuBottom{CU_BOTTOM_STR}_t{t_val:.1f}.vts')
         try:
             grid.save(vts_filename)
             vts_files.append((t_val, vts_filename))
-            logger.info(f"Saved VTS file to {vts_filename}")
+            logger.info("Saved VTS %s", vts_filename)
         except Exception as e:
-            logger.error(f"Failed to save VTS file for t={t_val:.1f}: {str(e)}")
-            st.error(f"Failed to save VTS file for t={t_val:.1f}: {str(e)}")
-    
-    pvd_filename = os.path.join(output_dir, 
-        f'concentration_time_series_{file_suffix}.pvd')
-    
+            logger.error("Failed to save VTS for t=%s: %s", t_val, str(e))
+            st.error(f"Failed to save VTS for t={t_val:.1f}: {str(e)}")
+
+    pvd_filename = os.path.join(output_dir, f'concentration_time_series_Ly{Ly:.1f}_CuBottom{CU_BOTTOM_STR}.pvd')
+
     try:
-        pvd_content = ['<?xml version="1.0"?>']
-        pvd_content.append('<VTKFile type="Collection" version="0.1">')
-        pvd_content.append('  <Collection>')
-        
+        pvd_content = ['<?xml version="1.0"?>', '<VTKFile type="Collection" version="0.1">', ' <Collection>']
         for t_val, vts_file in vts_files:
             relative_path = os.path.basename(vts_file)
-            pvd_content.append(f'    <DataSet timestep="{t_val}" group="" part="0" file="{relative_path}"/>')
-        
-        pvd_content.append('  </Collection>')
+            pvd_content.append(f' <DataSet timestep="{t_val}" group="" part="0" file="{relative_path}"/>')
+        pvd_content.append(' </Collection>')
         pvd_content.append('</VTKFile>')
-        
         with open(pvd_filename, 'w') as f:
             f.write('\n'.join(pvd_content))
-        
-        logger.info(f"Saved PVD collection file to {pvd_filename}")
+        logger.info("Saved PVD to %s", pvd_filename)
     except Exception as e:
-        logger.error(f"Failed to create PVD file: {str(e)}")
+        logger.error("Failed to create PVD file: %s", str(e))
         st.error(f"Failed to create PVD file: {str(e)}")
         pvd_filename = None
-    
+
     return vts_files, pvd_filename
 
 @st.cache_data(ttl=3600, show_spinner=False)
-def generate_vtu_time_series(solution, output_dir, file_suffix):
+def generate_vtu_time_series(solution, output_dir, _hash):
     os.makedirs(output_dir, exist_ok=True)
-    Lx = solution['params']['Lx']
-    Ly = solution['params']['Ly']
-    times = solution['times']
-    
     nx, ny = 50, 50
-    x = np.linspace(0, Lx, nx)
-    y = np.linspace(0, Ly, ny)
+    x = np.linspace(0, solution['params']['Lx'], nx)
+    y = np.linspace(0, solution['params']['Ly'], ny)
     z = np.zeros((nx, ny))
     X, Y = np.meshgrid(x, y, indexing='ij')
     points = np.stack([X.ravel(), Y.ravel(), z.ravel()], axis=1)
-    
-    # Define cells (quads for a 2D grid)
+
     cells = []
     cell_types = []
     for j in range(ny - 1):
         for i in range(nx - 1):
             idx = i + j * nx
-            cell = [4, idx, idx + 1, idx + nx + 1, idx + nx]  # Quad: bottom-left, bottom-right, top-right, top-left
+            cell = [4, idx, idx + 1, idx + nx + 1, idx + nx]
             cells.extend(cell)
             cell_types.append(pv.CellType.QUAD)
-    
+
     grid = pv.UnstructuredGrid(cells, cell_types, points)
-    
-    for t_idx, t_val in enumerate(times):
-        c1_xy = solution['c1_preds'][t_idx].T  # [x,y] for VTK
-        c2_xy = solution['c2_preds'][t_idx].T  # [x,y] for VTK
+
+    for t_idx, t_val in enumerate(solution['times']):
+        c1_xy = solution['c1_preds'][t_idx].T
+        c2_xy = solution['c2_preds'][t_idx].T
         grid.point_data[f'Cu_Concentration_t{t_val:.1f}'] = c1_xy.ravel()
         grid.point_data[f'Ni_Concentration_t{t_val:.1f}'] = c2_xy.ravel()
-    
-    vtu_filename = os.path.join(output_dir, 
-        f'concentration_time_series_{file_suffix}.vtu')
-    
+
+    vtu_filename = os.path.join(output_dir, f'concentration_time_series_Ly{Ly:.1f}_CuBottom{CU_BOTTOM_STR}.vtu')
     try:
         grid.save(vtu_filename)
-        logger.info(f"Saved VTU file to {vtu_filename}")
+        logger.info("Saved VTU to %s", vtu_filename)
     except Exception as e:
-        logger.error(f"Failed to save VTU file: {str(e)}")
-        st.error(f"Failed to save VTU file: {str(e)}")
+        logger.error("Failed to save VTU: %s", str(e))
+        st.error(f"Failed to save VTU: {str(e)}")
         return None
-    
+
     return vtu_filename
 
 @st.cache_data(ttl=3600, show_spinner=False)
-def create_zip_file(_files, output_dir, file_suffix):
+def create_zip_file(_files, output_dir, _hash):
     os.makedirs(output_dir, exist_ok=True)
     zip_buffer = io.BytesIO()
-    try:
-        with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zip_file:
-            for file_path in _files:
-                if os.path.exists(file_path):
-                    zip_file.write(file_path, os.path.basename(file_path))
-                else:
-                    logger.warning(f"File not found for zipping: {file_path}")
-        
-        zip_filename = os.path.join(output_dir, f'pinn_solutions_cu_selfdiffusion_{file_suffix}.zip')
-        with open(zip_filename, 'wb') as f:
-            f.write(zip_buffer.getvalue())
-        logger.info(f"Created ZIP file: {zip_filename}")
-        return zip_filename
-    except Exception as e:
-        logger.error(f"Failed to create ZIP file: {str(e)}")
-        st.error(f"Failed to create ZIP file: {str(e)}")
-        return None
+    with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zip_file:
+        for file_path in _files:
+            if os.path.exists(file_path):
+                zip_file.write(file_path, os.path.basename(file_path))
+            else:
+                logger.warning("File not found for zipping: %s", file_path)
+
+    zip_filename = os.path.join(output_dir, f'pinn_solution_cu_Ly{Ly:.1f}_CuBottom{CU_BOTTOM_STR}.zip')
+    with open(zip_filename, 'wb') as f:
+        f.write(zip_buffer.getvalue())
+    logger.info("Created ZIP file: %s", zip_filename)
+    return zip_filename
 
 @st.cache_data(ttl=3600, show_spinner=False)
 def get_file_bytes(file_path):
@@ -608,44 +594,7 @@ def get_file_bytes(file_path):
             return f.read()
     return None
 
-@st.cache_data(ttl=3600, show_spinner=False)
-def train_and_generate_solution(_model, loss_history, output_dir, file_suffix, Ly, C_Cu_bottom):
-    os.makedirs(output_dir, exist_ok=True)
-    
-    if _model is None or loss_history is None:
-        return None, None
-    
-    times = np.linspace(0, T_max, 50)
-    param_set = {
-        'D11': D11, 'D12': D12, 'D21': D21, 'D22': D22,
-        'Lx': Lx, 'Ly': Ly, 't_max': T_max,
-        'C_Cu_bottom': C_Cu_bottom,
-        'epochs': epochs
-    }
-    
-    solution_filename, solution = generate_and_save_solution(
-        _model, times, param_set, output_dir, file_suffix
-    )
-    
-    if solution is None:
-        return None, None
-    
-    solution['loss_history'] = loss_history
-    
-    loss_plot_filename = plot_losses(loss_history, output_dir, file_suffix)
-    profile_plot_filename = plot_2d_profiles(solution, -1, output_dir, file_suffix)
-    vts_files, pvd_file = generate_vts_time_series(solution, output_dir, file_suffix)
-    vtu_file = generate_vtu_time_series(solution, output_dir, file_suffix)
-    
-    return solution, {
-        'solution_file': solution_filename,
-        'loss_plot': loss_plot_filename,
-        'profile_plot': profile_plot_filename,
-        'vts_files': vts_files,
-        'pvd_file': pvd_file,
-        'vtu_file': vtu_file
-    }
-
+# === SESSION STATE HELPERS ===
 def initialize_session_state():
     if 'training_complete' not in st.session_state:
         st.session_state.training_complete = False
@@ -665,19 +614,11 @@ def store_solution_in_session(_hash_key, solution, file_info, model):
     st.session_state.model = model
     st.session_state.current_hash = _hash_key
 
+# === MAIN ===
 def main():
-    st.title("2D PINN Simulation: Cu Self-Diffusion in Liquid Solder")
-    
-    # User inputs
-    Ly = st.sidebar.number_input("Domain height Ly (μm)", min_value=10.0, max_value=200.0, value=90.0, step=10.0)
-    C_Cu_bottom = st.sidebar.number_input("Cu concentration at bottom (mol/cc)", min_value=1e-6, max_value=3e-3, value=1.59e-3, format="%.2e")
-    
-    _hash, file_suffix = get_cache_key(Ly, C_Cu_bottom)
-    
     initialize_session_state()
-    current_hash = _hash
-    
-    # Check for cached results
+    current_hash = get_cache_key(Ly, C_CU_BOTTOM, epochs, lr)
+
     if st.session_state.training_complete and st.session_state.current_hash == current_hash:
         solution = st.session_state.solution_data
         file_info = st.session_state.file_data
@@ -688,37 +629,53 @@ def main():
         file_info = {}
         model = None
         st.warning("No results available. Click 'Run Simulation' to generate results.")
-    
-    # Run simulation only when button is clicked
+
     if st.button("Run Simulation"):
         try:
-            progress = st.progress(0)
-            status_text = st.empty()
             with st.spinner("Running simulation..."):
                 model, loss_history = train_model(
-                    D11, D12, D21, D22, Lx, Ly, T_max, C_Cu_bottom, epochs, lr, OUTPUT_DIR, current_hash
+                    D11, D12, D21, D22, Lx, Ly, T_max, C_CU_BOTTOM, C_NI_BOTTOM, epochs, lr, OUTPUT_DIR, current_hash
                 )
-                
                 if model is None or loss_history is None:
                     st.error("Simulation failed!")
                     return
-                
-                solution, file_info = train_and_generate_solution(
-                    model, loss_history, OUTPUT_DIR, file_suffix, Ly, C_Cu_bottom
-                )
-                
+
+                times = np.linspace(0, T_max, 50)
+                param_set = {
+                    'D11': D11, 'D12': D12, 'D21': D21, 'D22': D22,
+                    'Lx': Lx, 'Ly': Ly, 't_max': T_max,
+                    'C_Cu': C_CU_BOTTOM, 'C_Ni': C_NI_BOTTOM,
+                    'epochs': epochs
+                }
+
+                solution_filename, solution = generate_and_save_solution(model, times, param_set, OUTPUT_DIR, current_hash)
                 if solution is None:
                     st.error("Solution generation failed!")
                     return
-                
+
+                solution['loss_history'] = loss_history
+                loss_plot_filename = plot_losses(loss_history, OUTPUT_DIR, current_hash)
+                profile_plot_filename = plot_2d_profiles(solution, -1, OUTPUT_DIR, current_hash)
+                vts_files, pvd_file = generate_vts_time_series(solution, OUTPUT_DIR, current_hash)
+                vtu_file = generate_vtu_time_series(solution, OUTPUT_DIR, current_hash)
+
+                file_info = {
+                    'solution_file': solution_filename,
+                    'loss_plot': loss_plot_filename,
+                    'profile_plot': profile_plot_filename,
+                    'vts_files': vts_files,
+                    'pvd_file': pvd_file,
+                    'vtu_file': vtu_file
+                }
+
                 store_solution_in_session(current_hash, solution, file_info, model)
                 st.success("Simulation completed successfully!")
-        
+
         except Exception as e:
-            logger.error(f"Simulation failed: {str(e)}")
+            logger.error("Simulation failed: %s", str(e))
             st.error(f"Simulation failed: {str(e)}")
             return
-    
+
     # Display results only if available
     if solution and file_info:
         with st.expander("Training Logs", expanded=False):
@@ -726,109 +683,72 @@ def main():
             if os.path.exists(log_file):
                 with open(log_file, 'r') as f:
                     st.text(f.read())
-        
+
         st.subheader("Training Loss")
-        st.image(file_info['loss_plot'])
-        
+        if file_info.get('loss_plot') and os.path.exists(file_info['loss_plot']):
+            st.image(file_info['loss_plot'])
+
+        st.subheader("2D Concentration Profiles (Final Time Step)")
+        if file_info.get('profile_plot') and os.path.exists(file_info['profile_plot']):
+            st.image(file_info['profile_plot'])
+
         st.subheader("Boundary Condition Validation")
         bc_results = validate_boundary_conditions(solution)
-        st.metric("Boundary Conditions", "✓" if bc_results['valid'] else "✗", 
-                f"{len(bc_results['details'])} issues")
+        st.metric("Boundary Conditions", "✓" if bc_results['valid'] else "✗", f"{len(bc_results['details'])} issues")
         with st.expander("Boundary Condition Details"):
             for issue in bc_results['details']:
                 st.write(f"• {issue}")
-        
-        st.subheader("2D Concentration Profiles (Final Time Step)")
-        st.image(file_info['profile_plot'])
-        
-        st.subheader("Download Files")
-        solution_filename = file_info.get('solution_file')
-        if solution_filename and os.path.exists(solution_filename):
-            solution_data = get_file_bytes(solution_filename)
-            if solution_data:
-                st.download_button(
-                    label="Download Solution (.pkl)",
-                    data=solution_data,
-                    file_name=os.path.basename(solution_filename),
-                    mime="application/octet-stream"
-                )
-        
-        for file_type, file_path in [
-            ("Loss Plot", file_info['loss_plot']),
-            ("2D Profile Plot", file_info['profile_plot'])
-        ]:
-            if os.path.exists(file_path):
-                file_data = get_file_bytes(file_path)
-                if file_data:
-                    st.download_button(
-                        label=f"Download {file_type} (.png)",
-                        data=file_data,
-                        file_name=os.path.basename(file_path),
-                        mime="image/png"
-                    )
-        
-        st.subheader("Download Time Series Files")
-        if file_info.get('pvd_file') and os.path.exists(file_info['pvd_file']):
-            pvd_data = get_file_bytes(file_info['pvd_file'])
-            if pvd_data:
-                st.download_button(
-                    label="Download VTS Time Series (.pvd + .vts)",
-                    data=pvd_data,
-                    file_name=os.path.basename(file_info['pvd_file']),
-                    mime="application/xml",
-                    help="Download the PVD collection file. Keep all .vts files in the same folder."
-                )
-        
-        if file_info.get('vtu_file') and os.path.exists(file_info['vtu_file']):
-            vtu_data = get_file_bytes(file_info['vtu_file'])
-            if vtu_data:
-                st.download_button(
-                    label="Download VTU Time Series (.vtu)",
-                    data=vtu_data,
-                    file_name=os.path.basename(file_info['vtu_file']),
-                    mime="application/xml",
-                    help="Single VTU file with all timesteps."
-                )
-        
-        st.subheader("Download Individual Time Steps")
-        for t_val, vts_file in file_info.get('vts_files', []):
-            if os.path.exists(vts_file):
-                vts_data = get_file_bytes(vts_file)
-                if vts_data:
-                    st.download_button(
-                        label=f"Download Time = {t_val:.1f} s (.vts)",
-                        data=vts_data,
-                        file_name=os.path.basename(vts_file),
-                        mime="application/xml"
-                    )
-        
+
         st.subheader("Download All Files as ZIP")
         if st.button("Generate ZIP File"):
             with st.spinner("Creating ZIP file..."):
-                files_to_zip = [
-                    file_info['loss_plot'], 
-                    file_info['profile_plot']
-                ]
-                if solution_filename:
-                    files_to_zip.append(solution_filename)
-                for _, vts_file in file_info.get('vts_files', []):
-                    files_to_zip.append(vts_file)
+                files_to_zip = []
+                if file_info.get('solution_file'):
+                    files_to_zip.append(file_info['solution_file'])
+                if file_info.get('loss_plot'):
+                    files_to_zip.append(file_info['loss_plot'])
+                if file_info.get('profile_plot'):
+                    files_to_zip.append(file_info['profile_plot'])
                 if file_info.get('pvd_file'):
                     files_to_zip.append(file_info['pvd_file'])
                 if file_info.get('vtu_file'):
                     files_to_zip.append(file_info['vtu_file'])
-                
-                zip_filename = create_zip_file(files_to_zip, OUTPUT_DIR, file_suffix)
-                
+                for v in file_info.get('vts_files', []):
+                    files_to_zip.append(v[1])
+
+                zip_filename = create_zip_file(files_to_zip, OUTPUT_DIR, current_hash)
                 if zip_filename and os.path.exists(zip_filename):
                     zip_data = get_file_bytes(zip_filename)
-                    if zip_data:
-                        st.download_button(
-                            label="Download All Files (.zip)",
-                            data=zip_data,
-                            file_name=os.path.basename(zip_filename),
-                            mime="application/zip"
-                        )
+                    st.download_button(
+                        label=f"Download All (Ly={Ly:.1f} μm, Cu={C_CU_BOTTOM:.2e})",
+                        data=zip_data,
+                        file_name=os.path.basename(zip_filename),
+                        mime="application/zip"
+                    )
+
+        # Individual downloads
+        for label, key in [
+            ("Solution (.pkl)", 'solution_file'),
+            ("Loss Plot (.png)", 'loss_plot'),
+            ("Profile Plot (.png)", 'profile_plot'),
+            ("PVD Collection (.pvd)", 'pvd_file'),
+            ("VTU Time Series (.vtu)", 'vtu_file')
+        ]:
+            path = file_info.get(key)
+            if path and os.path.exists(path):
+                data = get_file_bytes(path)
+                mime = "application/octet-stream"
+                if path.endswith('.png'):
+                    mime = "image/png"
+                elif path.endswith('.pvd') or path.endswith('.vtu') or path.endswith('.vts'):
+                    mime = "application/xml"
+                st.download_button(f"Download {label}", data=data, file_name=os.path.basename(path), mime=mime)
+
+        st.subheader("Individual Time Steps (.vts)")
+        for t_val, vts_file in file_info.get('vts_files', []):
+            if os.path.exists(vts_file):
+                data = get_file_bytes(vts_file)
+                st.download_button(f"t = {t_val:.1f} s (.vts)", data=data, file_name=os.path.basename(vts_file))
 
 if __name__ == "__main__":
     main()
