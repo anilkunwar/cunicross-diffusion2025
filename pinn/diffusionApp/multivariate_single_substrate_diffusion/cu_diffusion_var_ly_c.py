@@ -466,7 +466,7 @@ def generate_and_save_solution(_model, times, param_set, output_dir, _hash):
     }
     
     solution_filename = os.path.join(output_dir, 
-        f"solution_cu_selfdiffusion_ly_{param_set['Ly']:.1f}_c_cu_{param_set['C_CU_BOTTOM']:.1e}_tmax_{param_set['t_max']:.1f}.pkl")
+        f"solution_cu_selfdiffusion_ly_{param_set['Ly']:.1f}_tmax_{param_set['t_max']:.1f}.pkl")
     
     try:
         with open(solution_filename, 'wb') as f:
@@ -599,7 +599,7 @@ def create_zip_file(_files, output_dir, _hash):
                 else:
                     logger.warning(f"File not found for zipping: {file_path}")
         
-        zip_filename = os.path.join(output_dir, f'pinn_solutions_cu_selfdiffusion_ly_{Ly:.1f}_c_cu_{C_CU_BOTTOM:.1e}.zip')
+        zip_filename = os.path.join(output_dir, f'pinn_solutions_cu_selfdiffusion_ly_{Ly:.1f}.zip')
         with open(zip_filename, 'wb') as f:
             f.write(zip_buffer.getvalue())
         logger.info(f"Created ZIP file: {zip_filename}")
