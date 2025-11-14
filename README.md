@@ -88,6 +88,8 @@ with training datasets for 0 BCs (Transformer-inspired Attention): [![meaningtow
    [![meaningtowords](https://img.shields.io/badge/radarchart9-streamlit-red)](https://attention-concentration-prediction-visualization9.streamlit.app/) (correction for single species diffusion)
 
    [![meaningtowords](https://img.shields.io/badge/radarchart10-streamlit-red)](https://attention-concentration-prediction-visualization10.streamlit.app/) 
+
+   [![meaningtowords](https://img.shields.io/badge/radarchart11-streamlit-red)](https://attention-concentration-prediction-visualization11.streamlit.app/) 
    
 
    Understanding the Attention Weights and Engineering Applications 
