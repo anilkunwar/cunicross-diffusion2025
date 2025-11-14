@@ -35,7 +35,7 @@ C_CU_BOTTOM = 2.0e-3      # Bottom (y=0): Cu-poor
 #C_CU_BOTTOM = 2.85e-3     # Bottom (y=0): Cu-rich
 C_NI_TOP = 0.0     #  Top (y=Ly): Ni-poor
 C_NI_BOTTOM = 0.0      # Bottom (y=0): Ni-poor
-Ly = 60.0             # Domain height (μm)
+Ly = 90.0             # Domain height (μm)
 Lx = 60.0             # Domain width (μm)
 D11 = 0.006
 D12 = 0.00427
