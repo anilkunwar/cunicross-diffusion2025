@@ -61,26 +61,33 @@ class ScaledPINN(nn.Module):
         self.Lx = Lx
         self.Ly = Ly
         self.T_max = T_max
-        self.C_Ni_bottom = C_Ni_bottom
-        
-        self.net = nn.Sequential(
+        self.C_Ni_bottom = C_Ni_bottom  # Store as tensor
+
+        # Shared feature network
+        self.feature_net = nn.Sequential(
             nn.Linear(3, 128), nn.Tanh(),
             nn.Linear(128, 128), nn.Tanh(),
             nn.Linear(128, 128), nn.Tanh(),
             nn.Linear(128, 128), nn.Tanh(),
-            nn.Linear(128, 1),
-            SmoothSigmoid(slope=0.5),
-            nn.Linear(1, 1, bias=False),
+            nn.Linear(128, 1)
         )
-        
-        self.net[6].weight.data.fill_(C_Ni_bottom)
 
     def forward(self, x, y, t):
         x_norm = x / self.Lx
         y_norm = y / self.Ly
         t_norm = t / self.T_max
         inputs = torch.cat([x_norm, y_norm, t_norm], dim=1)
-        return self.net(inputs)
+
+        # Raw network output (let it learn deviation from BC)
+        phi = self.feature_net(inputs)  # phi ≈ 0 at initial, grows over time
+
+        # Enforce: c(x,0,t) = C_Ni_bottom
+        # c(x,y,t) = C_Ni_bottom + y * something
+        # At y=0 → c = C_Ni_bottom
+        # At y>0 → free to evolve
+        c = self.C_Ni_bottom + y * phi
+
+        return c
 
 def laplacian(c, x, y):
     c_x = torch.autograd.grad(c, x, grad_outputs=torch.ones_like(c),
