@@ -45,15 +45,6 @@ def get_cache_key(*args):
     key_string = "_".join(str(arg) for arg in args)
     return hashlib.md5(key_string.encode()).hexdigest()
 
-class SmoothSigmoid(nn.Module):
-    def __init__(self, slope=1.0):
-        super().__init__()
-        self.k = slope
-        self.scale = nn.Parameter(torch.tensor(1.0))
-
-    def forward(self, x):
-        return self.scale * 1 / (1 + torch.exp(-self.k * x))
-
 class ScaledPINN(nn.Module):
     def __init__(self, D22, Lx, Ly, T_max, C_Ni_bottom):
         super().__init__()
@@ -61,10 +52,9 @@ class ScaledPINN(nn.Module):
         self.Lx = Lx
         self.Ly = Ly
         self.T_max = T_max
-        self.C_Ni_bottom = C_Ni_bottom  # Store as tensor
-
-        # Shared feature network
-        self.feature_net = nn.Sequential(
+        self.C_Ni_bottom = C_Ni_bottom
+        
+        self.net = nn.Sequential(
             nn.Linear(3, 128), nn.Tanh(),
             nn.Linear(128, 128), nn.Tanh(),
             nn.Linear(128, 128), nn.Tanh(),
@@ -77,17 +67,7 @@ class ScaledPINN(nn.Module):
         y_norm = y / self.Ly
         t_norm = t / self.T_max
         inputs = torch.cat([x_norm, y_norm, t_norm], dim=1)
-
-        # Raw network output (let it learn deviation from BC)
-        phi = self.feature_net(inputs)  # phi ≈ 0 at initial, grows over time
-
-        # Enforce: c(x,0,t) = C_Ni_bottom
-        # c(x,y,t) = C_Ni_bottom + y * something
-        # At y=0 → c = C_Ni_bottom
-        # At y>0 → free to evolve
-        c = self.C_Ni_bottom + y * phi
-
-        return c
+        return self.net(inputs)
 
 def laplacian(c, x, y):
     c_x = torch.autograd.grad(c, x, grad_outputs=torch.ones_like(c),
@@ -229,13 +209,13 @@ def plot_losses(loss_history, output_dir, _hash, Ly, C_Ni_bottom):
     plt.yscale('log')
     plt.xlabel('Epoch')
     plt.ylabel('Loss')
-    plt.title(f'Training Loss for Ly = {Ly:.1f} μm, c2 = {C_Ni_bottom:.1e}')
+    plt.title(f'Training Loss (Soft Constraints) for Ly = {Ly:.1f} μm, c2 = {C_Ni_bottom:.1e}')
     plt.grid(True, which="both", ls="--", alpha=0.7)
     plt.legend(loc='upper right')
     plt.tight_layout()
     
     os.makedirs(output_dir, exist_ok=True)
-    plot_filename = os.path.join(output_dir, f'loss_plot_ly_{Ly:.1f}_c2_{C_Ni_bottom:.1e}.png')
+    plot_filename = os.path.join(output_dir, f'loss_plot_soft_ly_{Ly:.1f}_c2_{C_Ni_bottom:.1e}.png')
     plt.savefig(plot_filename, dpi=300, bbox_inches='tight')
     plt.close()
     logger.info(f"Saved loss plot to {plot_filename}")
@@ -257,11 +237,11 @@ def plot_2d_profiles(solution, time_idx, output_dir, _hash):
     plt.grid(True, alpha=0.3)
     plt.colorbar(im, label='Ni Conc. (mol/cc)', format='%.1e')
     
-    plt.suptitle(f'2D Profile (Ly={Ly:.0f} μm, c2={C_Ni_bottom:.1e})', fontsize=14)
+    plt.suptitle(f'2D Profile (Soft Constraints, Ly={Ly:.0f} μm, c2={C_Ni_bottom:.1e})', fontsize=14)
     plt.tight_layout(rect=[0, 0, 1, 0.95])
     
     os.makedirs(output_dir, exist_ok=True)
-    plot_filename = os.path.join(output_dir, f'profile_ly_{Ly:.1f}_c2_{C_Ni_bottom:.1e}_t_{t_val:.1f}.png')
+    plot_filename = os.path.join(output_dir, f'profile_soft_ly_{Ly:.1f}_c2_{C_Ni_bottom:.1e}_t_{t_val:.1f}.png')
     plt.savefig(plot_filename, dpi=300, bbox_inches='tight')
     plt.close()
     logger.info(f"Saved profile plot to {plot_filename}")
@@ -270,7 +250,7 @@ def plot_2d_profiles(solution, time_idx, output_dir, _hash):
 @st.cache_resource(ttl=3600, show_spinner=False)
 def train_model(D22, Lx, Ly, T_max, C_Ni_bottom, epochs, lr, output_dir, _hash):
     os.makedirs(output_dir, exist_ok=True)
-    logger.info(f"Starting training with Ly={Ly}, C_Ni_bottom={C_Ni_bottom}, epochs={epochs}, lr={lr}")
+    logger.info(f"Starting training (soft constraints) with Ly={Ly}, C_Ni_bottom={C_Ni_bottom}, epochs={epochs}, lr={lr}")
     model = ScaledPINN(D22, Lx, Ly, T_max, C_Ni_bottom)
     optimizer = optim.Adam(model.parameters(), lr=lr)
     
@@ -384,7 +364,7 @@ def generate_and_save_solution(_model, times, param_set, output_dir, _hash):
     Ly = param_set['Ly']
     C_Ni_bottom = param_set['C_Ni_bottom']
     solution_filename = os.path.join(output_dir,
-        f"solution_ni_selfdiffusion_ly_{Ly:.1f}_c2_{C_Ni_bottom:.1e}.pkl")
+        f"solution_ni_selfdiffusion_soft_ly_{Ly:.1f}_c2_{C_Ni_bottom:.1e}.pkl")
     
     try:
         with open(solution_filename, 'wb') as f:
@@ -423,7 +403,7 @@ def generate_vts_time_series(solution, output_dir, _hash):
         grid.point_data['Ni_Concentration'] = c_xy.ravel()
         
         vts_filename = os.path.join(output_dir,
-            f'concentration_ly_{Ly:.1f}_c2_{C_Ni_bottom:.1e}_t_{t_val:.1f}.vts')
+            f'concentration_soft_ly_{Ly:.1f}_c2_{C_Ni_bottom:.1e}_t_{t_val:.1f}.vts')
         
         try:
             grid.save(vts_filename)
@@ -434,7 +414,7 @@ def generate_vts_time_series(solution, output_dir, _hash):
             st.error(f"Failed to save VTS file for t={t_val:.1f}: {str(e)}")
     
     pvd_filename = os.path.join(output_dir,
-        f'concentration_time_series_ly_{Ly:.1f}_c2_{C_Ni_bottom:.1e}.pvd')
+        f'concentration_time_series_soft_ly_{Ly:.1f}_c2_{C_Ni_bottom:.1e}.pvd')
     
     try:
         pvd_content = ['<?xml version="1.0"?>']
@@ -491,7 +471,7 @@ def generate_vtu_time_series(solution, output_dir, _hash):
         grid.point_data[f'Ni_Concentration_t{t_val:.1f}'] = c_xy.ravel()
     
     vtu_filename = os.path.join(output_dir,
-        f'concentration_time_series_ly_{Ly:.1f}_c2_{C_Ni_bottom:.1e}.vtu')
+        f'concentration_time_series_soft_ly_{Ly:.1f}_c2_{C_Ni_bottom:.1e}.vtu')
     
     try:
         grid.save(vtu_filename)
@@ -515,7 +495,7 @@ def create_zip_file(_files, output_dir, _hash, Ly, C_Ni_bottom):
                 else:
                     logger.warning(f"File not found for zipping: {file_path}")
         
-        zip_filename = os.path.join(output_dir, f'pinn_solutions_ni_selfdiffusion_ly_{Ly:.1f}_c2_{C_Ni_bottom:.1e}.zip')
+        zip_filename = os.path.join(output_dir, f'pinn_solutions_ni_selfdiffusion_soft_ly_{Ly:.1f}_c2_{C_Ni_bottom:.1e}.zip')
         with open(zip_filename, 'wb') as f:
             f.write(zip_buffer.getvalue())
         logger.info(f"Created ZIP file: {zip_filename}")
@@ -590,7 +570,7 @@ def store_solution_in_session(_hash_key, solution, file_info, model):
     st.session_state.current_hash = _hash_key
 
 def main():
-    st.title("2D PINN Simulation: Ni Self-Diffusion")
+    st.title("2D PINN Simulation: Ni Self-Diffusion (Soft Constraints)")
     
     Ly = st.number_input("Domain height Ly (μm)", min_value=30.0, max_value=90.0, value=30.0, step=1.0)
     D22 = st.number_input("Diffusion coefficient D22 (μm²/s)", value=0.0054, step=0.0001, format="%.4f")
