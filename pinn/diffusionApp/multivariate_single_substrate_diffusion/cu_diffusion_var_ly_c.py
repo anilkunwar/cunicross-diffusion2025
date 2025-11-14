@@ -22,7 +22,7 @@ col1, col2 = st.columns(2)
 with col1:
     Ly = st.number_input("Domain Height Ly (μm)", min_value=1.0, max_value=200.0, value=50.0, step=1.0)
 with col2:
-    C_CU_BOTTOM = st.number_input("Bottom Cu Concentration (mol/cc)", min_value=1e-6, max_value=5e-3, value=4.00e-4, format="%.2e")
+    C_CU_BOTTOM = st.number_input("Bottom Cu Concentration (mol/cc)", min_value=1e-6, max_value=5e-3, value=1.00e-3, format="%.2e")
 
 # Fixed parameters (remaining constants)
 C_CU_TOP = 0.0          # Top boundary (y=Ly): Cu-poor (user only sets bottom)
