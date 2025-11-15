@@ -108,11 +108,11 @@ def extract_params_from_filename(filename):
     Extract parameters from filename pattern:
     - solution_cu_selfdiffusion_ly_30.0_c_cu_1e-3_tmax_200.0.pkl
     - solution_ni_selfdiffusion_ly_60.0_c_ni_6e-4_tmax_200.0.pkl
-   
+  
     Returns: dict with Ly, C_Cu, C_Ni, and element type
     """
     import re
-   
+  
     # Initialize default values
     params = {
         'Ly': 60.0, # default
@@ -121,7 +121,7 @@ def extract_params_from_filename(filename):
         'element': 'unknown',
         'tmax': 200.0
     }
-   
+  
     try:
         # Extract element type
         if 'cu_selfdiffusion' in filename.lower():
@@ -130,32 +130,32 @@ def extract_params_from_filename(filename):
             params['element'] = 'ni'
         elif 'coupled' in filename.lower():
             params['element'] = 'coupled'
-       
+      
         # Extract Ly (geometry length)
         ly_match = re.search(r'ly_([\d.]+)', filename.lower())
         if ly_match:
             params['Ly'] = float(ly_match.group(1))
-       
+      
         # Extract Cu concentration
         cu_match = re.search(r'c_cu_([\d.e+-]+)', filename.lower())
         if cu_match:
             conc_str = cu_match.group(1).replace('e-', 'e-').replace('e+', 'e+')
             params['C_Cu'] = float(conc_str)
-       
+      
         # Extract Ni concentration
         ni_match = re.search(r'c_ni_([\d.e+-]+)', filename.lower())
         if ni_match:
             conc_str = ni_match.group(1).replace('e-', 'e-').replace('e+', 'e+')
             params['C_Ni'] = float(conc_str)
-           
+          
         # Extract tmax if present
         tmax_match = re.search(r'tmax_([\d.]+)', filename.lower())
         if tmax_match:
             params['tmax'] = float(tmax_match.group(1))
-           
+          
     except Exception as e:
         print(f"Warning: Could not parse filename {filename}: {e}")
-   
+  
     return params
 # ----------------------------------------------------------------------
 # Load Solutions — SAFE
@@ -172,15 +172,15 @@ def load_solutions(solution_dir):
             required = ['params', 'X', 'Y', 'c1_preds', 'c2_preds', 'times']
             if not all(k in sol for k in required):
                 raise ValueError("Missing keys")
-           
+          
             # Extract parameters from filename and update solution params
             file_params = extract_params_from_filename(fname)
-           
+          
             # Update solution parameters with values from filename
             p = sol['params']
             p['Ly'] = file_params['Ly']
             p['element_from_filename'] = file_params['element']
-           
+          
             # Update concentrations based on element type
             if file_params['element'] == 'cu':
                 p['C_Cu'] = file_params['C_Cu']
@@ -191,12 +191,12 @@ def load_solutions(solution_dir):
             else: # coupled or unknown
                 p['C_Cu'] = file_params.get('C_Cu', p.get('C_Cu', 1e-3))
                 p['C_Ni'] = file_params.get('C_Ni', p.get('C_Ni', 1e-4))
-           
+          
             sol['filename'] = fname
             solutions.append(sol)
             params_list.append((p['Ly'], p['C_Cu'], p['C_Ni']))
             load_logs.append(f"{fname}: Ly={file_params['Ly']}, C_Cu={file_params['C_Cu']:.2e}, C_Ni={file_params['C_Ni']:.2e}, element={file_params['element']}")
-           
+          
         except Exception as e:
             load_logs.append(f"{fname}: FAILED → {e}")
     load_logs.append(f"Loaded {len(solutions)} valid solutions.")
@@ -208,9 +208,9 @@ def display_extracted_parameters(solutions):
     """Display table of extracted parameters from filenames"""
     if not solutions:
         return
-   
+  
     st.subheader("Extracted Parameters from Filenames")
-   
+  
     data = []
     for sol in solutions:
         fname = sol.get('filename', 'unknown')
@@ -222,7 +222,7 @@ def display_extracted_parameters(solutions):
             'C_Ni (mol/cc)': f"{params.get('C_Ni', 0):.2e}",
             'Element': params.get('element_from_filename', 'unknown')
         })
-   
+  
     st.table(data)
 # ----------------------------------------------------------------------
 # Attention Interpolator — FIXED RETURN
@@ -319,31 +319,26 @@ def get_center_conc(solution, ly_fraction=0.5, ly_current=None, temporal_bias_fa
         iy = np.argmin(np.abs(solution['Y'][0,:] - Ly * ly_fraction))
         cu_raw = np.array([c1[ix, iy] for c1 in solution['c1_preds']])
         ni_raw = np.array([c2[ix, iy] for c2 in solution['c2_preds']])
-
         # === APPLY TEMPORAL BIAS BASED ON Ly INCREASE ===
         if ly_current is not None and temporal_bias_factor > 0:
             # Reference Ly = 30 μm (smallest in range)
             ly_ref = 30.0
             delay_scale = 1.0 + temporal_bias_factor * (ly_current - ly_ref) / 10.0
-            delay_scale = max(delay_scale, 1.0)  # no speedup
-
+            delay_scale = max(delay_scale, 1.0) # no speedup
             # Stretch time axis → slower rise
             times = solution.get('times', np.linspace(0, 200, len(cu_raw)))
             t_stretched = times * delay_scale
-
             # Re-interpolate concentrations onto original time grid
             # Clamp to avoid extrapolation
             cu_interp = interp1d(t_stretched, cu_raw, kind='linear',
                                  bounds_error=False, fill_value=(cu_raw[0], cu_raw[-1]))
             ni_interp = interp1d(t_stretched, ni_raw, kind='linear',
                                  bounds_error=False, fill_value=(ni_raw[0], ni_raw[-1]))
-
             t_original = np.linspace(0, 200, len(cu_raw))
             cu = cu_interp(t_original)
             ni = ni_interp(t_original)
         else:
             cu, ni = cu_raw, ni_raw
-
         return cu, ni
     except Exception as e:
         st.warning(f"Center extraction failed: {e}")
@@ -352,7 +347,7 @@ def get_center_conc(solution, ly_fraction=0.5, ly_current=None, temporal_bias_fa
 # Sunburst Matrix Builder — BULLETPROOF
 # ----------------------------------------------------------------------
 def build_sunburst_matrices(solutions, params_list, interpolator,
-                           c_cu_target, c_ni_target, ly_fraction, ly_spokes, 
+                           c_cu_target, c_ni_target, ly_fraction, ly_spokes,
                            time_log_scale=False, temporal_bias_factor=0.1):
     global CURRENT_MODE
     N_TIME = 50
@@ -386,7 +381,7 @@ def build_sunburst_matrices(solutions, params_list, interpolator,
 # Plotting Functions (unchanged — your beautiful versions)
 # ----------------------------------------------------------------------
 def plot_sunburst(data, title, cmap, vmin, vmax, conc_log_scale, time_log_scale,
-                 ly_dir, fname, times, ly_spokes):
+                 ly_dir, fname, times, ly_spokes, display_scale=1.0):
     fig, ax = plt.subplots(figsize=(10, 10), subplot_kw=dict(projection='polar'))
     theta_edges = np.linspace(0, 2*np.pi, len(ly_spokes) + 1)
     if time_log_scale:
@@ -414,7 +409,14 @@ def plot_sunburst(data, title, cmap, vmin, vmax, conc_log_scale, time_log_scale,
     ax.grid(True, color='w', linewidth=2.0, alpha=0.8)
     ax.set_title(title, fontsize=20, fontweight='bold', pad=30)
     cbar = fig.colorbar(im, ax=ax, shrink=0.6, pad=0.08)
-    cbar.set_label('Concentration (mol/cc)', fontsize=16)
+    label = 'Concentration (mol/cc)'
+    if display_scale != 1.0:
+        label += f" × {display_scale:.2f} (physical)"
+    cbar.set_label(label, fontsize=16)
+    if display_scale != 1.0:
+        ticks = cbar.get_ticks()
+        cbar.set_ticks(ticks)
+        cbar.set_ticklabels([f"{t*display_scale:.2e}" for t in ticks])
     cbar.ax.tick_params(labelsize=14)
     plt.tight_layout()
     png = os.path.join(FIGURE_DIR, f"{fname}.png")
@@ -466,7 +468,7 @@ def main():
     # Display extracted parameters
     with st.expander("Extracted Parameters from Filenames"):
         display_extracted_parameters(sols)
-   
+  
     with st.expander("Loaded Files"):
         [st.write(l) for l in logs]
     interpolator = MultiParamAttentionInterpolator()
@@ -491,7 +493,7 @@ def main():
     ly_dir = st.sidebar.radio("Time Flow", ["bottom→top", "top→bottom"])
     st.sidebar.header("Advanced Bias")
     temporal_bias_factor = st.sidebar.slider(
-        "Temporal Delay Bias (per 10μm Ly increase)", 
+        "Temporal Delay Bias (per 10μm Ly increase)",
         min_value=0.0, max_value=0.02, value=0.01, step=0.005,
         help="Higher value = slower centerline concentration rise for larger Ly. 0 = no bias."
     )
@@ -504,11 +506,25 @@ def main():
     CURRENT_MODE = mode
     if "Pure Cu" in mode: c_ni_target = 1e-12
     if "Pure Ni" in mode: c_cu_target = 1e-12
+    # === CU BOUNDARY SCALING IN PURE MODE ===
+    CU_PHYSICAL_MAX = 1.59e-3
+    CU_NORMALIZED_MAX = 1.0e-3
+    cu_display_scale = 1.0
+    if "Pure Cu" in mode:
+        if c_cu_target >= 1e-6:
+            cu_display_scale = CU_PHYSICAL_MAX / CU_NORMALIZED_MAX
+            c_cu_target_internal = CU_NORMALIZED_MAX
+            st.info(f"Pure Cu Mode: Input {c_cu_target:.2e} → Using {c_cu_target_internal:.2e} internally (normalized to training)")
+        else:
+            c_cu_target_internal = c_cu_target
+    else:
+        c_cu_target_internal = c_cu_target
+        cu_display_scale = 1.0
     if selected == "Create New Session":
         session_id = generate_session_id({'c_cu_target': c_cu_target, 'c_ni_target': c_ni_target})
         with st.spinner("Computing..."):
             cu_mat, ni_mat, times = build_sunburst_matrices(
-                sols, params, interpolator, c_cu_target, c_ni_target,
+                sols, params, interpolator, c_cu_target_internal, c_ni_target,
                 ly_fraction, LY_SPOKES, time_log, temporal_bias_factor
             )
         save_sunburst_data(session_id, {}, cu_mat, ni_mat, times, LY_SPOKES)
@@ -524,8 +540,11 @@ def main():
     st.subheader("Sunburst Charts")
     c1, c2 = st.columns(2)
     with c1:
-        f, p, _ = plot_sunburst(cu_mat, f"Cu — {mode}", cmap_cu, 0, c_cu_target or 1e-3,
-                                conc_log, time_log, ly_dir, f"cu_{session_id}", times, LY_SPOKES)
+        f, p, _ = plot_sunburst(
+            cu_mat, f"Cu — {mode}", cmap_cu, 0, c_cu_target or 1e-3,
+            conc_log, time_log, ly_dir, f"cu_{session_id}", times, LY_SPOKES,
+            display_scale=cu_display_scale
+        )
         st.pyplot(f)
     with c2:
         f, p, _ = plot_sunburst(ni_mat, f"Ni — {mode}", cmap_ni, 0, c_ni_target or 1e-3,
