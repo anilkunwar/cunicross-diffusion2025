@@ -416,7 +416,7 @@ def plot_sunburst(data, title, cmap, vmin, vmax, conc_log_scale, time_log_scale,
     if display_scale != 1.0:
         ticks = cbar.get_ticks()
         cbar.set_ticks(ticks)
-        cbar.set_ticklabels([f"{t*display_scale:.2e}" for t in ticks])
+        cbar.set_ticklabels([f"{t*display_scale:.1e}" for t in ticks])
     cbar.ax.tick_params(labelsize=14)
     plt.tight_layout()
     png = os.path.join(FIGURE_DIR, f"{fname}.png")
