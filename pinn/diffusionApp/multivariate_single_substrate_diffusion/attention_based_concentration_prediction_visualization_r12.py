@@ -308,7 +308,7 @@ class MultiParamAttentionInterpolator(nn.Module):
 # ----------------------------------------------------------------------
 # Safe Center Extractor
 # ----------------------------------------------------------------------
-def get_center_conc(solution, ly_fraction=0.5, ly_current=None, temporal_bias_factor=0.1):
+def get_center_conc(solution, ly_fraction=0.5, ly_current=None, physical_bias_factor=0.0):
     if solution is None or 'params' not in solution:
         return np.zeros(50), np.zeros(50)
     params = solution['params']
@@ -320,25 +320,22 @@ def get_center_conc(solution, ly_fraction=0.5, ly_current=None, temporal_bias_fa
         cu_raw = np.array([c1[ix, iy] for c1 in solution['c1_preds']])
         ni_raw = np.array([c2[ix, iy] for c2 in solution['c2_preds']])
 
-        # === APPLY TEMPORAL BIAS BASED ON Ly INCREASE ===
-        if ly_current is not None and temporal_bias_factor > 0:
-            # Reference Ly = 30 μm (smallest in range)
+        # === PHYSICALLY EXACT TEMPORAL SCALING ===
+        if ly_current is not None:
             ly_ref = 30.0
-            delay_scale = 1.0 + temporal_bias_factor * (ly_current - ly_ref) / 10.0
-            delay_scale = max(delay_scale, 1.0)  # no speedup
+            scale_geom = (ly_current / ly_ref) ** 2
+            scale_user = 1.0 + physical_bias_factor
+            delay_scale = scale_geom * scale_user
+            delay_scale = max(delay_scale, 1.0)
 
-            # Stretch time axis → slower rise
             times = solution.get('times', np.linspace(0, 200, len(cu_raw)))
             t_stretched = times * delay_scale
 
-            # Re-interpolate concentrations onto original time grid
-            # Clamp to avoid extrapolation
+            t_original = np.linspace(0, 200, len(cu_raw))
             cu_interp = interp1d(t_stretched, cu_raw, kind='linear',
                                  bounds_error=False, fill_value=(cu_raw[0], cu_raw[-1]))
             ni_interp = interp1d(t_stretched, ni_raw, kind='linear',
                                  bounds_error=False, fill_value=(ni_raw[0], ni_raw[-1]))
-
-            t_original = np.linspace(0, 200, len(cu_raw))
             cu = cu_interp(t_original)
             ni = ni_interp(t_original)
         else:
@@ -353,7 +350,7 @@ def get_center_conc(solution, ly_fraction=0.5, ly_current=None, temporal_bias_fa
 # ----------------------------------------------------------------------
 def build_sunburst_matrices(solutions, params_list, interpolator,
                            c_cu_target, c_ni_target, ly_fraction, ly_spokes, 
-                           time_log_scale=False, temporal_bias_factor=0.1):
+                           time_log_scale=False, physical_bias_factor=0.0):
     global CURRENT_MODE
     N_TIME = 50
     cu_mat = np.zeros((N_TIME, len(ly_spokes)))
@@ -376,7 +373,7 @@ def build_sunburst_matrices(solutions, params_list, interpolator,
     prog = st.progress(0)
     for j, ly in enumerate(ly_spokes):
         sol = interpolator(filtered_solutions, filtered_params, ly, c_cu_target, c_ni_target)
-        cu, ni = get_center_conc(sol, ly_fraction, ly_current=ly, temporal_bias_factor=temporal_bias_factor)
+        cu, ni = get_center_conc(sol, ly_fraction, ly_current=ly, physical_bias_factor=physical_bias_factor)
         cu_mat[:, j] = cu
         ni_mat[:, j] = ni
         prog.progress((j + 1) / len(ly_spokes))
@@ -489,11 +486,14 @@ def main():
     frac = st.sidebar.selectbox("y = Ly ×", ["Ly/2", "Ly/3", "Ly/4", "Ly/5"], index=0)
     ly_fraction = {"Ly/2": 0.5, "Ly/3": 1/3, "Ly/4": 0.25, "Ly/5": 0.2}[frac]
     ly_dir = st.sidebar.radio("Time Flow", ["bottom→top", "top→bottom"])
-    st.sidebar.header("Advanced Bias")
-    temporal_bias_factor = st.sidebar.slider(
-        "Temporal Delay Bias (per 10μm Ly increase)", 
-        min_value=0.0, max_value=0.1, value=0.1, step=0.005,
-        help="Higher value = slower centerline concentration rise for larger Ly. 0 = no bias."
+    st.sidebar.header("Physical Diffusion Scaling")
+    physical_bias_factor = st.sidebar.slider(
+        "Diffusion Delay Bias (× physical Ly² scaling)",
+        min_value=-0.5, max_value=1.0, value=0.0, step=0.05,
+        help=
+        "0.0 = EXACT physics: t ~ Ly²\n"
+        ">0 = Slower than physics (e.g. grain boundaries)\n"
+        "<0 = Faster than physics (e.g. pipe diffusion)"
     )
     st.sidebar.header("Mode")
     mode = st.sidebar.radio("Diffusion Mode", [
@@ -509,7 +509,7 @@ def main():
         with st.spinner("Computing..."):
             cu_mat, ni_mat, times = build_sunburst_matrices(
                 sols, params, interpolator, c_cu_target, c_ni_target,
-                ly_fraction, LY_SPOKES, time_log, temporal_bias_factor
+                ly_fraction, LY_SPOKES, time_log, physical_bias_factor
             )
         save_sunburst_data(session_id, {}, cu_mat, ni_mat, times, LY_SPOKES)
         st.success(f"Saved: {session_id}")
