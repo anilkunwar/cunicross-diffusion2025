@@ -492,7 +492,7 @@ def main():
     st.sidebar.header("Advanced Bias")
     temporal_bias_factor = st.sidebar.slider(
         "Temporal Delay Bias (per 10μm Ly increase)", 
-        min_value=0.0, max_value=1.0, value=0.1, step=0.05,
+        min_value=0.0, max_value=0.1, value=0.1, step=0.005,
         help="Higher value = slower centerline concentration rise for larger Ly. 0 = no bias."
     )
     st.sidebar.header("Mode")
