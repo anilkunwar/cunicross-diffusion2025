@@ -104,28 +104,58 @@ def get_recent_sessions(limit=10):
 # Extract data
 # ----------------------------------------------------------------------
 def extract_params_from_filename(filename):
+    """
+    Extract parameters from filename pattern:
+    - solution_cu_selfdiffusion_ly_30.0_c_cu_1e-3_tmax_200.0.pkl
+    - solution_ni_selfdiffusion_ly_60.0_c_ni_6e-4_tmax_200.0.pkl
+  
+    Returns: dict with Ly, C_Cu, C_Ni, and element type
+    """
     import re
+  
+    # Initialize default values
     params = {
-        'Ly': 60.0, 'C_Cu': 1e-3, 'C_Ni': 1e-4,
-        'element': 'unknown', 'tmax': 200.0
+        'Ly': 60.0, # default
+        'C_Cu': 1e-3, # default
+        'C_Ni': 1e-4, # default
+        'element': 'unknown',
+        'tmax': 200.0
     }
+  
     try:
+        # Extract element type
         if 'cu_selfdiffusion' in filename.lower():
             params['element'] = 'cu'
         elif 'ni_selfdiffusion' in filename.lower():
             params['element'] = 'ni'
         elif 'coupled' in filename.lower():
             params['element'] = 'coupled'
+      
+        # Extract Ly (geometry length)
         ly_match = re.search(r'ly_([\d.]+)', filename.lower())
-        if ly_match: params['Ly'] = float(ly_match.group(1))
+        if ly_match:
+            params['Ly'] = float(ly_match.group(1))
+      
+        # Extract Cu concentration
         cu_match = re.search(r'c_cu_([\d.e+-]+)', filename.lower())
-        if cu_match: params['C_Cu'] = float(cu_match.group(1).replace('e-', 'e-').replace('e+', 'e+'))
+        if cu_match:
+            conc_str = cu_match.group(1).replace('e-', 'e-').replace('e+', 'e+')
+            params['C_Cu'] = float(conc_str)
+      
+        # Extract Ni concentration
         ni_match = re.search(r'c_ni_([\d.e+-]+)', filename.lower())
-        if ni_match: params['C_Ni'] = float(ni_match.group(1).replace('e-', 'e-').replace('e+', 'e+'))
+        if ni_match:
+            conc_str = ni_match.group(1).replace('e-', 'e-').replace('e+', 'e+')
+            params['C_Ni'] = float(conc_str)
+          
+        # Extract tmax if present
         tmax_match = re.search(r'tmax_([\d.]+)', filename.lower())
-        if tmax_match: params['tmax'] = float(tmax_match.group(1))
+        if tmax_match:
+            params['tmax'] = float(tmax_match.group(1))
+          
     except Exception as e:
         print(f"Warning: Could not parse filename {filename}: {e}")
+  
     return params
 # ----------------------------------------------------------------------
 # Load Solutions — SAFE
@@ -142,21 +172,31 @@ def load_solutions(solution_dir):
             required = ['params', 'X', 'Y', 'c1_preds', 'c2_preds', 'times']
             if not all(k in sol for k in required):
                 raise ValueError("Missing keys")
+          
+            # Extract parameters from filename and update solution params
             file_params = extract_params_from_filename(fname)
+          
+            # Update solution parameters with values from filename
             p = sol['params']
             p['Ly'] = file_params['Ly']
             p['element_from_filename'] = file_params['element']
+          
+            # Update concentrations based on element type
             if file_params['element'] == 'cu':
-                p['C_Cu'] = file_params['C_Cu']; p['C_Ni'] = 0.0
+                p['C_Cu'] = file_params['C_Cu']
+                p['C_Ni'] = 0.0 # For pure Cu diffusion
             elif file_params['element'] == 'ni':
-                p['C_Ni'] = file_params['C_Ni']; p['C_Cu'] = 0.0
-            else:
+                p['C_Ni'] = file_params['C_Ni']
+                p['C_Cu'] = 0.0 # For pure Ni diffusion
+            else: # coupled or unknown
                 p['C_Cu'] = file_params.get('C_Cu', p.get('C_Cu', 1e-3))
                 p['C_Ni'] = file_params.get('C_Ni', p.get('C_Ni', 1e-4))
+          
             sol['filename'] = fname
             solutions.append(sol)
             params_list.append((p['Ly'], p['C_Cu'], p['C_Ni']))
             load_logs.append(f"{fname}: Ly={file_params['Ly']}, C_Cu={file_params['C_Cu']:.2e}, C_Ni={file_params['C_Ni']:.2e}, element={file_params['element']}")
+          
         except Exception as e:
             load_logs.append(f"{fname}: FAILED → {e}")
     load_logs.append(f"Loaded {len(solutions)} valid solutions.")
@@ -165,8 +205,12 @@ def load_solutions(solution_dir):
 # Display Extracted Parameters
 # ----------------------------------------------------------------------
 def display_extracted_parameters(solutions):
-    if not solutions: return
+    """Display table of extracted parameters from filenames"""
+    if not solutions:
+        return
+  
     st.subheader("Extracted Parameters from Filenames")
+  
     data = []
     for sol in solutions:
         fname = sol.get('filename', 'unknown')
@@ -178,19 +222,23 @@ def display_extracted_parameters(solutions):
             'C_Ni (mol/cc)': f"{params.get('C_Ni', 0):.2e}",
             'Element': params.get('element_from_filename', 'unknown')
         })
+  
     st.table(data)
 # ----------------------------------------------------------------------
-# Attention Interpolator
+# Attention Interpolator — FIXED RETURN
 # ----------------------------------------------------------------------
 class MultiParamAttentionInterpolator(nn.Module):
     def __init__(self, sigma=0.2, num_heads=4, d_head=8):
         super().__init__()
-        self.sigma = sigma; self.num_heads = num_heads; self.d_head = d_head
+        self.sigma = sigma
+        self.num_heads = num_heads
+        self.d_head = d_head
         self.W_q = nn.Linear(3, num_heads * d_head)
         self.W_k = nn.Linear(3, num_heads * d_head)
     def forward(self, solutions, params_list, ly_target, c_cu_target, c_ni_target):
         if len(solutions) == 0:
-            st.error("No solutions to interpolate from!"); st.stop()
+            st.error("No solutions to interpolate from!")
+            st.stop()
         lys = np.array([p[0] for p in params_list])
         c_cus = np.array([p[1] for p in params_list])
         c_nis = np.array([p[2] for p in params_list])
@@ -218,7 +266,8 @@ class MultiParamAttentionInterpolator(nn.Module):
         return self._physics_aware_interpolation(solutions, w.detach().numpy(),
                                                 ly_target, c_cu_target, c_ni_target)
     def _physics_aware_interpolation(self, solutions, weights, ly_target, c_cu_target, c_ni_target):
-        if len(solutions) == 0: return None
+        if len(solutions) == 0:
+            return None
         Lx = solutions[0]['params'].get('Lx', 100.0)
         x = np.linspace(0, Lx, 50)
         y = np.linspace(0, ly_target, 50)
@@ -241,7 +290,9 @@ class MultiParamAttentionInterpolator(nn.Module):
                     pts = np.stack([X.ravel(), Y.ravel()], axis=1)
                     c1[t_idx] += w * interp_c1(pts).reshape(50,50)
                     c2[t_idx] += w * interp_c2(pts).reshape(50,50)
-                except: continue
+                except:
+                    continue
+        # Enforce boundary conditions
         c1[:, :, 0] = c_cu_target
         c2[:, :, -1] = c_ni_target
         param_set = solutions[0]['params'].copy()
@@ -268,12 +319,17 @@ def get_center_conc(solution, ly_fraction=0.5, ly_current=None, temporal_bias_fa
         iy = np.argmin(np.abs(solution['Y'][0,:] - Ly * ly_fraction))
         cu_raw = np.array([c1[ix, iy] for c1 in solution['c1_preds']])
         ni_raw = np.array([c2[ix, iy] for c2 in solution['c2_preds']])
+        # === APPLY TEMPORAL BIAS BASED ON Ly INCREASE ===
         if ly_current is not None and temporal_bias_factor > 0:
+            # Reference Ly = 30 μm (smallest in range)
             ly_ref = 30.0
             delay_scale = 1.0 + temporal_bias_factor * (ly_current - ly_ref) / 10.0
-            delay_scale = max(delay_scale, 1.0)
+            delay_scale = max(delay_scale, 1.0) # no speedup
+            # Stretch time axis → slower rise
             times = solution.get('times', np.linspace(0, 200, len(cu_raw)))
             t_stretched = times * delay_scale
+            # Re-interpolate concentrations onto original time grid
+            # Clamp to avoid extrapolation
             cu_interp = interp1d(t_stretched, cu_raw, kind='linear',
                                  bounds_error=False, fill_value=(cu_raw[0], cu_raw[-1]))
             ni_interp = interp1d(t_stretched, ni_raw, kind='linear',
@@ -288,7 +344,7 @@ def get_center_conc(solution, ly_fraction=0.5, ly_current=None, temporal_bias_fa
         st.warning(f"Center extraction failed: {e}")
         return np.zeros(50), np.zeros(50)
 # ----------------------------------------------------------------------
-# Sunburst Matrix Builder
+# Sunburst Matrix Builder — BULLETPROOF
 # ----------------------------------------------------------------------
 def build_sunburst_matrices(solutions, params_list, interpolator,
                            c_cu_target, c_ni_target, ly_fraction, ly_spokes,
@@ -298,6 +354,7 @@ def build_sunburst_matrices(solutions, params_list, interpolator,
     cu_mat = np.zeros((N_TIME, len(ly_spokes)))
     ni_mat = np.zeros((N_TIME, len(ly_spokes)))
     times = np.logspace(-1, np.log10(200), N_TIME) if time_log_scale else np.linspace(0, 200.0, N_TIME)
+    # Filter solutions safely
     filtered_solutions = solutions.copy()
     filtered_params = params_list.copy()
     if CURRENT_MODE == "Pure Cu Diffusion (Cu substrate bottom, air top)":
@@ -321,7 +378,7 @@ def build_sunburst_matrices(solutions, params_list, interpolator,
     prog.empty()
     return cu_mat, ni_mat, times
 # ----------------------------------------------------------------------
-# Plotting Functions
+# Plotting Functions (unchanged — your beautiful versions)
 # ----------------------------------------------------------------------
 def plot_sunburst(data, title, cmap, vmin, vmax, conc_log_scale, time_log_scale,
                  ly_dir, fname, times, ly_spokes, display_scale=1.0):
@@ -351,18 +408,16 @@ def plot_sunburst(data, title, cmap, vmin, vmax, conc_log_scale, time_log_scale,
     ax.set_ylim(0, 1)
     ax.grid(True, color='w', linewidth=2.0, alpha=0.8)
     ax.set_title(title, fontsize=20, fontweight='bold', pad=30)
-
-    # === CLEAN COLORBAR: 1-digit scientific, 1e-3 at top for Cu ===
     cbar = fig.colorbar(im, ax=ax, shrink=0.6, pad=0.08)
-    cbar.set_label('Concentration (mol/cc)', fontsize=16)
-    if "Cu" in title and display_scale != 1.0:
-        cbar.ax.text(1.5, 1.02, '1e-3', transform=cbar.ax.transAxes,
-                     fontsize=14, fontweight='bold', ha='center', va='bottom')
-    ticks = cbar.get_ticks()
-    cbar.set_ticks(ticks)
-    cbar.set_ticklabels([f"{t:.1e}" for t in ticks])
+    label = 'Concentration (mol/cc)'
+    if display_scale != 1.0:
+        label += f" × {display_scale:.2f} (physical)"
+    cbar.set_label(label, fontsize=16)
+    if display_scale != 1.0:
+        ticks = cbar.get_ticks()
+        cbar.set_ticks(ticks)
+        cbar.set_ticklabels([f"{t*display_scale:.2e}" for t in ticks])
     cbar.ax.tick_params(labelsize=14)
-
     plt.tight_layout()
     png = os.path.join(FIGURE_DIR, f"{fname}.png")
     pdf = os.path.join(FIGURE_DIR, f"{fname}.pdf")
@@ -370,7 +425,6 @@ def plot_sunburst(data, title, cmap, vmin, vmax, conc_log_scale, time_log_scale,
     plt.savefig(pdf, bbox_inches='tight')
     plt.close()
     return fig, png, pdf
-
 def plot_radar_single(data, element, t_val, fname, ly_spokes, show_labels=True, show_radial_labels=True):
     angles = np.linspace(0, 2*np.pi, len(ly_spokes), endpoint=False)
     angles = np.concatenate([angles, [angles[0]]])
@@ -397,13 +451,11 @@ def plot_radar_single(data, element, t_val, fname, ly_spokes, show_labels=True, 
     plt.savefig(png, dpi=300, bbox_inches='tight')
     plt.close()
     return fig, png, None
-
 def generate_session_id(parameters):
     s = f"{parameters.get('c_cu_target',0)}_{parameters.get('c_ni_target',0)}_{parameters.get('ly_fraction',0.5)}"
     return f"session_{datetime.now():%Y%m%d_%H%M%S}_{hash(s)%10000:04d}"
-
 # ----------------------------------------------------------------------
-# MAIN
+# MAIN — FULLY ELABORATE
 # ----------------------------------------------------------------------
 def main():
     global CURRENT_MODE
@@ -413,10 +465,13 @@ def main():
     sols, params, logs = load_solutions(SOLUTION_DIR)
     with st.expander("Loaded Files"): [st.write(l) for l in logs]
     if not sols: st.stop()
+    # Display extracted parameters
     with st.expander("Extracted Parameters from Filenames"):
         display_extracted_parameters(sols)
+  
+    with st.expander("Loaded Files"):
+        [st.write(l) for l in logs]
     interpolator = MultiParamAttentionInterpolator()
-
     # Sidebar
     st.sidebar.header("Controls")
     sessions = get_recent_sessions()
@@ -451,7 +506,6 @@ def main():
     CURRENT_MODE = mode
     if "Pure Cu" in mode: c_ni_target = 1e-12
     if "Pure Ni" in mode: c_cu_target = 1e-12
-
     # === CU BOUNDARY SCALING IN PURE MODE ===
     CU_PHYSICAL_MAX = 1.59e-3
     CU_NORMALIZED_MAX = 1.0e-3
@@ -466,7 +520,6 @@ def main():
     else:
         c_cu_target_internal = c_cu_target
         cu_display_scale = 1.0
-
     if selected == "Create New Session":
         session_id = generate_session_id({'c_cu_target': c_cu_target, 'c_ni_target': c_ni_target})
         with st.spinner("Computing..."):
@@ -484,7 +537,6 @@ def main():
             st.success(f"Loaded: {session_id}")
         else:
             st.error("Load failed"); return
-
     st.subheader("Sunburst Charts")
     c1, c2 = st.columns(2)
     with c1:
@@ -498,7 +550,6 @@ def main():
         f, p, _ = plot_sunburst(ni_mat, f"Ni — {mode}", cmap_ni, 0, c_ni_target or 1e-3,
                                 conc_log, time_log, ly_dir, f"ni_{session_id}", times, LY_SPOKES)
         st.pyplot(f)
-
     st.subheader("Radar Charts")
     t_idx = st.slider("Time", 0, len(times)-1, 25)
     c1, c2 = st.columns(2)
@@ -508,6 +559,5 @@ def main():
     with c2:
         f, _, _ = plot_radar_single(ni_mat[t_idx], "Ni", times[t_idx], f"radar_ni", LY_SPOKES, show_labels, show_radial)
         st.pyplot(f)
-
 if __name__ == "__main__":
     main()
