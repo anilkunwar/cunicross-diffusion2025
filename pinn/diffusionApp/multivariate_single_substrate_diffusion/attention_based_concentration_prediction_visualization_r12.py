@@ -410,8 +410,8 @@ def plot_sunburst(data, title, cmap, vmin, vmax, conc_log_scale, time_log_scale,
     ax.set_title(title, fontsize=20, fontweight='bold', pad=30)
     cbar = fig.colorbar(im, ax=ax, shrink=0.6, pad=0.08)
     label = 'Concentration (mol/cc)'
-    if display_scale != 1.0:
-        label += f" × {display_scale:.2f} (physical)"
+    #if display_scale != 1.0:
+    #    label += f" × {display_scale:.2f} (physical)"
     cbar.set_label(label, fontsize=16)
     if display_scale != 1.0:
         ticks = cbar.get_ticks()
