@@ -489,7 +489,7 @@ def main():
     st.sidebar.header("Physical Diffusion Scaling")
     physical_bias_factor = st.sidebar.slider(
         "Diffusion Delay Bias (× physical Ly² scaling)",
-        min_value=-0.5, max_value=1.0, value=0.0, step=0.05,
+        min_value=-0.005, max_value=0.01, value=0.0, step=0.0005,
         help=
         "0.0 = EXACT physics: t ~ Ly²\n"
         ">0 = Slower than physics (e.g. grain boundaries)\n"
