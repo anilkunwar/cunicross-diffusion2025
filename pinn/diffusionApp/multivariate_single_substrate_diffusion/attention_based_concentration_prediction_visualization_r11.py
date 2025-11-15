@@ -110,6 +110,65 @@ def get_recent_sessions(limit=10):
     return sessions
 
 # ----------------------------------------------------------------------
+# Extract data 
+# ----------------------------------------------------------------------
+def extract_params_from_filename(filename):
+    """
+    Extract parameters from filename pattern:
+    - solution_cu_selfdiffusion_ly_30.0_c_cu_1e-3_tmax_200.0.pkl
+    - solution_ni_selfdiffusion_ly_60.0_c_ni_6e-4_tmax_200.0.pkl
+    
+    Returns: dict with Ly, C_Cu, C_Ni, and element type
+    """
+    import re
+    
+    # Initialize default values
+    params = {
+        'Ly': 60.0,  # default
+        'C_Cu': 1e-3,  # default  
+        'C_Ni': 1e-4,  # default
+        'element': 'unknown',
+        'tmax': 200.0
+    }
+    
+    try:
+        # Extract element type
+        if 'cu_selfdiffusion' in filename.lower():
+            params['element'] = 'cu'
+        elif 'ni_selfdiffusion' in filename.lower():
+            params['element'] = 'ni'
+        elif 'coupled' in filename.lower():
+            params['element'] = 'coupled'
+        
+        # Extract Ly (geometry length)
+        ly_match = re.search(r'ly_([\d.]+)', filename.lower())
+        if ly_match:
+            params['Ly'] = float(ly_match.group(1))
+        
+        # Extract Cu concentration
+        cu_match = re.search(r'c_cu_([\d.e+-]+)', filename.lower())
+        if cu_match:
+            conc_str = cu_match.group(1).replace('e-', 'e-').replace('e+', 'e+')
+            params['C_Cu'] = float(conc_str)
+        
+        # Extract Ni concentration  
+        ni_match = re.search(r'c_ni_([\d.e+-]+)', filename.lower())
+        if ni_match:
+            conc_str = ni_match.group(1).replace('e-', 'e-').replace('e+', 'e+')
+            params['C_Ni'] = float(conc_str)
+            
+        # Extract tmax if present
+        tmax_match = re.search(r'tmax_([\d.]+)', filename.lower())
+        if tmax_match:
+            params['tmax'] = float(tmax_match.group(1))
+            
+    except Exception as e:
+        print(f"Warning: Could not parse filename {filename}: {e}")
+    
+    return params
+
+
+# ----------------------------------------------------------------------
 # Load Solutions — SAFE
 # ----------------------------------------------------------------------
 @st.cache_data
@@ -124,18 +183,58 @@ def load_solutions(solution_dir):
             required = ['params', 'X', 'Y', 'c1_preds', 'c2_preds', 'times']
             if not all(k in sol for k in required):
                 raise ValueError("Missing keys")
+            
+            # Extract parameters from filename and update solution params
+            file_params = extract_params_from_filename(fname)
+            
+            # Update solution parameters with values from filename
             p = sol['params']
-            if 'Lx' not in p or 'Ly' not in p:
-                raise KeyError("params missing Lx or Ly")
+            p['Ly'] = file_params['Ly']
+            p['element_from_filename'] = file_params['element']
+            
+            # Update concentrations based on element type
+            if file_params['element'] == 'cu':
+                p['C_Cu'] = file_params['C_Cu']
+                p['C_Ni'] = 0.0  # For pure Cu diffusion
+            elif file_params['element'] == 'ni':
+                p['C_Ni'] = file_params['C_Ni'] 
+                p['C_Cu'] = 0.0  # For pure Ni diffusion
+            else:  # coupled or unknown
+                p['C_Cu'] = file_params.get('C_Cu', p.get('C_Cu', 1e-3))
+                p['C_Ni'] = file_params.get('C_Ni', p.get('C_Ni', 1e-4))
+            
             sol['filename'] = fname
             solutions.append(sol)
             params_list.append((p['Ly'], p['C_Cu'], p['C_Ni']))
-            load_logs.append(f"{fname}: OK")
+            load_logs.append(f"{fname}: Ly={file_params['Ly']}, C_Cu={file_params['C_Cu']:.2e}, C_Ni={file_params['C_Ni']:.2e}, element={file_params['element']}")
+            
         except Exception as e:
             load_logs.append(f"{fname}: FAILED → {e}")
     load_logs.append(f"Loaded {len(solutions)} valid solutions.")
     return solutions, params_list, load_logs
-
+# ----------------------------------------------------------------------
+# Display Extracted Parameters
+# ----------------------------------------------------------------------
+def display_extracted_parameters(solutions):
+    """Display table of extracted parameters from filenames"""
+    if not solutions:
+        return
+    
+    st.subheader("Extracted Parameters from Filenames")
+    
+    data = []
+    for sol in solutions:
+        fname = sol.get('filename', 'unknown')
+        params = sol['params']
+        data.append({
+            'Filename': fname,
+            'Ly (um)': params['Ly'],
+            'C_Cu (mol/cc)': f"{params.get('C_Cu', 0):.2e}",
+            'C_Ni (mol/cc)': f"{params.get('C_Ni', 0):.2e}", 
+            'Element': params.get('element_from_filename', 'unknown')
+        })
+    
+    st.table(data)
 # ----------------------------------------------------------------------
 # Attention Interpolator — FIXED RETURN
 # ----------------------------------------------------------------------
@@ -378,6 +477,13 @@ def main():
     sols, params, logs = load_solutions(SOLUTION_DIR)
     with st.expander("Loaded Files"): [st.write(l) for l in logs]
     if not sols: st.stop()
+
+    # Display extracted parameters
+    with st.expander("Extracted Parameters from Filenames"):
+        display_extracted_parameters(sols)
+    
+    with st.expander("Loaded Files"): 
+        [st.write(l) for l in logs]
 
     interpolator = MultiParamAttentionInterpolator()
 
