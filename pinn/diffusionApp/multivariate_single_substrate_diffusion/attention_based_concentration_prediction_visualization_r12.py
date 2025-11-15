@@ -413,6 +413,7 @@ def plot_sunburst(data, title, cmap, vmin, vmax, conc_log_scale, time_log_scale,
     #if display_scale != 1.0:
     #    label += f" × {display_scale:.2f} (physical)"
     cbar.set_label(label, fontsize=16)
+    cbar.set_ticklabels([f"{t*display_scale:.1e}" for t in ticks])                 
     if display_scale != 1.0:
         ticks = cbar.get_ticks()
         cbar.set_ticks(ticks)
