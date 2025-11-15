@@ -90,7 +90,8 @@ with training datasets for 0 BCs (Transformer-inspired Attention): [![meaningtow
    [![meaningtowords](https://img.shields.io/badge/radarchart10-streamlit-red)](https://attention-concentration-prediction-visualization10.streamlit.app/) 
 
    [![meaningtowords](https://img.shields.io/badge/radarchart11-streamlit-red)](https://attention-concentration-prediction-visualization11.streamlit.app/) 
-   
+
+   [![meaningtowords](https://img.shields.io/badge/radarchart12-streamlit-red)](https://attention-concentration-prediction-visualization12.streamlit.app/) (physics constrained temporal bias)
 
    Understanding the Attention Weights and Engineering Applications 
 
