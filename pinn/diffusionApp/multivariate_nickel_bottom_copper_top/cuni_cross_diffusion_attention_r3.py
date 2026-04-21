@@ -1,30 +1,75 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-ATTENTION-BASED DIFFUSION INFERENCE WITH LLM NATURAL LANGUAGE INTERFACE
-========================================================================
-- Natural language parsing of Cu-Ni interdiffusion parameters (LLM + Regex fallback)
-- Hybrid confidence-based parameter extraction
-- Cached model loading (GPT-2 / Qwen-2 / Qwen-2.5)
-- Manual LRU cache for LLM outputs to prevent Streamlit UnhashableParamError
-- Fully preserves original attention interpolation & engineering inference logic
+ATTENTION-BASED CU-NI INTERDIFFUSION VISUALIZER WITH LLM NATURAL LANGUAGE INTERFACE
+====================================================================================
+- Natural language parsing of diffusion parameters (regex + GPT-2/Qwen hybrid)
+- Multi-head attention with spatial locality for physics-aware interpolation
+- Publication-quality 2D heatmaps, centerline curves, and parameter sweeps
+- Full figure customization and PNG/PDF export
+- Cached LLM loading, robust JSON extraction, and confidence-based fallbacks
 """
-import streamlit as st
+import os
+import pickle
 import numpy as np
+import streamlit as st
+import matplotlib.pyplot as plt
+from matplotlib import cm
+import pandas as pd
+from scipy.interpolate import RegularGridInterpolator
+import matplotlib as mpl
 import torch
 import torch.nn as nn
-import pandas as pd
-import matplotlib.pyplot as plt
-import seaborn as sns
-import io
 import re
 import json
 import hashlib
-import warnings
 from collections import OrderedDict
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List, Tuple
 
-# === Safe Transformers Import ===
+# Configure Matplotlib for publication-quality figures
+mpl.rcParams['font.family'] = 'Arial'
+mpl.rcParams['font.size'] = 12
+mpl.rcParams['axes.linewidth'] = 1.5
+mpl.rcParams['xtick.major.width'] = 1.5
+mpl.rcParams['ytick.major.width'] = 1.5
+mpl.rcParams['axes.titlesize'] = 14
+mpl.rcParams['axes.labelsize'] = 12
+mpl.rcParams['legend.fontsize'] = 10
+mpl.rcParams['figure.dpi'] = 300
+mpl.rcParams['legend.frameon'] = True
+mpl.rcParams['legend.framealpha'] = 0.8
+mpl.rcParams['grid.linestyle'] = '--'
+mpl.rcParams['grid.alpha'] = 0.3
+
+SOLUTION_DIR = os.path.join(os.path.dirname(__file__), "pinn_solutions")
+
+# Available colormaps for selection
+COLORMAPS = [
+    "viridis", "plasma", "inferno", "magma", "cividis",
+    "Greys", "Purples", "Blues", "Greens", "Oranges", "Reds",
+    "YlOrBr", "YlOrRd", "OrRd", "PuRd", "RdPu", "BuPu", "GnBu",
+    "PuBu", "YlGnBu", "PuBuGn", "BuGn", "YlGn",
+    "cubehelix", "binary", "gist_yarg", "gist_gray", "gray", "bone",
+    "pink", "spring", "summer", "autumn", "winter",
+    "PiYG", "PRGn", "BrBG", "PuOr", "RdGy", "RdBu", "RdYlBu", "RdYlGn",
+    "Spectral", "coolwarm", "bwr", "seismic",
+    "twilight", "twilight_shifted", "hsv",
+    "Pastel1", "Pastel2", "Paired", "Accent", "Dark2", "Set1", "Set2", "Set3",
+    "tab10", "tab20", "tab20b", "tab20c",
+    "flag", "prism", "ocean", "gist_earth", "terrain", "gist_stern", "gnuplot",
+    "gnuplot2", "CMRmap", "cubehelix", "brg", "gist_rainbow", "rainbow",
+    "jet", "nipy_spectral", "gist_ncar",
+    "viridis_r", "plasma_r", "inferno_r", "magma_r", "cividis_r", "Greys_r",
+    "Purples_r", "Blues_r", "Greens_r", "Oranges_r", "Reds_r", "YlOrBr_r",
+    "YlOrRd_r", "OrRd_r", "PuRd_r", "RdPu_r", "BuPu_r", "GnBu_r", "PuBu_r",
+    "YlGnBu_r", "PuBuGn_r", "BuGn_r", "YlGn_r", "twilight_r", "twilight_shifted_r",
+    "hsv_r", "Spectral_r", "coolwarm_r", "bwr_r", "seismic_r", "RdBu_r",
+    "PiYG_r", "PRGn_r", "BrBG_r", "PuOr_r", "RdGy_r", "RdYlBu_r", "RdYlGn_r",
+]
+
+# =============================================
+# LLM IMPORT WITH GRACEFUL FALLBACK
+# =============================================
 try:
     from transformers import GPT2Tokenizer, GPT2LMHeadModel, AutoTokenizer, AutoModelForCausalLM
     TRANSFORMERS_AVAILABLE = True
@@ -32,186 +77,262 @@ except ImportError:
     TRANSFORMERS_AVAILABLE = False
     st.warning("⚠️ `transformers` not installed. LLM features will be disabled. Install via `pip install transformers torch`")
 
-warnings.filterwarnings('ignore')
-
-# === PAGE CONFIG ===
-st.set_page_config(page_title="LLM-Driven Diffusion Inference", layout="wide")
-
 # =============================================
-# 1. LLM LOADER & MANUAL CACHE
-# =============================================
-@st.cache_resource(show_spinner="Loading LLM backend...")
-def load_llm_backend(backend_name: str):
-    if not TRANSFORMERS_AVAILABLE:
-        return None, None
-    if "GPT-2" in backend_name:
-        tok = GPT2Tokenizer.from_pretrained('gpt2')
-        mod = GPT2LMHeadModel.from_pretrained('gpt2')
-    elif "Qwen2-0.5B" in backend_name:
-        tok = AutoTokenizer.from_pretrained("Qwen/Qwen2-0.5B-Instruct", trust_remote_code=True)
-        mod = AutoModelForCausalLM.from_pretrained("Qwen/Qwen2-0.5B-Instruct", torch_dtype="auto", device_map="auto", trust_remote_code=True)
-    elif "Qwen2.5" in backend_name:
-        tok = AutoTokenizer.from_pretrained("Qwen/Qwen2.5-0.5B-Instruct", trust_remote_code=True)
-        mod = AutoModelForCausalLM.from_pretrained("Qwen/Qwen2.5-0.5B-Instruct", torch_dtype="auto", device_map="auto", trust_remote_code=True)
-    else:
-        return None, None
-    mod.eval()
-    return tok, mod
-
-# =============================================
-# 2. DOMAIN-SPECIFIC NATURAL LANGUAGE PARSER
+# NATURAL LANGUAGE PARSER (Hybrid Regex + LLM)
 # =============================================
 class DiffusionNLParser:
-    """Extracts Cu-Ni diffusion parameters from natural language using Regex + LLM hybrid parsing."""
+    """Extracts Cu-Ni diffusion parameters from natural language using regex + LLM hybrid parsing."""
+    
     def __init__(self):
         self.defaults = {
             'ly_target': 60.0,
             'c_cu_target': 1.5e-3,
             'c_ni_target': 0.5e-3,
-            'substrate_type': "Cu(top)-Ni(bottom) Asymmetric",
-            'joining_path': "Path I (Cu→Ni)",
             'sigma': 0.20,
-            'num_heads': 4,
-            'd_head': 8,
-            'seed': 42
         }
         self.patterns = {
-            'ly_target': [r'(?:joint\s*thickness|domain\s*length|L_y|Ly)\s*[=:]\s*(\d+(?:\.\d+)?)', r'(\d+(?:\.\d+)?)\s*(?:μm|um|microns?)'],
-            'c_cu_target': [r'(?:Cu\s*concentration|C_Cu|c_Cu|top\s*concentration)\s*[=:]\s*([\d.]+(?:e[+-]?\d+)?)'],
-            'c_ni_target': [r'(?:Ni\s*concentration|C_Ni|c_Ni|bottom\s*concentration)\s*[=:]\s*([\d.]+(?:e[+-]?\d+)?)'],
-            'substrate_type': [r'(?:substrate|configuration)\s*[:is=]?\s*(Cu.*Ni.*Asymmetric|Cu/Sn.*Cu.*Symmetric|Ni/Sn.*Ni.*Symmetric)',
-                               r'(asymmetric|symmetric)\s*(?:Cu|Ni|joint)'],
-            'joining_path': [r'(?:path|joining\s*path|sequence)\s*[:is=]?\s*(Path\s*[I1]\s*.*Cu.*Ni|Path\s*[II2]\s*.*Ni.*Cu|N/A|not\s*applicable)']
+            'ly_target': [
+                r'(?:joint\s*thickness|domain\s*length|L_y|Ly)\s*[=:]\s*(\d+(?:\.\d+)?)',
+                r'(\d+(?:\.\d+)?)\s*(?:μm|um|microns?)',
+            ],
+            'c_cu_target': [
+                r'(?:Cu\s*concentration|C_Cu|c_Cu|top\s*concentration)\s*[=:]\s*([\d.]+(?:e[+-]?\d+)?)',
+            ],
+            'c_ni_target': [
+                r'(?:Ni\s*concentration|C_Ni|c_Ni|bottom\s*concentration)\s*[=:]\s*([\d.]+(?:e[+-]?\d+)?)',
+            ],
         }
 
     def parse_regex(self, text: str) -> Dict[str, Any]:
-        if not text: return self.defaults.copy()
+        """Extract parameters using regex patterns only."""
+        if not text:
+            return self.defaults.copy()
         params = self.defaults.copy()
         text_lower = text.lower()
         
         for key, patterns in self.patterns.items():
             for pat in patterns:
-                m = re.search(pat, text_lower, re.IGNORECASE)
-                if m:
-                    val = m.group(1)
+                match = re.search(pat, text_lower, re.IGNORECASE)
+                if match:
+                    val = match.group(1)
                     try:
-                        if key in ['ly_target', 'sigma']:
+                        if key in ['ly_target']:
                             params[key] = float(val)
                         elif key in ['c_cu_target', 'c_ni_target']:
+                            # Handle scientific notation
                             params[key] = float(val.replace('e-0', 'e-'))
-                        elif key == 'num_heads':
-                            params[key] = int(float(val))
-                        elif key == 'd_head':
-                            params[key] = int(float(val))
-                        elif key == 'seed':
-                            params[key] = int(float(val))
-                        elif key == 'substrate_type':
-                            if 'asymmetric' in val.lower():
-                                params[key] = "Cu(top)-Ni(bottom) Asymmetric"
-                            elif 'cu' in val.lower() and 'symmetric' in val.lower():
-                                params[key] = "Cu/Sn2.5Ag/Cu Symmetric"
-                            else:
-                                params[key] = "Ni/Sn2.5Ag/Ni Symmetric"
-                        elif key == 'joining_path':
-                            if 'ii' in val.lower() or '2' in val.lower():
-                                params[key] = "Path II (Ni→Cu)"
-                            elif 'i' in val.lower() or '1' in val.lower():
-                                params[key] = "Path I (Cu→Ni)"
-                            else:
-                                params[key] = "N/A"
-                    except:
+                    except (ValueError, TypeError):
                         pass
                     break
+        # Clip to valid ranges
+        params['ly_target'] = np.clip(params['ly_target'], 30.0, 120.0)
+        params['c_cu_target'] = np.clip(params['c_cu_target'], 0.0, 2.9e-3)
+        params['c_ni_target'] = np.clip(params['c_ni_target'], 0.0, 1.8e-3)
         return params
 
     @staticmethod
     def _extract_json_robust(generated: str) -> Optional[Dict]:
-        match = re.search(r'\{.*?\}', generated, re.DOTALL)
-        if not match: return None
+        """Robustly extract JSON from LLM output with repair attempts."""
+        # Try to find JSON object with nested braces support
+        json_pattern = r'\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}'
+        match = re.search(json_pattern, generated, re.DOTALL)
+        if not match:
+            match = re.search(r'\{.*?\}', generated, re.DOTALL)
+        if not match:
+            return None
         json_str = match.group(0)
-        json_str = re.sub(r'(true|false|null)\s*(")', r'\1,\2', json_str)
-        json_str = re.sub(r',\s*([}\]])', r'\1', json_str)
-        try: return json.loads(json_str)
-        except: return None
+        # Repair common JSON errors
+        json_str = re.sub(r'(true|false|null)\s*(")', r'\1,\2', json_str)  # missing comma
+        json_str = re.sub(r',\s*([}\]])', r'\1', json_str)  # trailing comma
+        try:
+            return json.loads(json_str)
+        except json.JSONDecodeError:
+            return None
 
-    def parse_with_llm(self, text: str, tokenizer, model, regex_params=None, temperature=None) -> Dict:
-        if not tokenizer: return self.parse_regex(text)
+    def parse_with_llm(self, text: str, tokenizer, model, regex_params: Dict = None, temperature: float = None) -> Dict:
+        """Use LLM (GPT-2 or Qwen) to extract parameters from natural language."""
+        if not tokenizer or not model:
+            return self.parse_regex(text)
+        
         if temperature is None:
-            temperature = 0.0 if "Qwen" in st.session_state.llm_backend_loaded else 0.1
-            
+            # Qwen models benefit from temperature=0 for deterministic JSON
+            backend = st.session_state.get('llm_backend_loaded', 'GPT-2')
+            temperature = 0.0 if "Qwen" in backend else 0.1
+        
         system = "You are a materials science expert. Extract simulation parameters from the user's query. Reply ONLY with a valid JSON object."
         examples = """
 Examples:
-- "Analyze a 50 μm joint with Cu concentration 1.2e-3 and Ni 0.8e-3" → {"ly_target": 50.0, "c_cu_target": 1.2e-3, "c_ni_target": 0.8e-3, "substrate_type": "Cu(top)-Ni(bottom) Asymmetric", "joining_path": "Path I (Cu→Ni)", "sigma": 0.2, "num_heads": 4, "d_head": 8, "seed": 42}
-- "Symmetric Cu joint, path 2, L_y=80" → {"ly_target": 80.0, "c_cu_target": 1.5e-3, "c_ni_target": 0.5e-3, "substrate_type": "Cu/Sn2.5Ag/Cu Symmetric", "joining_path": "Path II (Ni→Cu)", "sigma": 0.2, "num_heads": 4, "d_head": 8, "seed": 42}
+- "Analyze a 50 μm joint with Cu concentration 1.2e-3 and Ni 0.8e-3" → {"ly_target": 50.0, "c_cu_target": 1.2e-3, "c_ni_target": 0.8e-3, "sigma": 0.2}
+- "Domain length 80, C_Cu=2.0e-3, C_Ni=1.0e-3" → {"ly_target": 80.0, "c_cu_target": 2.0e-3, "c_ni_target": 1.0e-3, "sigma": 0.2}
+- "Ly=45um, top Cu=1.5e-3 mol/cc, bottom Ni=0.3e-3" → {"ly_target": 45.0, "c_cu_target": 1.5e-3, "c_ni_target": 0.3e-3, "sigma": 0.2}
 """
         defaults_json = json.dumps(self.defaults)
-        regex_hint = f"\nRegex hint (use as reference): {json.dumps(regex_params or {})}"
+        regex_hint = f"\nRegex hint (use as reference): {json.dumps(regex_params or {})}" if regex_params else ""
+        
         user = f"""{examples}{regex_hint}
 Query: "{text}"
-JSON keys must be: ly_target, c_cu_target, c_ni_target, substrate_type, joining_path, sigma, num_heads, d_head, seed.
+JSON keys must be: ly_target (float, 30-120 μm), c_cu_target (float, 0-2.9e-3 mol/cc), c_ni_target (float, 0-1.8e-3 mol/cc), sigma (float, 0.05-0.5).
 Defaults: {defaults_json}
 JSON:"""
         
-        if "Qwen" in st.session_state.llm_backend_loaded:
+        # Use chat template for Qwen models
+        if "Qwen" in st.session_state.get('llm_backend_loaded', ''):
             messages = [{"role": "system", "content": system}, {"role": "user", "content": user}]
             prompt = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
         else:
             prompt = f"{system}\n{user}\n"
-
+        
         try:
             inputs = tokenizer.encode(prompt, return_tensors='pt', truncation=True, max_length=512)
-            if torch.cuda.is_available(): inputs = inputs.to('cuda')
+            if torch.cuda.is_available():
+                inputs = inputs.to('cuda')
             with torch.no_grad():
-                out = model.generate(inputs, max_new_tokens=150, temperature=temperature, do_sample=temperature>0, pad_token_id=tokenizer.eos_token_id)
-            generated = tokenizer.decode(out[0], skip_special_tokens=True)
-            res = self._extract_json_robust(generated)
-            if res:
-                for k in self.defaults:
-                    if k not in res: res[k] = self.defaults[k]
-                # Clip & Validate
-                res['ly_target'] = np.clip(float(res.get('ly_target', 60)), 30, 120)
-                res['c_cu_target'] = np.clip(float(res.get('c_cu_target', 1.5e-3)), 0, 2.9e-3)
-                res['c_ni_target'] = np.clip(float(res.get('c_ni_target', 0.5e-3)), 0, 1.8e-3)
-                return res
+                outputs = model.generate(
+                    inputs,
+                    max_new_tokens=200,
+                    temperature=temperature,
+                    do_sample=(temperature > 0),
+                    pad_token_id=tokenizer.eos_token_id
+                )
+            generated = tokenizer.decode(outputs[0], skip_special_tokens=True)
+            result = self._extract_json_robust(generated)
+            if result:
+                # Ensure all required keys exist
+                for key in self.defaults:
+                    if key not in result:
+                        result[key] = self.defaults[key]
+                # Clip values to valid ranges
+                result['ly_target'] = np.clip(float(result.get('ly_target', 60)), 30, 120)
+                result['c_cu_target'] = np.clip(float(result.get('c_cu_target', 1.5e-3)), 0, 2.9e-3)
+                result['c_ni_target'] = np.clip(float(result.get('c_ni_target', 0.5e-3)), 0, 1.8e-3)
+                result['sigma'] = np.clip(float(result.get('sigma', 0.2)), 0.05, 0.5)
+                # If regex_params provided, prefer regex for mismatched values (confidence merging)
+                if regex_params:
+                    for key in ['ly_target', 'c_cu_target', 'c_ni_target']:
+                        if key in regex_params and key in result:
+                            if abs(result[key] - regex_params[key]) > 1e-4:
+                                # Significant mismatch: prefer regex (more deterministic)
+                                result[key] = regex_params[key]
+                return result
         except Exception as e:
-            st.warning(f"LLM failed: {e}. Falling back to regex.")
+            st.warning(f"LLM parsing failed: {e}. Falling back to regex.")
         return self.parse_regex(text)
 
     def hybrid_parse(self, text: str, tokenizer, model, use_llm: bool = True) -> Dict:
+        """Run regex first, then optionally LLM, and merge based on confidence."""
         regex_params = self.parse_regex(text)
-        if use_llm and tokenizer:
-            # Simple hash for manual LRU cache
-            cache_key = hashlib.md5((text + st.session_state.llm_backend_loaded).encode()).hexdigest()
-            if cache_key not in st.session_state.llm_cache:
-                llm_res = self.parse_with_llm(text, tokenizer, model, regex_params)
+        if use_llm and tokenizer and model:
+            # Simple hash-based cache key for LLM outputs
+            cache_key = hashlib.md5((text + st.session_state.get('llm_backend_loaded', '')).encode()).hexdigest()
+            # Manual LRU cache via session_state (avoids Streamlit UnhashableParamError)
+            if 'llm_cache' not in st.session_state:
+                st.session_state.llm_cache = OrderedDict()
+            if cache_key in st.session_state.llm_cache:
+                llm_params = st.session_state.llm_cache[cache_key]
+            else:
+                llm_params = self.parse_with_llm(text, tokenizer, model, regex_params)
                 # LRU eviction
                 if len(st.session_state.llm_cache) > 20:
                     st.session_state.llm_cache.popitem(last=False)
-                st.session_state.llm_cache[cache_key] = llm_res
-            else:
-                llm_res = st.session_state.llm_cache[cache_key]
-                
-            # Confidence merging: prefer LLM for extracted fields, regex for safety clipping
+                st.session_state.llm_cache[cache_key] = llm_params
+            # Confidence-based merging: prefer LLM for extracted fields, regex for safety
             final = self.defaults.copy()
-            for k in final:
-                if llm_res[k] != self.defaults[k]:
-                    final[k] = llm_res[k]
-                elif regex_params[k] != self.defaults[k]:
-                    final[k] = regex_params[k]
+            for key in final:
+                if llm_params[key] != self.defaults[key]:
+                    final[key] = llm_params[key]
+                elif regex_params[key] != self.defaults[key]:
+                    final[key] = regex_params[key]
             return final
         return regex_params
 
     def get_explanation(self, params: dict, original_text: str) -> str:
-        lines = ["### 🔍 Parsed Parameters from Natural Language", f"**Query:** _{original_text}_", "| Parameter | Extracted Value |", "|-----------|-----------------|"]
-        for k, v in params.items():
-            status = "✅ Extracted" if v != self.defaults[k] else "⚪ Default"
-            val = f"{v:.1e}" if isinstance(v, float) and (v < 0.01 or v > 100) else str(v)
-            lines.append(f"| {k} | {val} |")
+        """Generate a markdown table explaining parsed parameters."""
+        lines = ["### 🔍 Parsed Parameters from Natural Language", f"**Query:** _{original_text}_", "| Parameter | Extracted Value | Status |", "|-----------|-----------------|--------|"]
+        for key, val in params.items():
+            if key == 'sigma':
+                continue  # Skip hyperparameter in explanation
+            status = "✅ Extracted" if val != self.defaults[key] else "⚪ Default"
+            if isinstance(val, float):
+                val_str = f"{val:.1e}" if (val < 0.01 or val > 100) else f"{val:.3f}"
+            else:
+                val_str = str(val)
+            lines.append(f"| {key} | {val_str} | {status} |")
         return "\n".join(lines)
 
+
 # =============================================
-# 3. ORIGINAL ATTENTION MODEL (Unchanged)
+# UNIFIED LLM LOADER WITH CACHING
+# =============================================
+@st.cache_resource(show_spinner="Loading LLM backend...")
+def load_llm(backend_name: str):
+    """Load tokenizer and model for specified backend. Cached forever per backend."""
+    if not TRANSFORMERS_AVAILABLE:
+        return None, None, "Regex Fallback Only"
+    
+    if "GPT-2" in backend_name:
+        tokenizer = GPT2Tokenizer.from_pretrained('gpt2')
+        model = GPT2LMHeadModel.from_pretrained('gpt2')
+    elif "Qwen2-0.5B" in backend_name:
+        tokenizer = AutoTokenizer.from_pretrained("Qwen/Qwen2-0.5B-Instruct", trust_remote_code=True)
+        model = AutoModelForCausalLM.from_pretrained("Qwen/Qwen2-0.5B-Instruct", torch_dtype="auto", device_map="auto", trust_remote_code=True)
+    elif "Qwen2.5" in backend_name:
+        tokenizer = AutoTokenizer.from_pretrained("Qwen/Qwen2.5-0.5B-Instruct", trust_remote_code=True)
+        model = AutoModelForCausalLM.from_pretrained("Qwen/Qwen2.5-0.5B-Instruct", torch_dtype="auto", device_map="auto", trust_remote_code=True)
+    else:
+        return None, None, "Unknown Backend"
+    
+    model.eval()
+    return tokenizer, model, backend_name
+
+
+# =============================================
+# ORIGINAL SOLUTION LOADING (UNCHANGED)
+# =============================================
+@st.cache_data
+def load_solutions(solution_dir):
+    solutions = []
+    params_list = []
+    load_logs = []
+    lys = []
+    c_cus = []
+    c_nis = []
+    for fname in os.listdir(solution_dir):
+        if fname.endswith(".pkl"):
+            try:
+                with open(os.path.join(solution_dir, fname), "rb") as f:
+                    sol = pickle.load(f)
+                required_keys = ['params', 'X', 'Y', 'c1_preds', 'c2_preds', 'times']
+                if all(key in sol for key in required_keys):
+                    if (np.any(np.isnan(sol['c1_preds'])) or np.any(np.isnan(sol['c2_preds'])) or
+                            np.all(sol['c1_preds'] == 0) or np.all(sol['c2_preds'] == 0)):
+                        load_logs.append(f"{fname}: Skipped - Invalid data (NaNs or all zeros).")
+                        continue
+                    c1_min, c1_max = np.min(sol['c1_preds'][0]), np.max(sol['c1_preds'][0])
+                    c2_min, c2_max = np.min(sol['c2_preds'][0]), np.max(sol['c2_preds'][0])
+                    solutions.append(sol)
+                    param_tuple = (sol['params']['Ly'], sol['params']['C_Cu'], sol['params']['C_Ni'])
+                    params_list.append(param_tuple)
+                    lys.append(sol['params']['Ly'])
+                    c_cus.append(sol['params']['C_Cu'])
+                    c_nis.append(sol['params']['C_Ni'])
+                    load_logs.append(
+                        f"{fname}: Loaded. Cu: {c1_min:.2e} to {c1_max:.2e}, Ni: {c2_min:.2e} to {c2_max:.2e}, "
+                        f"Ly={param_tuple[0]:.1f}, C_Cu={param_tuple[1]:.1e}, C_Ni={param_tuple[2]:.1e}"
+                    )
+                else:
+                    missing_keys = [key for key in required_keys if key not in sol]
+                    load_logs.append(f"{fname}: Skipped - Missing keys: {missing_keys}")
+            except Exception as e:
+                load_logs.append(f"{fname}: Skipped - Failed to load: {str(e)}")
+    if len(solutions) < 1:
+        load_logs.append("Error: No valid solutions loaded. Interpolation will fail.")
+    else:
+        load_logs.append(f"Loaded {len(solutions)} solutions. Expected 32.")
+    return solutions, params_list, lys, c_cus, c_nis, load_logs
+
+
+# =============================================
+# ORIGINAL ATTENTION INTERPOLATOR (UNCHANGED)
 # =============================================
 class MultiParamAttentionInterpolator(nn.Module):
     def __init__(self, sigma=0.2, num_heads=4, d_head=8):
@@ -219,228 +340,826 @@ class MultiParamAttentionInterpolator(nn.Module):
         self.sigma = sigma
         self.num_heads = num_heads
         self.d_head = d_head
-        self.W_q = nn.Linear(3, num_heads * d_head, bias=False)
-        self.W_k = nn.Linear(3, num_heads * d_head, bias=False)
+        self.W_q = nn.Linear(3, self.num_heads * self.d_head)  # Query projection
+        self.W_k = nn.Linear(3, self.num_heads * self.d_head)  # Key projection
 
-    def normalize_params(self, params, is_target=False):
-        if is_target:
+    def forward(self, solutions, params_list, ly_target, c_cu_target, c_ni_target):
+        if not solutions or not params_list:
+            raise ValueError("No solutions or parameters available for interpolation.")
+
+        # Extract and normalize parameters
+        lys = np.array([p[0] for p in params_list])
+        c_cus = np.array([p[1] for p in params_list])
+        c_nis = np.array([p[2] for p in params_list])
+        if not (lys.shape == c_cus.shape == c_nis.shape):
+            raise ValueError(f"Parameter array shapes mismatch: lys={lys.shape}, c_cus={c_cus.shape}, c_nis={c_nis.shape}")
+
+        ly_norm = (lys - 30.0) / (120.0 - 30.0)
+        c_cu_norm = (c_cus - 0.0) / (2.9e-3 - 0.0)  # Updated to allow C_Cu = 0
+        c_ni_norm = (c_nis - 0.0) / (1.8e-3 - 0.0)  # Updated to allow C_Ni = 0
+        target_ly_norm = (ly_target - 30.0) / (120.0 - 30.0)
+        target_c_cu_norm = (c_cu_target - 0.0) / (2.9e-3 - 0.0)
+        target_c_ni_norm = (c_ni_target - 0.0) / (1.8e-3 - 0.0)
+
+        # Combine normalized parameters into tensors
+        params_tensor = torch.tensor(np.stack([ly_norm, c_cu_norm, c_ni_norm], axis=1), dtype=torch.float32)  # [N, 3]
+        target_params_tensor = torch.tensor([[target_ly_norm, target_c_cu_norm, target_c_ni_norm]], dtype=torch.float32)  # [1, 3]
+
+        # Project to query/key space
+        queries = self.W_q(target_params_tensor)  # [1, num_heads * d_head]
+        keys = self.W_k(params_tensor)  # [N, num_heads * d_head]
+
+        # Reshape for multi-head attention
+        queries = queries.view(1, self.num_heads, self.d_head)  # [1, num_heads, d_head]
+        keys = keys.view(len(params_list), self.num_heads, self.d_head)  # [N, num_heads, d_head]
+
+        # Scaled dot-product attention
+        attn_logits = torch.einsum('nhd,mhd->nmh', keys, queries) / np.sqrt(self.d_head)  # [N, 1, num_heads]
+        attn_weights = torch.softmax(attn_logits, dim=0)  # [N, 1, num_heads]
+        attn_weights = attn_weights.mean(dim=2).squeeze(1)  # [N], average across heads
+
+        # Spatial weights (Gaussian-like for locality)
+        scaled_distances = torch.sqrt(
+            ((torch.tensor(ly_norm) - target_ly_norm) / self.sigma)**2 +
+            ((torch.tensor(c_cu_norm) - target_c_cu_norm) / self.sigma)**2 +
+            ((torch.tensor(c_ni_norm) - target_c_ni_norm) / self.sigma)**2
+        )
+        spatial_weights = torch.exp(-scaled_distances**2 / 2)
+        spatial_weights /= spatial_weights.sum()  # Normalize
+
+        # Combine attention and spatial weights
+        combined_weights = attn_weights * spatial_weights
+        combined_weights /= combined_weights.sum()  # Normalize
+
+        return self._physics_aware_interpolation(solutions, combined_weights.detach().numpy(), ly_target, c_cu_target, c_ni_target)
+
+    def _physics_aware_interpolation(self, solutions, weights, ly_target, c_cu_target, c_ni_target):
+        Lx = solutions[0]['params']['Lx']
+        t_max = solutions[0]['params']['t_max']
+        x_coords = np.linspace(0, Lx, 50)
+        y_coords = np.linspace(0, ly_target, 50)
+        times = np.linspace(0, t_max, 50)
+        X, Y = np.meshgrid(x_coords, y_coords, indexing='ij')
+        c1_interp = np.zeros((len(times), 50, 50))
+        c2_interp = np.zeros((len(times), 50, 50))
+
+        for t_idx in range(len(times)):
+            for sol, weight in zip(solutions, weights):
+                scale_factor = ly_target / sol['params']['Ly']
+                Y_scaled = sol['Y'][0, :] * scale_factor
+                interp_c1 = RegularGridInterpolator(
+                    (sol['X'][:, 0], Y_scaled), sol['c1_preds'][t_idx],
+                    method='linear', bounds_error=False, fill_value=0
+                )
+                interp_c2 = RegularGridInterpolator(
+                    (sol['X'][:, 0], Y_scaled), sol['c2_preds'][t_idx],
+                    method='linear', bounds_error=False, fill_value=0
+                )
+                points = np.stack([X.flatten(), Y.flatten()], axis=1)
+                c1_interp[t_idx] += weight * interp_c1(points).reshape(50, 50)
+                c2_interp[t_idx] += weight * interp_c2(points).reshape(50, 50)
+
+        # Enforce boundary conditions
+        c1_interp[:, :, 0] = c_cu_target  # Cu at y=0
+        c2_interp[:, :, -1] = c_ni_target  # Ni at y=Ly
+
+        param_set = solutions[0]['params'].copy()
+        param_set['Ly'] = ly_target
+        param_set['C_Cu'] = c_cu_target
+        param_set['C_Ni'] = c_ni_target
+
+        return {
+            'params': param_set,
+            'X': X,
+            'Y': Y,
+            'c1_preds': list(c1_interp),
+            'c2_preds': list(c2_interp),
+            'times': times,
+            'interpolated': True,
+            'attention_weights': weights.tolist()
+        }
+
+
+# =============================================
+# ORIGINAL INTERPOLATION WRAPPER (UNCHANGED)
+# =============================================
+@st.cache_data
+def load_and_interpolate_solution(solutions, params_list, ly_target, c_cu_target, c_ni_target, tolerance_ly=0.1, tolerance_c=1e-5):
+    for sol, params in zip(solutions, params_list):
+        ly, c_cu, c_ni = params
+        if (abs(ly - ly_target) < tolerance_ly and
+                abs(c_cu - c_cu_target) < tolerance_c and
+                abs(c_ni - c_ni_target) < tolerance_c):
+            sol['interpolated'] = False
+            return sol
+    if not solutions:
+        raise ValueError("No solutions available for interpolation.")
+    interpolator = MultiParamAttentionInterpolator(sigma=0.2)
+    return interpolator(solutions, params_list, ly_target, c_cu_target, c_ni_target)
+
+
+# =============================================
+# ORIGINAL PLOTTING FUNCTIONS (UNCHANGED)
+# =============================================
+def plot_2d_concentration(solution, time_index, output_dir="figures", cmap_cu='viridis', cmap_ni='magma', vmin_cu=None, vmax_cu=None, vmin_ni=None, vmax_ni=None):
+    x_coords = solution['X'][:, 0]
+    y_coords = solution['Y'][0, :]
+    t_val = solution['times'][time_index]
+    Lx = solution['params']['Lx']
+    Ly = solution['params']['Ly']
+    c1 = solution['c1_preds'][time_index]
+    c2 = solution['c2_preds'][time_index]
+
+    # Apply custom limits or auto-scale
+    cu_min = vmin_cu if vmin_cu is not None else 0
+    cu_max = vmax_cu if vmax_cu is not None else np.max(c1)
+    ni_min = vmin_ni if vmin_ni is not None else 0
+    ni_max = vmax_ni if vmax_ni is not None else np.max(c2)
+
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(10, 4), constrained_layout=True)
+
+    # Cu heatmap
+    im1 = ax1.imshow(
+        c1,
+        origin='lower',
+        extent=[0, Lx, 0, Ly],
+        cmap=cmap_cu,
+        vmin=cu_min,
+        vmax=cu_max
+    )
+    ax1.set_xlabel('x (μm)')
+    ax1.set_ylabel('y (μm)')
+    ax1.set_title(f'Cu Concentration, t = {t_val:.1f} s')
+    ax1.grid(True)
+    cb1 = fig.colorbar(im1, ax=ax1, label='Cu Conc. (mol/cc)', format='%.1e')
+    cb1.ax.tick_params(labelsize=10)
+
+    # Ni heatmap
+    im2 = ax2.imshow(
+        c2,
+        origin='lower',
+        extent=[0, Lx, 0, Ly],
+        cmap=cmap_ni,
+        vmin=ni_min,
+        vmax=ni_max
+    )
+    ax2.set_xlabel('x (μm)')
+    ax2.set_ylabel('y (μm)')
+    ax2.set_title(f'Ni Concentration, t = {t_val:.1f} s')
+    ax2.grid(True)
+    cb2 = fig.colorbar(im2, ax=ax2, label='Ni Conc. (mol/cc)', format='%.1e')
+    cb2.ax.tick_params(labelsize=10)
+
+    param_text = f"$L_y$ = {Ly:.1f} μm, $C_{{Cu}}$ = {solution['params']['C_Cu']:.1e}, $C_{{Ni}}$ = {solution['params']['C_Ni']:.1e}"
+    if solution.get('interpolated', False):
+        param_text += " (Interpolated)"
+    fig.suptitle(f'Concentration Profiles\n{param_text}', fontsize=14)
+
+    os.makedirs(output_dir, exist_ok=True)
+    base_filename = f"conc_2d_t_{t_val:.1f}_ly_{Ly:.1f}_ccu_{solution['params']['C_Cu']:.1e}_cni_{solution['params']['C_Ni']:.1e}"
+    plt.savefig(os.path.join(output_dir, f"{base_filename}.png"), dpi=300, bbox_inches='tight')
+    plt.savefig(os.path.join(output_dir, f"{base_filename}.pdf"), bbox_inches='tight')
+    plt.close()
+    return fig, base_filename
+
+
+def plot_centerline_curves(
+        solution, time_indices, sidebar_metric='mean_cu', output_dir="figures",
+        label_size=12, title_size=14, tick_label_size=10, legend_loc='upper right',
+        curve_colormap='viridis', axis_linewidth=1.5, tick_major_width=1.5,
+        tick_major_length=4.0, fig_width=8.0, fig_height=6.0, curve_linewidth=1.0,
+        grid_alpha=0.3, grid_linestyle='--', legend_frameon=True, legend_framealpha=0.8
+):
+    x_coords = solution['X'][:, 0]
+    y_coords = solution['Y'][0, :]
+    Lx = solution['params']['Lx']
+    Ly = solution['params']['Ly']
+    center_idx = 25  # x = Lx/2
+    times = solution['times']
+
+    # Prepare sidebar data
+    if sidebar_metric == 'loss' and 'loss' in solution:
+        sidebar_data = solution['loss'][:len(times)]
+        sidebar_label = 'Loss'
+    elif sidebar_metric == 'mean_cu':
+        sidebar_data = [np.mean(c1) for c1 in solution['c1_preds']]
+        sidebar_label = 'Mean Cu Conc. (mol/cc)'
+    else:  # mean_ni
+        sidebar_data = [np.mean(c2) for c2 in solution['c2_preds']]
+        sidebar_label = 'Mean Ni Conc. (mol/cc)'
+
+    fig = plt.figure(figsize=(fig_width, fig_height), constrained_layout=True)
+    gs = fig.add_gridspec(1, 4, width_ratios=[1, 1, 0.05, 0.5])
+    ax1 = fig.add_subplot(gs[0])
+    ax2 = fig.add_subplot(gs[1])
+    ax3 = fig.add_subplot(gs[3])
+
+    # Centerline curves
+    colors = cm.get_cmap(curve_colormap)(np.linspace(0, 1, len(time_indices)))
+    for idx, t_idx in enumerate(time_indices):
+        t_val = times[t_idx]
+        c1 = solution['c1_preds'][t_idx][:, center_idx]
+        c2 = solution['c2_preds'][t_idx][:, center_idx]
+        ax1.plot(y_coords, c1, label=f't = {t_val:.1f} s', color=colors[idx], linewidth=curve_linewidth)
+        ax2.plot(y_coords, c2, label=f't = {t_val:.1f} s', color=colors[idx], linewidth=curve_linewidth)
+
+    # Axis styling
+    for ax in [ax1, ax2, ax3]:
+        for spine in ax.spines.values():
+            spine.set_linewidth(axis_linewidth)
+        ax.tick_params(
+            axis='both',
+            which='major',
+            width=tick_major_width,
+            length=tick_major_length,
+            labelsize=tick_label_size
+        )
+        ax.grid(True, linestyle=grid_linestyle, alpha=grid_alpha)
+
+    # Legend placement
+    legend_positions = {
+        'upper right': {'loc': 'upper right', 'bbox': None},
+        'upper left': {'loc': 'upper left', 'bbox': None},
+        'lower right': {'loc': 'lower right', 'bbox': None},
+        'lower left': {'loc': 'lower left', 'bbox': None},
+        'center': {'loc': 'center', 'bbox': None},
+        'best': {'loc': 'best', 'bbox': None},
+        'right': {'loc': 'center left', 'bbox': (1.05, 0.5)},
+        'left': {'loc': 'center right', 'bbox': (-0.05, 0.5)},
+        'above': {'loc': 'lower center', 'bbox': (0.5, 1.05)},
+        'below': {'loc': 'upper center', 'bbox': (0.5, -0.05)}
+    }
+    legend_params = legend_positions.get(legend_loc, {'loc': 'upper right', 'bbox': None})
+
+    ax1.set_xlabel('y (μm)', fontsize=label_size)
+    ax1.set_ylabel('Cu Conc. (mol/cc)', fontsize=label_size)
+    ax1.set_title(f'Cu at x = {Lx/2:.1f} μm', fontsize=title_size)
+    ax1.legend(fontsize=8, loc=legend_params['loc'], bbox_to_anchor=legend_params['bbox'],
+               frameon=legend_frameon, framealpha=legend_framealpha)
+    ax1.ticklabel_format(style='sci', axis='y', scilimits=(0, 0))
+
+    ax2.set_xlabel('y (μm)', fontsize=label_size)
+    ax2.set_ylabel('Ni Conc. (mol/cc)', fontsize=label_size)
+    ax2.set_title(f'Ni at x = {Lx/2:.1f} μm', fontsize=title_size)
+    ax2.legend(fontsize=8, loc=legend_params['loc'], bbox_to_anchor=legend_params['bbox'],
+               frameon=legend_frameon, framealpha=legend_framealpha)
+    ax2.ticklabel_format(style='sci', axis='y', scilimits=(0, 0))
+
+    # Sidebar plot
+    ax3.plot(sidebar_data, times, 'k-', linewidth=curve_linewidth)
+    ax3.set_xlabel(sidebar_label, fontsize=label_size)
+    ax3.set_ylabel('Time (s)', fontsize=label_size)
+    ax3.set_title('Metric vs. Time', fontsize=title_size)
+    ax3.ticklabel_format(style='sci', axis='x', scilimits=(0, 0))
+
+    param_text = f"$L_y$ = {Ly:.1f} μm, $C_{{Cu}}$ = {solution['params']['C_Cu']:.1e}, $C_{{Ni}}$ = {solution['params']['C_Ni']:.1e}"
+    if solution.get('interpolated', False):
+        param_text += " (Interpolated)"
+    fig.suptitle(f'Centerline Concentration Profiles\n{param_text}', fontsize=title_size)
+
+    os.makedirs(output_dir, exist_ok=True)
+    base_filename = f"conc_centerline_ly_{Ly:.1f}_ccu_{solution['params']['C_Cu']:.1e}_cni_{solution['params']['C_Ni']:.1e}"
+    plt.savefig(os.path.join(output_dir, f"{base_filename}.png"), dpi=300, bbox_inches='tight')
+    plt.savefig(os.path.join(output_dir, f"{base_filename}.pdf"), bbox_inches='tight')
+    plt.close()
+    return fig, base_filename
+
+
+def plot_parameter_sweep(
+        solutions, params_list, selected_params, time_index, sidebar_metric='mean_cu', output_dir="figures",
+        label_size=12, title_size=14, tick_label_size=10, legend_loc='upper right',
+        curve_colormap='tab10', axis_linewidth=1.5, tick_major_width=1.5,
+        tick_major_length=4.0, fig_width=8.0, fig_height=6.0, curve_linewidth=1.0,
+        grid_alpha=0.3, grid_linestyle='--', legend_frameon=True, legend_framealpha=0.8
+):
+    Lx = solutions[0]['params']['Lx']
+    center_idx = 25  # x = Lx/2
+    t_val = solutions[0]['times'][time_index]
+
+    # Prepare sidebar data
+    sidebar_data = []
+    sidebar_labels = []
+    for sol, params in zip(solutions, params_list):
+        if params in selected_params:
+            if sidebar_metric == 'loss' and 'loss' in sol:
+                sidebar_data.append(sol['loss'][time_index])
+            elif sidebar_metric == 'mean_cu':
+                sidebar_data.append(np.mean(sol['c1_preds'][time_index]))
+            else:  # mean_ni
+                sidebar_data.append(np.mean(sol['c2_preds'][time_index]))
             ly, c_cu, c_ni = params
-            return np.array([(ly - 30.0) / (120.0 - 30.0), c_cu / 2.9e-3, c_ni / 1.8e-3])
-        else:
-            p = np.array(params)
-            return np.stack([(p[:, 0] - 30.0) / (120.0 - 30.0), p[:, 1] / 2.9e-3, p[:, 2] / 1.8e-3], axis=1)
+            label = f'$L_y$={ly:.1f}, $C_{{Cu}}$={c_cu:.1e}, $C_{{Ni}}$={c_ni:.1e}'
+            if sol.get('interpolated', False):
+                label += " (Interpolated)"
+            sidebar_labels.append(label)
 
-    def compute_weights(self, params_list, ly_target, c_cu_target, c_ni_target):
-        norm_sources = self.normalize_params(params_list)
-        norm_target = self.normalize_params((ly_target, c_cu_target, c_ni_target), is_target=True)
-        src_tensor = torch.tensor(norm_sources, dtype=torch.float32)
-        tgt_tensor = torch.tensor(norm_target, dtype=torch.float32).unsqueeze(0)
-        q = self.W_q(tgt_tensor).view(1, self.num_heads, self.d_head)
-        k = self.W_k(src_tensor).view(len(params_list), self.num_heads, self.d_head)
-        attn_logits = torch.einsum('nhd,mhd->nmh', k, q) / np.sqrt(self.d_head)
-        attn_weights = torch.softmax(attn_logits, dim=0).mean(dim=2).squeeze(1)
-        dists = torch.sqrt(((src_tensor[:, 0] - norm_target[0]) / self.sigma)**2 + ((src_tensor[:, 1] - norm_target[1]) / self.sigma)**2 + ((src_tensor[:, 2] - norm_target[2]) / self.sigma)**2)
-        spatial_weights = torch.exp(-dists**2 / 2)
-        spatial_weights /= spatial_weights.sum() + 1e-8
-        combined = attn_weights * spatial_weights
-        combined /= combined.sum() + 1e-8
-        return {'W_q': self.W_q.weight.data.numpy(), 'W_k': self.W_k.weight.data.numpy(),
-                'attention_weights': attn_weights.detach().numpy(), 'spatial_weights': spatial_weights.detach().numpy(),
-                'combined_weights': combined.detach().numpy(), 'norm_sources': norm_sources, 'norm_target': norm_target}
+    # Create figure with custom size
+    fig = plt.figure(figsize=(fig_width, fig_height), constrained_layout=True)
+    gs = fig.add_gridspec(1, 4, width_ratios=[1, 1, 0.05, 0.5])
+    ax1 = fig.add_subplot(gs[0])
+    ax2 = fig.add_subplot(gs[1])
+    ax3 = fig.add_subplot(gs[3])
+
+    # Parameter sweep curves
+    colors = cm.get_cmap(curve_colormap)(np.linspace(0, 1, len(selected_params)))
+    for idx, (sol, params) in enumerate(zip(solutions, params_list)):
+        ly, c_cu, c_ni = params
+        if params in selected_params:
+            y_coords = sol['Y'][0, :]
+            c1 = sol['c1_preds'][time_index][:, center_idx]
+            c2 = sol['c2_preds'][time_index][:, center_idx]
+            label = f'$L_y$={ly:.1f}, $C_{{Cu}}$={c_cu:.1e}, $C_{{Ni}}$={c_ni:.1e}'
+            if sol.get('interpolated', False):
+                label += " (Interpolated)"
+            ax1.plot(y_coords, c1, label=label, color=colors[idx], linewidth=curve_linewidth)
+            ax2.plot(y_coords, c2, label=label, color=colors[idx], linewidth=curve_linewidth)
+
+    # Axis styling
+    for ax in [ax1, ax2, ax3]:
+        for spine in ax.spines.values():
+            spine.set_linewidth(axis_linewidth)
+        ax.tick_params(
+            axis='both',
+            which='major',
+            width=tick_major_width,
+            length=tick_major_length,
+            labelsize=tick_label_size
+        )
+        ax.grid(True, linestyle=grid_linestyle, alpha=grid_alpha)
+
+    # Legend placement
+    legend_positions = {
+        'upper right': {'loc': 'upper right', 'bbox': None},
+        'upper left': {'loc': 'upper left', 'bbox': None},
+        'lower right': {'loc': 'lower right', 'bbox': None},
+        'lower left': {'loc': 'lower left', 'bbox': None},
+        'center': {'loc': 'center', 'bbox': None},
+        'best': {'loc': 'best', 'bbox': None},
+        'right': {'loc': 'center left', 'bbox': (1.05, 0.5)},
+        'left': {'loc': 'center right', 'bbox': (-0.05, 0.5)},
+        'above': {'loc': 'lower center', 'bbox': (0.5, 1.05)},
+        'below': {'loc': 'upper center', 'bbox': (0.5, -0.05)}
+    }
+    legend_params = legend_positions.get(legend_loc, {'loc': 'upper right', 'bbox': None})
+
+    ax1.set_xlabel('y (μm)', fontsize=label_size)
+    ax1.set_ylabel('Cu Conc. (mol/cc)', fontsize=label_size)
+    ax1.set_title(f'Cu at x = {Lx/2:.1f} μm, t = {t_val:.1f} s', fontsize=title_size)
+    ax1.legend(fontsize=8, loc=legend_params['loc'], bbox_to_anchor=legend_params['bbox'],
+               frameon=legend_frameon, framealpha=legend_framealpha)
+    ax1.ticklabel_format(style='sci', axis='y', scilimits=(0, 0))
+
+    ax2.set_xlabel('y (μm)', fontsize=label_size)
+    ax2.set_ylabel('Ni Conc. (mol/cc)', fontsize=label_size)
+    ax2.set_title(f'Ni at x = {Lx/2:.1f} μm, t = {t_val:.1f} s', fontsize=title_size)
+    ax2.legend(fontsize=8, loc=legend_params['loc'], bbox_to_anchor=legend_params['bbox'],
+               frameon=legend_frameon, framealpha=legend_framealpha)
+    ax2.ticklabel_format(style='sci', axis='y', scilimits=(0, 0))
+
+    # Sidebar bar plot
+    ax3.barh(range(len(sidebar_data)), sidebar_data, color='gray', edgecolor='black')
+    ax3.set_yticks(range(len(sidebar_data)))
+    ax3.set_yticklabels(sidebar_labels, fontsize=tick_label_size)
+    ax3.set_xlabel(
+        'Mean Cu Conc. (mol/cc)' if sidebar_metric == 'mean_cu' else 'Mean Ni Conc. (mol/cc)' if sidebar_metric == 'mean_ni' else 'Loss',
+        fontsize=label_size
+    )
+    ax3.set_title('Metric per Parameter', fontsize=title_size)
+    ax3.grid(True, axis='x', linestyle=grid_linestyle, alpha=grid_alpha)
+    ax3.ticklabel_format(style='sci', axis='x', scilimits=(0, 0))
+
+    fig.suptitle('Concentration Profiles for Parameter Sweep', fontsize=title_size)
+
+    os.makedirs(output_dir, exist_ok=True)
+    base_filename = f"conc_sweep_t_{t_val:.1f}"
+    plt.savefig(os.path.join(output_dir, f"{base_filename}.png"), dpi=300, bbox_inches='tight')
+    plt.savefig(os.path.join(output_dir, f"{base_filename}.pdf"), bbox_inches='tight')
+    plt.close()
+    return fig, base_filename
+
 
 # =============================================
-# 4. SESSION STATE & INIT
+# SESSION STATE INITIALIZATION
 # =============================================
-def init_session():
+def initialize_session_state():
+    """Initialize Streamlit session state with defaults for LLM and parser."""
     defaults = {
+        'nl_parser': DiffusionNLParser(),
         'llm_backend_loaded': 'GPT-2 (default)',
         'llm_cache': OrderedDict(),
-        'nl_parser': DiffusionNLParser(),
-        'parsed_params': DiffusionNLParser().defaults.copy(),
+        'parsed_params': None,
         'nl_query': "",
-        'use_llm': True
+        'use_llm': True,
     }
-    for k, v in defaults.items():
-        if k not in st.session_state:
-            st.session_state[k] = v
+    for key, value in defaults.items():
+        if key not in st.session_state:
+            st.session_state[key] = value
 
-init_session()
 
 # =============================================
-# 5. STREAMLIT UI & LOGIC
+# MAIN APP WITH LLM INTEGRATION
 # =============================================
-st.title("🔬 Attention-Driven Inference for Cu-Ni Interdiffusion & IMC Growth")
-
-# === LLM SETUP (Sidebar) ===
-with st.sidebar:
-    st.header("🤖 LLM Configuration")
-    if TRANSFORMERS_AVAILABLE:
-        backend = st.selectbox("LLM Backend", ["GPT-2 (default)", "Qwen2-0.5B-Instruct", "Qwen2.5-0.5B-Instruct"], index=0)
-        if backend != st.session_state.llm_backend_loaded:
-            st.session_state.llm_backend_loaded = backend
-            st.session_state.llm_cache.clear()
-            st.rerun()
+def main():
+    st.set_page_config(
+        page_title="LLM-Enhanced Cu-Ni Diffusion Visualizer",
+        layout="wide",
+        page_icon="🔬"
+    )
+    
+    st.title("🔬 Attention-Based Cu-Ni Interdiffusion with Natural Language Interface")
+    
+    # Initialize session state
+    initialize_session_state()
+    
+    # =========================================
+    # SIDEBAR: LLM CONFIGURATION
+    # =========================================
+    with st.sidebar:
+        st.header("🤖 LLM Configuration")
+        if TRANSFORMERS_AVAILABLE:
+            backend_choice = st.selectbox(
+                "LLM Backend",
+                ["GPT-2 (default)", "Qwen2-0.5B-Instruct", "Qwen2.5-0.5B-Instruct"],
+                index=0
+            )
+            # Load model if backend changed
+            if backend_choice != st.session_state.llm_backend_loaded:
+                st.session_state.llm_backend_loaded = backend_choice
+                st.session_state.llm_cache.clear()  # Clear cache on backend switch
+                st.rerun()
             
-        tok, mod = load_llm_backend(backend)
-        st.session_state.llm_tokenizer = tok
-        st.session_state.llm_model = mod
-        st.session_state.use_llm = st.checkbox("Enable LLM Parsing", value=True)
-        st.caption(f"Active: **{st.session_state.llm_backend_loaded}**")
-    else:
-        st.error("Install `transformers` to enable LLM features.")
-        st.session_state.use_llm = False
-        st.session_state.llm_backend_loaded = "Regex Fallback Only"
-
-    st.header("⚙️ Attention Hyperparameters")
-    sigma = st.slider("Locality σ", 0.05, 0.50, st.session_state.parsed_params['sigma'], 0.01)
-    num_heads = st.slider("Heads", 1, 8, st.session_state.parsed_params['num_heads'])
-    d_head = st.slider("Dim/Head", 4, 16, st.session_state.parsed_params['d_head'])
-    seed = st.number_input("Seed", 0, 9999, st.session_state.parsed_params['seed'])
-
-# === NL INPUT ===
-st.subheader("📝 Natural Language Query")
-templates = {
-    "Thin Asymmetric Joint": "Analyze a 40 μm asymmetric Cu-Ni joint with top Cu concentration 1.8e-3 and bottom Ni 0.4e-3 using Path I.",
-    "Thick Symmetric Cu": "Simulate a 100 μm symmetric Cu/Sn2.5Ag/Cu joint. Use c_Cu=2.0e-3. Path not applicable.",
-    "Ni-Rich Diffusion": "Domain length 60 μm, C_Cu=1.0e-3, C_Ni=1.5e-3. Asymmetric configuration, Path II sequence."
-}
-col1, col2 = st.columns([3, 1])
-with col1:
-    query = st.text_area("Describe your solder joint configuration:", height=100, key="nl_query", placeholder="e.g., Analyze a 50 μm joint with Cu=1.5e-3, Ni=0.6e-3, asymmetric configuration...")
-with col2:
-    st.markdown("**Quick Templates:**")
-    for name, text in templates.items():
-        if st.button(name, use_container_width=True):
-            st.session_state.nl_query = text
-            st.rerun()
-
-# === PARSE & UPDATE STATE ===
-parser = st.session_state.nl_parser
-use_llm = st.session_state.get('use_llm', False)
-tokenizer = st.session_state.get('llm_tokenizer', None)
-model = st.session_state.get('llm_model', None)
-
-parsed = parser.hybrid_parse(query, tokenizer, model, use_llm=use_llm)
-st.session_state.parsed_params = parsed
-st.markdown(parser.get_explanation(parsed, query))
-
-# === TARGET INPUTS (Pre-filled by Parser, User can Override) ===
-st.subheader("🎯 Target Joint Configuration (Override if needed)")
-col1, col2 = st.columns(2)
-with col1:
-    substrate_type = st.selectbox("Substrate Configuration", 
-        ["Cu(top)-Ni(bottom) Asymmetric", "Cu/Sn2.5Ag/Cu Symmetric", "Ni/Sn2.5Ag/Ni Symmetric"],
-        index=["Cu(top)-Ni(bottom) Asymmetric", "Cu/Sn2.5Ag/Cu Symmetric", "Ni/Sn2.5Ag/Ni Symmetric"].index(parsed['substrate_type']))
-    joining_path = st.selectbox("Joining Path (for Asymmetric)", 
-        ["Path I (Cu→Ni)", "Path II (Ni→Cu)", "N/A"],
-        index=["Path I (Cu→Ni)", "Path II (Ni→Cu)", "N/A"].index(parsed['joining_path']))
-    ly_target = st.slider("Joint Thickness \(L_y\) (μm)", 30.0, 120.0, parsed['ly_target'], 1.0)
-with col2:
-    c_cu_target = st.number_input("Top BC \(C_{Cu}\) (mol/cc)", 0.0, 2.9e-3, parsed['c_cu_target'], 1e-4, format="%.1e")
-    c_ni_target = st.number_input("Bottom BC \(C_{Ni}\) (mol/cc)", 0.0, 1.8e-3, parsed['c_ni_target'], 1e-5, format="%.1e")
-
-# === SOURCE SOLUTIONS ===
-st.subheader("📦 Precomputed Source Simulations (PINN-Generated)")
-num_sources = st.slider("Number of Sources", 2, 6, 3)
-params_list = []
-for i in range(num_sources):
-    with st.expander(f"Source {i+1}"):
-        c1, c2, c3 = st.columns(3)
-        ly = c1.number_input(f"L_y", 30.0, 120.0, 30.0 + 30*i, 0.1, key=f"ly_{i}")
-        c_cu = c2.number_input(f"C_Cu", 0.0, 2.9e-3, 1.5e-3, 1e-4, format="%.1e", key=f"ccu_{i}")
-        c_ni = c3.number_input(f"C_Ni", 0.0, 1.8e-3, 0.1e-3 + 0.4e-3*i, 1e-5, format="%.1e", key=f"cni_{i}")
-        params_list.append((ly, c_cu, c_ni))
-
-# === RUN INFERENCE ===
-if st.button("🚀 Run Attention Inference", type="primary", use_container_width=True):
-    torch.manual_seed(seed)
-    np.random.seed(seed)
-    with st.spinner("Interpolating diffusion profiles and inferring joint behavior..."):
-        interpolator = MultiParamAttentionInterpolator(sigma, num_heads, d_head)
-        results = interpolator.compute_weights(params_list, ly_target, c_cu_target, c_ni_target)
-    st.success("✅ Inference Complete!")
-
-    col1, col2 = st.columns([1.2, 1])
+            tokenizer, model, active_backend = load_llm(backend_choice)
+            st.session_state.llm_tokenizer = tokenizer
+            st.session_state.llm_model = model
+            st.session_state.use_llm = st.checkbox("Enable LLM Parsing", value=True)
+            st.caption(f"Active: **{active_backend}**")
+        else:
+            st.error("Install `transformers` to enable LLM features.")
+            st.session_state.use_llm = False
+            st.session_state.llm_backend_loaded = "Regex Fallback Only"
+        
+        st.header("⚙️ Interpolation Hyperparameters")
+        sigma = st.slider("Locality σ", 0.05, 0.50, 0.20, 0.01)
+        num_heads = st.slider("Attention Heads", 1, 8, 4)
+        d_head = st.slider("Dim/Head", 4, 16, 8)
+        seed = st.number_input("Random Seed", 0, 9999, 42)
+        torch.manual_seed(seed)
+        np.random.seed(seed)
+    
+    # =========================================
+    # MAIN: NATURAL LANGUAGE INPUT
+    # =========================================
+    st.subheader("📝 Describe Your Solder Joint Configuration")
+    
+    # Template buttons for quick queries
+    templates = {
+        "Thin Asymmetric Joint": "Analyze a 40 μm asymmetric Cu-Ni joint with top Cu concentration 1.8e-3 and bottom Ni 0.4e-3.",
+        "Thick Symmetric Cu": "Simulate a 100 μm symmetric Cu/Sn2.5Ag/Cu joint. Use c_Cu=2.0e-3.",
+        "Ni-Rich Diffusion": "Domain length 60 μm, C_Cu=1.0e-3, C_Ni=1.5e-3. Asymmetric configuration.",
+        "Self-Diffusion Baseline": "Ly=75 μm, C_Cu=0, C_Ni=0 for self-diffusion reference.",
+    }
+    
+    col1, col2 = st.columns([3, 1])
     with col1:
-        st.subheader("Hybrid Attention Weights")
-        df_weights = pd.DataFrame({'Source': [f"S{i+1}" for i in range(len(params_list))],
-                                   'Attention': np.round(results['attention_weights'], 4),
-                                   'Gaussian': np.round(results['spatial_weights'], 4),
-                                   'Hybrid': np.round(results['combined_weights'], 4)})
-        st.dataframe(df_weights.style.bar(subset=['Hybrid'], color='#5fba7d'), use_container_width=True)
-
-        fig, ax = plt.subplots()
-        src = results['norm_sources']
-        tgt = results['norm_target']
-        sc = ax.scatter(src[:, 0], src[:, 1], c=src[:, 2], s=100, cmap='plasma', label='Sources', edgecolors='k')
-        ax.scatter(tgt[0], tgt[1], c=tgt[2], s=300, marker='*', cmap='plasma', edgecolors='red', label='Target')
-        ax.set_xlabel("Norm. $L_y$")
-        ax.set_ylabel("Norm. $C_{Cu}$")
-        ax.set_title("Parameter Space")
-        ax.legend()
-        plt.colorbar(sc, ax=ax).set_label("Norm. $C_{Ni}$")
-        st.pyplot(fig)
-
+        nl_query = st.text_area(
+            "Enter natural language query:",
+            height=100,
+            placeholder="e.g., Analyze a 50 μm joint with Cu=1.5e-3, Ni=0.6e-3, asymmetric configuration...",
+            key="nl_query"
+        )
     with col2:
-        st.subheader("Projection Matrices")
-        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(10, 4))
-        sns.heatmap(results['W_q'], ax=ax1, cmap='coolwarm', center=0, cbar=False)
-        ax1.set_title("$W_q$")
-        sns.heatmap(results['W_k'], ax=ax2, cmap='coolwarm', center=0)
-        ax2.set_title("$W_k$")
-        st.pyplot(fig)
+        st.markdown("**Quick Templates:**")
+        for name, text in templates.items():
+            if st.button(name, use_container_width=True):
+                st.session_state.nl_query = text
+                st.rerun()
+    
+    # Parse query and display explanation
+    parser = st.session_state.nl_parser
+    use_llm = st.session_state.get('use_llm', False)
+    tokenizer = st.session_state.get('llm_tokenizer', None)
+    model = st.session_state.get('llm_model', None)
+    
+    if nl_query:
+        parsed = parser.hybrid_parse(nl_query, tokenizer, model, use_llm=use_llm)
+        st.session_state.parsed_params = parsed
+        st.markdown(parser.get_explanation(parsed, nl_query))
+    else:
+        # Use defaults if no query
+        parsed = parser.defaults.copy()
+        st.session_state.parsed_params = parsed
+    
+    # =========================================
+    # PARAMETER SELECTION (Pre-filled by Parser)
+    # =========================================
+    st.subheader("🎯 Target Parameters (Override if Needed)")
+    
+    # Sort unique parameters from loaded solutions
+    solutions, params_list, lys, c_cus, c_nis, load_logs = load_solutions(SOLUTION_DIR)
+    
+    # Display load logs
+    if load_logs:
+        with st.expander("📋 Load Log"):
+            for log in load_logs:
+                st.write(log)
+    
+    if not solutions:
+        st.error("No valid solution files found in pinn_solutions directory.")
+        return
+    
+    lys = sorted(set(lys))
+    c_cus = sorted(set(c_cus))
+    c_nis = sorted(set(c_nis))
+    
+    # Parameter selection with parsed defaults
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        ly_choice = st.selectbox(
+            "Domain Height (Ly, μm)",
+            options=lys,
+            format_func=lambda x: f"{x:.1f}",
+            index=min(lys.index(parsed['ly_target']), len(lys)-1) if parsed['ly_target'] in lys else 0
+        )
+    with col2:
+        c_cu_choice = st.selectbox(
+            "Cu Boundary Concentration (mol/cc)",
+            options=c_cus,
+            format_func=lambda x: f"{x:.1e}",
+            index=min(c_cus.index(parsed['c_cu_target']), len(c_cus)-1) if parsed['c_cu_target'] in c_cus else 0
+        )
+    with col3:
+        c_ni_choice = st.selectbox(
+            "Ni Boundary Concentration (mol/cc)",
+            options=c_nis,
+            format_func=lambda x: f"{x:.1e}",
+            index=min(c_nis.index(parsed['c_ni_target']), len(c_nis)-1) if parsed['c_ni_target'] in c_nis else 0
+        )
+    
+    # Custom parameters for interpolation
+    use_custom_params = st.checkbox("Use Custom Parameters for Interpolation", value=False)
+    if use_custom_params:
+        ly_target = st.number_input(
+            "Custom Ly (μm)",
+            min_value=30.0,
+            max_value=120.0,
+            value=parsed['ly_target'],
+            step=0.1,
+            format="%.1f"
+        )
+        c_cu_target = st.number_input(
+            "Custom C_Cu (mol/cc)",
+            min_value=0.0,
+            max_value=2.9e-3,
+            value=parsed['c_cu_target'],
+            step=0.1e-3,
+            format="%.1e"
+        )
+        c_ni_target = st.number_input(
+            "Custom C_Ni (mol/cc)",
+            min_value=0.0,
+            max_value=1.8e-3,
+            value=parsed['c_ni_target'],
+            step=0.1e-4,
+            format="%.1e"
+        )
+    else:
+        ly_target, c_cu_target, c_ni_target = ly_choice, c_cu_choice, c_ni_choice
+    
+    # =========================================
+    # VISUALIZATION SETTINGS
+    # =========================================
+    st.subheader("🎨 Visualization Settings")
+    cmap_cu = st.selectbox("Cu Heatmap Colormap", options=COLORMAPS, index=COLORMAPS.index('viridis'))
+    cmap_ni = st.selectbox("Ni Heatmap Colormap", options=COLORMAPS, index=COLORMAPS.index('magma'))
+    sidebar_metric = st.selectbox("Sidebar Metric for Curves", options=['mean_cu', 'mean_ni', 'loss'], index=0)
+    
+    # Color scale limits
+    st.subheader("🎯 Color Scale Limits")
+    use_custom_scale = st.checkbox("Use custom color scale limits", value=False)
+    custom_cu_min, custom_cu_max, custom_ni_min, custom_ni_max = None, None, None, None
+    if use_custom_scale:
+        col1, col2 = st.columns(2)
+        with col1:
+            st.write("**Cu Concentration Limits**")
+            custom_cu_min = st.number_input("Cu Min", value=0.0, format="%.2e", key="cu_min")
+            custom_cu_max = st.number_input("Cu Max", value=float(np.max([np.max(sol['c1_preds']) for sol in solutions])), format="%.2e", key="cu_max")
+        with col2:
+            st.write("**Ni Concentration Limits**")
+            custom_ni_min = st.number_input("Ni Min", value=0.0, format="%.2e", key="ni_min")
+            custom_ni_max = st.number_input("Ni Max", value=float(np.max([np.max(sol['c2_preds']) for sol in solutions])), format="%.2e", key="ni_max")
+    
+    # Validate color scale limits
+    if custom_cu_min is not None and custom_cu_max is not None and custom_cu_min >= custom_cu_max:
+        st.error("Cu minimum concentration must be less than maximum concentration.")
+        return
+    if custom_ni_min is not None and custom_ni_max is not None and custom_ni_min >= custom_ni_max:
+        st.error("Ni minimum concentration must be less than maximum concentration.")
+        return
+    
+    # Figure customization controls
+    with st.expander("🔧 Figure Customization"):
+        label_size = st.slider("Axis Label Size", min_value=8, max_value=20, value=12, step=1)
+        title_size = st.slider("Title Size", min_value=10, max_value=24, value=14, step=1)
+        tick_label_size = st.slider("Tick Label Size", min_value=6, max_value=16, value=10, step=1)
+        legend_loc = st.selectbox(
+            "Legend Location",
+            options=['upper right', 'upper left', 'lower right', 'lower left', 'center', 'best',
+                     'right', 'left', 'above', 'below'],
+            index=0
+        )
+        curve_colormap = st.selectbox(
+            "Curve Colormap",
+            options=['viridis', 'plasma', 'inferno', 'magma', 'tab10', 'Set1', 'Set2'],
+            index=4
+        )
+        axis_linewidth = st.slider("Axis Line Width", min_value=0.5, max_value=3.0, value=1.5, step=0.1)
+        tick_major_width = st.slider("Tick Major Width", min_value=0.5, max_value=3.0, value=1.5, step=0.1)
+        tick_major_length = st.slider("Tick Major Length", min_value=2.0, max_value=10.0, value=4.0, step=0.5)
+        fig_width = st.slider("Figure Width (inches)", min_value=4.0, max_value=12.0, value=8.0, step=0.5)
+        fig_height = st.slider("Figure Height (inches)", min_value=3.0, max_value=8.0, value=6.0, step=0.5)
+        curve_linewidth = st.slider("Curve Line Width", min_value=0.5, max_value=3.0, value=1.0, step=0.1)
+        grid_alpha = st.slider("Grid Opacity", min_value=0.0, max_value=1.0, value=0.3, step=0.1)
+        grid_linestyle = st.selectbox("Grid Line Style", options=['--', '-', ':', '-.'], index=0)
+        legend_frameon = st.checkbox("Show Legend Frame", value=True)
+        legend_framealpha = st.slider("Legend Frame Opacity", min_value=0.0, max_value=1.0, value=0.8, step=0.1)
+    
+    # =========================================
+    # LOAD OR INTERPOLATE SOLUTION
+    # =========================================
+    try:
+        solution = load_and_interpolate_solution(solutions, params_list, ly_target, c_cu_target, c_ni_target)
+    except Exception as e:
+        st.error(f"Failed to load or interpolate solution: {str(e)}")
+        return
+    
+    # Display solution details
+    st.subheader("📊 Solution Details")
+    st.write(f"$L_y$ = {solution['params']['Ly']:.1f} μm")
+    st.write(f"$C_{{Cu}}$ = {solution['params']['C_Cu']:.1e} mol/cc")
+    st.write(f"$C_{{Ni}}$ = {solution['params']['C_Ni']:.1e} mol/cc")
+    if solution.get('interpolated', False):
+        st.write("**Status**: ⚡ Interpolated via attention mechanism")
+        # Show attention weights
+        weights = solution.get('attention_weights', [])
+        if weights:
+            st.write("**Source Weights:**")
+            weight_df = pd.DataFrame({
+                'Source': [f"S{i+1}" for i in range(len(weights))],
+                'Weight': [f"{w:.4f}" for w in weights]
+            })
+            st.dataframe(weight_df.style.bar(subset=['Weight'], color='#5fba7d'), use_container_width=True)
+    else:
+        st.write("**Status**: ✅ Exact precomputed solution")
+    
+    # =========================================
+    # 2D CONCENTRATION HEATMAPS
+    # =========================================
+    st.subheader("🗺️ 2D Concentration Heatmaps")
+    time_index = st.slider("Select Time Index for Heatmaps", 0, len(solution['times'])-1, len(solution['times'])-1)
+    fig_2d, filename_2d = plot_2d_concentration(
+        solution, time_index, cmap_cu=cmap_cu, cmap_ni=cmap_ni,
+        vmin_cu=custom_cu_min if use_custom_scale else None,
+        vmax_cu=custom_cu_max if use_custom_scale else None,
+        vmin_ni=custom_ni_min if use_custom_scale else None,
+        vmax_ni=custom_ni_max if use_custom_scale else None
+    )
+    st.pyplot(fig_2d)
+    st.download_button(
+        label="⬇️ Download 2D Plot as PNG",
+        data=open(os.path.join("figures", f"{filename_2d}.png"), "rb").read(),
+        file_name=f"{filename_2d}.png",
+        mime="image/png"
+    )
+    st.download_button(
+        label="⬇️ Download 2D Plot as PDF",
+        data=open(os.path.join("figures", f"{filename_2d}.pdf"), "rb").read(),
+        file_name=f"{filename_2d}.pdf",
+        mime="application/pdf"
+    )
+    
+    # =========================================
+    # CENTERLINE CONCENTRATION CURVES
+    # =========================================
+    st.subheader("📈 Centerline Concentration Curves")
+    time_indices = st.multiselect(
+        "Select Time Indices for Curves",
+        options=list(range(len(solution['times']))),
+        default=[0, len(solution['times'])//4, len(solution['times'])//2, 3*len(solution['times'])//4, len(solution['times'])-1],
+        format_func=lambda x: f"t = {solution['times'][x]:.1f} s"
+    )
+    if time_indices:
+        fig_curves, filename_curves = plot_centerline_curves(
+            solution, time_indices, sidebar_metric=sidebar_metric,
+            label_size=label_size, title_size=title_size, tick_label_size=tick_label_size,
+            legend_loc=legend_loc, curve_colormap=curve_colormap,
+            axis_linewidth=axis_linewidth, tick_major_width=tick_major_width,
+            tick_major_length=tick_major_length, fig_width=fig_width, fig_height=fig_height,
+            curve_linewidth=curve_linewidth, grid_alpha=grid_alpha, grid_linestyle=grid_linestyle,
+            legend_frameon=legend_frameon, legend_framealpha=legend_framealpha
+        )
+        st.pyplot(fig_curves)
+        st.download_button(
+            label="⬇️ Download Centerline Plot as PNG",
+            data=open(os.path.join("figures", f"{filename_curves}.png"), "rb").read(),
+            file_name=f"{filename_curves}.png",
+            mime="image/png"
+        )
+        st.download_button(
+            label="⬇️ Download Centerline Plot as PDF",
+            data=open(os.path.join("figures", f"{filename_curves}.pdf"), "rb").read(),
+            file_name=f"{filename_curves}.pdf",
+            mime="application/pdf"
+        )
+    
+    # =========================================
+    # PARAMETER SWEEP CURVES
+    # =========================================
+    st.subheader("🔄 Parameter Sweep Curves")
+    with st.expander("➕ Add Custom Parameter Combinations for Sweep"):
+        num_custom_params = st.number_input("Number of Custom Parameter Sets", min_value=0, max_value=5, value=0, step=1)
+        custom_params = []
+        for i in range(num_custom_params):
+            st.write(f"Custom Parameter Set {i+1}")
+            ly_custom = st.number_input(
+                f"Custom Ly (μm) {i+1}",
+                min_value=30.0,
+                max_value=120.0,
+                value=ly_choice,
+                step=0.1,
+                format="%.1f",
+                key=f"ly_custom_{i}"
+            )
+            c_cu_custom = st.number_input(
+                f"Custom C_Cu (mol/cc) {i+1}",
+                min_value=0.0,
+                max_value=2.9e-3,
+                value=max(c_cu_choice, 1.5e-3),
+                step=0.1e-3,
+                format="%.1e",
+                key=f"c_cu_custom_{i}"
+            )
+            c_ni_custom = st.number_input(
+                f"Custom C_Ni (mol/cc) {i+1}",
+                min_value=0.0,
+                max_value=1.8e-3,
+                value=max(c_ni_choice, 1.0e-4),
+                step=0.1e-4,
+                format="%.1e",
+                key=f"c_ni_custom_{i}"
+            )
+            custom_params.append((ly_custom, c_cu_custom, c_ni_custom))
+    
+    # Combine exact and custom parameters
+    param_options = [(ly, c_cu, c_ni) for ly, c_cu, c_ni in params_list]
+    param_labels = [f"$L_y$={ly:.1f}, $C_{{Cu}}$={c_cu:.1e}, $C_{{Ni}}$={c_ni:.1e}" for ly, c_cu, c_ni in param_options]
+    default_params = param_options[:min(4, len(param_options))]
+    selected_labels = st.multiselect(
+        "Select Exact Parameter Combinations",
+        options=param_labels,
+        default=[param_labels[param_options.index(p)] for p in default_params],
+        format_func=lambda x: x
+    )
+    selected_params = [param_options[param_labels.index(label)] for label in selected_labels]
+    selected_params.extend(custom_params)
+    
+    # Generate solutions for selected parameters (exact or interpolated)
+    sweep_solutions = []
+    sweep_params_list = []
+    for params in selected_params:
+        ly, c_cu, c_ni = params
+        try:
+            sol = load_and_interpolate_solution(solutions, params_list, ly, c_cu, c_ni)
+            sweep_solutions.append(sol)
+            sweep_params_list.append(params)
+        except Exception as e:
+            st.warning(f"Failed to load or interpolate solution for Ly={ly:.1f}, C_Cu={c_cu:.1e}, C_Ni={c_ni:.1e}: {str(e)}")
+    
+    # Plot parameter sweep
+    sweep_time_index = st.slider("Select Time Index for Sweep", 0, len(solution['times'])-1, len(solution['times'])-1)
+    if sweep_solutions and sweep_params_list:
+        fig_sweep, filename_sweep = plot_parameter_sweep(
+            sweep_solutions, sweep_params_list, sweep_params_list, sweep_time_index, sidebar_metric=sidebar_metric,
+            label_size=label_size, title_size=title_size, tick_label_size=tick_label_size,
+            legend_loc=legend_loc, curve_colormap=curve_colormap,
+            axis_linewidth=axis_linewidth, tick_major_width=tick_major_width,
+            tick_major_length=tick_major_length, fig_width=fig_width, fig_height=fig_height,
+            curve_linewidth=curve_linewidth, grid_alpha=grid_alpha, grid_linestyle=grid_linestyle,
+            legend_frameon=legend_frameon, legend_framealpha=legend_framealpha
+        )
+        st.pyplot(fig_sweep)
+        st.download_button(
+            label="⬇️ Download Sweep Plot as PNG",
+            data=open(os.path.join("figures", f"{filename_sweep}.png"), "rb").read(),
+            file_name=f"{filename_sweep}.png",
+            mime="image/png"
+        )
+        st.download_button(
+            label="⬇️ Download Sweep Plot as PDF",
+            data=open(os.path.join("figures", f"{filename_sweep}.pdf"), "rb").read(),
+            file_name=f"{filename_sweep}.pdf",
+            mime="application/pdf"
+        )
 
-    # === ENGINEERING INSIGHTS ===
-    st.subheader("📊 Engineering Insights: Diffusion Dynamics and IMC Growth Kinetics")
-    w = results['combined_weights']
-    dominant_source = np.argmax(w) + 1
-    ni_conc_ratio = c_ni_target / (c_cu_target + 1e-8)
-    cu_conc_ratio = c_cu_target / (c_ni_target + 1e-8)
-    uphill_risk = "High" if ni_conc_ratio > 0.5 or cu_conc_ratio > 2.0 else "Moderate" if ni_conc_ratio > 0.3 else "Low"
-    imc_growth = "Faster on Ni side" if "Asymmetric" in substrate_type else "Symmetric"
-    void_risk = "High (Kirkendall voids in Cu3Sn)" if "Cu Symmetric" in substrate_type else "Suppressed by Ni addition"
-    path_effect = ""
-    if joining_path == "Path I (Cu→Ni)":
-        path_effect = "Lower Ni content in Cu/Sn interface IMC; thinner (Cu,Ni)6Sn5 on Cu side compared to Path II."
-    elif joining_path == "Path II (Ni→Cu)":
-        path_effect = "Higher Ni content in Cu/Sn interface IMC; thicker (Cu,Ni)6Sn5 on Cu side due to initial Ni saturation in solder."
 
-    st.markdown(f"""
-    Based on the attention-interpolated diffusion profiles (dominant blend from Source S{dominant_source} at {w.max():.1%} weight):
-
-    - **Domain Length Effect (\(L_y = {ly_target:.1f}\) μm)**: {'Thinner joints (e.g., 50 μm)' if ly_target < 60 else 'Thicker joints (e.g., 90 μm)'} promote {'faster IMC growth due to steeper concentration gradients' if ly_target < 60 else 'sustained cross-diffusion and potential for more isolated (Cu,Ni)6Sn5 colonies in solder matrix'}.
-    - **Boundary Concentrations & Flux Dynamics**: Top \(C_{{Cu}} = {c_cu_target:.1e}\) mol/cc, Bottom \(C_{{Ni}} = {c_ni_target:.1e}\) mol/cc. High Cu solubility in Sn accelerates Cu6Sn5 formation; Ni diffusivity is lower.
-    - **Uphill Diffusion & Cross-Interaction**: {uphill_risk} risk of counter-gradient Ni flux into Cu-rich zones, enhancing vacancy supersaturation and Kirkendall effects.
-    - **Substrate Type Impact**: In {substrate_type}, IMC morphology is {'scallop-shaped Cu6Sn5' if 'Cu Symmetric' in substrate_type else 'rod-shaped (Cu,Ni)6Sn5/Ni3Sn4' if 'Ni Symmetric' in substrate_type else 'asymmetric with faster growth on Ni UBM'}. Void formation: {void_risk}.
-    - **Joining Path Dependence**: {path_effect if joining_path != "N/A" else "Not applicable for symmetric configurations."}
-    - **IMC Growth Kinetics**: Ni addition suppresses porous Cu3Sn formation after thermal cycling, reducing voids by 20-50% and improving reliability.
-    """)
-
-    # === EXPORT ===
-    buffer = io.StringIO()
-    export_df = pd.DataFrame({
-        'attention_weights': results['attention_weights'],
-        'spatial_weights': results['spatial_weights'],
-        'combined_weights': results['combined_weights'],
-        'W_q_row0': results['W_q'][0],
-        'W_k_row0': results['W_k'][0]
-    })
-    csv = export_df.to_csv(index=False)
-    st.download_button("⬇️ Download Results (CSV)", csv, "attention_inference.csv", "text/csv")
-
-    with st.expander("📜 Export LaTeX Appendix"):
-        latex = f"""
-\\appendix
-\\section{{Attention Inference Example: {substrate_type}, Path {joining_path}, \(L_y = {ly_target:.1f}\)\\mu m\}}
-\\textbf{{Target}}: \\(\\theta^* = ({ly_target:.1f}, {c_cu_target:.1e}, {c_ni_target:.1e})\\)
-
-\\textbf{{Weights}}:
-\\begin{{tabular}}{{lccc}}
-\\toprule
-Source & Attention & Gaussian & Hybrid \\\\
-\\midrule
-"""
-        for i in range(len(w)):
-            latex += f"S{i+1} & {results['attention_weights'][i]:.3f} & {results['spatial_weights'][i]:.3f} & {w[i]:.3f} \\\\\n"
-        latex += "\\bottomrule\n\\end{tabular}\n\n\\textbf{Inference}: " + uphill_risk + " uphill risk → " + imc_growth + " IMC growth."
-        st.code(latex, language='latex')
+if __name__ == "__main__":
+    main()
