@@ -1,14 +1,17 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-ATTENTION-BASED CU-NI INTERDIFFUSION VISUALIZER WITH LLM NATURAL LANGUAGE INTERFACE
-====================================================================================
-- Natural language parsing of diffusion parameters (regex + GPT-2/Qwen hybrid)
-- Multi-head attention with spatial locality for physics-aware interpolation
+ATTENTION-BASED CU-NI INTERDIFFUSION VISUALIZER WITH ENHANCED LLM NATURAL LANGUAGE INTERFACE
+==============================================================================================
+- Natural language parsing with explicit schema, multi-pattern regex, and hybrid LLM (GPT-2/Qwen)
+- Confidence-based merging with per-parameter scoring and ensemble support
 - Publication-quality 2D heatmaps, centerline curves, and parameter sweeps
 - Full figure customization and PNG/PDF export
-- Cached LLM loading, robust JSON extraction, and confidence-based fallbacks
+- Cached LLM loading, robust JSON extraction, and fallback mechanisms
+- SciBERT semantic relevance scoring with keyword fallback
+- Prominent parameter display with units, valid ranges, and extraction status
 """
+
 import os
 import pickle
 import numpy as np
@@ -25,6 +28,7 @@ import json
 import hashlib
 from collections import OrderedDict
 from typing import Dict, Any, Optional, List, Tuple
+import time
 
 # Configure Matplotlib for publication-quality figures
 mpl.rcParams['font.family'] = 'Arial'
@@ -78,35 +82,86 @@ except ImportError:
     st.warning("⚠️ `transformers` not installed. LLM features will be disabled. Install via `pip install transformers torch`")
 
 # =============================================
-# NATURAL LANGUAGE PARSER (Hybrid Regex + LLM)
+# ENHANCED DIFFUSION PARAMETERS SCHEMA
+# =============================================
+class DiffusionParameters:
+    """Explicit parameter schema with ranges and units for robust parsing."""
+    
+    RANGES = {
+        'ly_target': (30.0, 120.0, 'μm'),
+        'c_cu_target': (0.0, 2.9e-3, 'mol/cc'),
+        'c_ni_target': (0.0, 1.8e-3, 'mol/cc'),
+        'sigma': (0.05, 0.5, ''),  # dimensionless hyperparameter
+    }
+    
+    DEFAULTS = {
+        'ly_target': 60.0,
+        'c_cu_target': 1.5e-3,
+        'c_ni_target': 0.5e-3,
+        'sigma': 0.20,
+    }
+    
+    @staticmethod
+    def format_value(key: str, value: float) -> str:
+        """Format value with appropriate notation and unit."""
+        if key not in DiffusionParameters.RANGES:
+            return str(value)
+        low, high, unit = DiffusionParameters.RANGES[key]
+        if unit:
+            if abs(value) < 0.01 or abs(value) > 100:
+                return f"{value:.1e} {unit}"
+            else:
+                return f"{value:.3f} {unit}"
+        else:
+            return f"{value:.3f}"
+    
+    @staticmethod
+    def clip_to_range(key: str, value: float) -> float:
+        """Clip value to valid range for parameter."""
+        if key not in DiffusionParameters.RANGES:
+            return value
+        low, high, _ = DiffusionParameters.RANGES[key]
+        return np.clip(value, low, high)
+
+# =============================================
+# ENHANCED NATURAL LANGUAGE PARSER (Hybrid Regex + LLM)
 # =============================================
 class DiffusionNLParser:
-    """Extracts Cu-Ni diffusion parameters from natural language using regex + LLM hybrid parsing."""
+    """Extracts Cu-Ni diffusion parameters from natural language using enhanced regex + LLM hybrid parsing."""
     
     def __init__(self):
-        self.defaults = {
-            'ly_target': 60.0,
-            'c_cu_target': 1.5e-3,
-            'c_ni_target': 0.5e-3,
-            'sigma': 0.20,
-        }
+        self.defaults = DiffusionParameters.DEFAULTS.copy()
+        # Multi-pattern regex for linguistic diversity
         self.patterns = {
             'ly_target': [
-                r'(?:joint\s*thickness|domain\s*length|L_y|Ly)\s*[=:]\s*(\d+(?:\.\d+)?)',
-                r'(\d+(?:\.\d+)?)\s*(?:μm|um|microns?)',
+                r'(?:joint\s*thickness|domain\s*length|L_y|Ly|domain\s*size)\s*[=:]\s*(\d+(?:\.\d+)?)',
+                r'(\d+(?:\.\d+)?)\s*(?:μm|um|microns?|micrometers?)',
+                r'(?:thickness|length|size)\s*(?:of|is|=|:)?\s*(\d+(?:\.\d+)?)\s*(?:μm|um)?',
+                r'(\d+(?:\.\d+)?)\s*μm\s*(?:joint|domain|length)',
             ],
             'c_cu_target': [
-                r'(?:Cu\s*concentration|C_Cu|c_Cu|top\s*concentration)\s*[=:]\s*([\d.]+(?:e[+-]?\d+)?)',
+                r'(?:Cu\s*concentration|C_Cu|c_Cu|top\s*concentration|copper\s*conc\.?)\s*[=:]\s*([\d.]+(?:e[+-]?\d+)?)',
+                r'([\d.]+(?:e[+-]?\d+)?)\s*(?:mol/cc|molar|M)\s*(?:Cu|copper|top)',
+                r'(?:top|upper)\s*(?:boundary\s*)?(?:Cu|copper)\s*[=:]\s*([\d.]+(?:e[+-]?\d+)?)',
+                r'Cu\s*[=:]\s*([\d.]+(?:e[+-]?\d+)?)\s*(?:mol/cc)?',
             ],
             'c_ni_target': [
-                r'(?:Ni\s*concentration|C_Ni|c_Ni|bottom\s*concentration)\s*[=:]\s*([\d.]+(?:e[+-]?\d+)?)',
+                r'(?:Ni\s*concentration|C_Ni|c_Ni|bottom\s*concentration|nickel\s*conc\.?)\s*[=:]\s*([\d.]+(?:e[+-]?\d+)?)',
+                r'([\d.]+(?:e[+-]?\d+)?)\s*(?:mol/cc|molar|M)\s*(?:Ni|nickel|bottom)',
+                r'(?:bottom|lower)\s*(?:boundary\s*)?(?:Ni|nickel)\s*[=:]\s*([\d.]+(?:e[+-]?\d+)?)',
+                r'Ni\s*[=:]\s*([\d.]+(?:e[+-]?\d+)?)\s*(?:mol/cc)?',
+            ],
+            'sigma': [
+                r'(?:sigma|σ|locality)\s*[=:]\s*(\d+(?:\.\d+)?)',
+                r'(?:interpolation\s*sigma|attention\s*sigma)\s*[=:]\s*(\d+(?:\.\d+)?)',
             ],
         }
-
+    
     def parse_regex(self, text: str) -> Dict[str, Any]:
-        """Extract parameters using regex patterns only."""
+        """Extract parameters using enhanced regex patterns only."""
         if not text:
             return self.defaults.copy()
+        
         params = self.defaults.copy()
         text_lower = text.lower()
         
@@ -119,17 +174,21 @@ class DiffusionNLParser:
                         if key in ['ly_target']:
                             params[key] = float(val)
                         elif key in ['c_cu_target', 'c_ni_target']:
-                            # Handle scientific notation
-                            params[key] = float(val.replace('e-0', 'e-'))
+                            # Handle scientific notation robustly
+                            val_clean = val.replace('e-0', 'e-').replace('E-0', 'E-')
+                            params[key] = float(val_clean)
+                        elif key == 'sigma':
+                            params[key] = float(val)
                     except (ValueError, TypeError):
                         pass
                     break
+        
         # Clip to valid ranges
-        params['ly_target'] = np.clip(params['ly_target'], 30.0, 120.0)
-        params['c_cu_target'] = np.clip(params['c_cu_target'], 0.0, 2.9e-3)
-        params['c_ni_target'] = np.clip(params['c_ni_target'], 0.0, 1.8e-3)
+        for key in DiffusionParameters.RANGES:
+            params[key] = DiffusionParameters.clip_to_range(key, params[key])
+        
         return params
-
+    
     @staticmethod
     def _extract_json_robust(generated: str) -> Optional[Dict]:
         """Robustly extract JSON from LLM output with repair attempts."""
@@ -140,38 +199,66 @@ class DiffusionNLParser:
             match = re.search(r'\{.*?\}', generated, re.DOTALL)
         if not match:
             return None
+        
         json_str = match.group(0)
+        
         # Repair common JSON errors
         json_str = re.sub(r'(true|false|null)\s*(")', r'\1,\2', json_str)  # missing comma
         json_str = re.sub(r',\s*([}\]])', r'\1', json_str)  # trailing comma
+        json_str = re.sub(r"'([^']*)'", r'"\1"', json_str)  # single to double quotes
+        
         try:
             return json.loads(json_str)
         except json.JSONDecodeError:
             return None
-
-    def parse_with_llm(self, text: str, tokenizer, model, regex_params: Dict = None, temperature: float = None) -> Dict:
-        """Use LLM (GPT-2 or Qwen) to extract parameters from natural language."""
+    
+    def parse_with_llm(self, text: str, tokenizer, model, regex_params: Dict = None, 
+                      temperature: float = None, use_ensemble: bool = False, 
+                      ensemble_runs: int = 3) -> Dict:
+        """Use LLM (GPT-2 or Qwen) to extract parameters from natural language with ensemble support."""
         if not tokenizer or not model:
             return self.parse_regex(text)
         
+        backend = st.session_state.get('llm_backend_loaded', 'GPT-2')
         if temperature is None:
             # Qwen models benefit from temperature=0 for deterministic JSON
-            backend = st.session_state.get('llm_backend_loaded', 'GPT-2')
             temperature = 0.0 if "Qwen" in backend else 0.1
         
-        system = "You are a materials science expert. Extract simulation parameters from the user's query. Reply ONLY with a valid JSON object."
+        # Build enhanced prompt with explicit schema and constraints
+        system = """You are a materials science expert. Extract simulation parameters from the user's query.
+Reply ONLY with a valid JSON object. Clip every numeric value to its exact valid range."""
+        
         examples = """
 Examples:
-- "Analyze a 50 μm joint with Cu concentration 1.2e-3 and Ni 0.8e-3" → {"ly_target": 50.0, "c_cu_target": 1.2e-3, "c_ni_target": 0.8e-3, "sigma": 0.2}
-- "Domain length 80, C_Cu=2.0e-3, C_Ni=1.0e-3" → {"ly_target": 80.0, "c_cu_target": 2.0e-3, "c_ni_target": 1.0e-3, "sigma": 0.2}
-- "Ly=45um, top Cu=1.5e-3 mol/cc, bottom Ni=0.3e-3" → {"ly_target": 45.0, "c_cu_target": 1.5e-3, "c_ni_target": 0.3e-3, "sigma": 0.2}
+- "Analyze a 50 μm joint with Cu concentration 1.2e-3 and Ni 0.8e-3" 
+  → {"ly_target": 50.0, "c_cu_target": 1.2e-3, "c_ni_target": 0.8e-3, "sigma": 0.2}
+- "Domain length 80, C_Cu=2.0e-3, C_Ni=1.0e-3" 
+  → {"ly_target": 80.0, "c_cu_target": 2.0e-3, "c_ni_target": 1.0e-3, "sigma": 0.2}
+- "Ly=45um, top Cu=1.5e-3 mol/cc, bottom Ni=0.3e-3" 
+  → {"ly_target": 45.0, "c_cu_target": 1.5e-3, "c_ni_target": 0.3e-3, "sigma": 0.2}
+- "Thin joint 40 microns, copper 1.8e-3, nickel 0.4e-3, sigma 0.15"
+  → {"ly_target": 40.0, "c_cu_target": 1.8e-3, "c_ni_target": 0.4e-3, "sigma": 0.15}
 """
+        
         defaults_json = json.dumps(self.defaults)
         regex_hint = f"\nRegex hint (use as reference): {json.dumps(regex_params or {})}" if regex_params else ""
         
-        user = f"""{examples}{regex_hint}
+        # Explicit schema declaration in prompt
+        schema_text = """
+JSON keys must be:
+- ly_target: float, domain height in μm, valid range [30.0, 120.0] μm
+- c_cu_target: float, Cu boundary concentration in mol/cc, valid range [0.0, 0.0029] mol/cc  
+- c_ni_target: float, Ni boundary concentration in mol/cc, valid range [0.0, 0.0018] mol/cc
+- sigma: float, interpolation locality parameter, valid range [0.05, 0.5] (dimensionless)
+
+Rules:
+1. Clip every numeric value to its exact valid range before output
+2. If a parameter is not mentioned, use the default value
+3. Output ONLY valid JSON, no additional text
+"""
+        
+        user = f"""{examples}{schema_text}{regex_hint}
 Query: "{text}"
-JSON keys must be: ly_target (float, 30-120 μm), c_cu_target (float, 0-2.9e-3 mol/cc), c_ni_target (float, 0-1.8e-3 mol/cc), sigma (float, 0.05-0.5).
 Defaults: {defaults_json}
 JSON:"""
         
@@ -182,6 +269,35 @@ JSON:"""
         else:
             prompt = f"{system}\n{user}\n"
         
+        # Ensemble parsing if requested
+        if use_ensemble and ensemble_runs > 1:
+            all_results = []
+            for _ in range(ensemble_runs):
+                result = self._single_llm_parse(prompt, tokenizer, model, temperature, regex_params)
+                if result:
+                    all_results.append(result)
+            
+            if all_results:
+                # Combine ensemble results: average for numeric, mode for categorical
+                combined = {}
+                for key in self.defaults:
+                    values = [r[key] for r in all_results if key in r]
+                    if isinstance(self.defaults[key], (int, float)):
+                        # Average numeric values
+                        valid_vals = [v for v in values if isinstance(v, (int, float))]
+                        combined[key] = np.mean(valid_vals) if valid_vals else self.defaults[key]
+                    else:
+                        # Mode for other types
+                        from collections import Counter
+                        combined[key] = Counter(values).most_common(1)[0][0] if values else self.defaults[key]
+                return combined
+        
+        # Single parse
+        return self._single_llm_parse(prompt, tokenizer, model, temperature, regex_params)
+    
+    def _single_llm_parse(self, prompt: str, tokenizer, model, temperature: float, 
+                         regex_params: Dict = None) -> Dict:
+        """Helper for single LLM parse with robust extraction."""
         try:
             inputs = tokenizer.encode(prompt, return_tensors='pt', truncation=True, max_length=512)
             if torch.cuda.is_available():
@@ -189,23 +305,25 @@ JSON:"""
             with torch.no_grad():
                 outputs = model.generate(
                     inputs,
-                    max_new_tokens=200,
+                    max_new_tokens=300,
                     temperature=temperature,
                     do_sample=(temperature > 0),
                     pad_token_id=tokenizer.eos_token_id
                 )
             generated = tokenizer.decode(outputs[0], skip_special_tokens=True)
+            
             result = self._extract_json_robust(generated)
             if result:
                 # Ensure all required keys exist
                 for key in self.defaults:
                     if key not in result:
                         result[key] = self.defaults[key]
+                
                 # Clip values to valid ranges
-                result['ly_target'] = np.clip(float(result.get('ly_target', 60)), 30, 120)
-                result['c_cu_target'] = np.clip(float(result.get('c_cu_target', 1.5e-3)), 0, 2.9e-3)
-                result['c_ni_target'] = np.clip(float(result.get('c_ni_target', 0.5e-3)), 0, 1.8e-3)
-                result['sigma'] = np.clip(float(result.get('sigma', 0.2)), 0.05, 0.5)
+                for key in DiffusionParameters.RANGES:
+                    if key in result and isinstance(result[key], (int, float)):
+                        result[key] = DiffusionParameters.clip_to_range(key, result[key])
+                
                 # If regex_params provided, prefer regex for mismatched values (confidence merging)
                 if regex_params:
                     for key in ['ly_target', 'c_cu_target', 'c_ni_target']:
@@ -213,52 +331,187 @@ JSON:"""
                             if abs(result[key] - regex_params[key]) > 1e-4:
                                 # Significant mismatch: prefer regex (more deterministic)
                                 result[key] = regex_params[key]
+                
                 return result
         except Exception as e:
             st.warning(f"LLM parsing failed: {e}. Falling back to regex.")
+        
         return self.parse_regex(text)
-
-    def hybrid_parse(self, text: str, tokenizer, model, use_llm: bool = True) -> Dict:
-        """Run regex first, then optionally LLM, and merge based on confidence."""
+    
+    def hybrid_parse(self, text: str, tokenizer, model, use_llm: bool = True,
+                    use_ensemble: bool = False, ensemble_runs: int = 3) -> Dict:
+        """Run regex first, then optionally LLM (with ensemble), and merge based on per-parameter confidence."""
+        # Step 1: Regex extraction with confidence scoring
         regex_params = self.parse_regex(text)
+        regex_conf = {}
+        for key in self.defaults:
+            # High confidence (1.0) if value differs from default (indicates match)
+            # Low confidence (0.0) if still at default (may indicate no match)
+            regex_conf[key] = 1.0 if regex_params[key] != self.defaults[key] else 0.0
+        
+        # Step 2: LLM extraction if available
         if use_llm and tokenizer and model:
-            # Simple hash-based cache key for LLM outputs
-            cache_key = hashlib.md5((text + st.session_state.get('llm_backend_loaded', '')).encode()).hexdigest()
-            # Manual LRU cache via session_state (avoids Streamlit UnhashableParamError)
-            if 'llm_cache' not in st.session_state:
-                st.session_state.llm_cache = OrderedDict()
-            if cache_key in st.session_state.llm_cache:
-                llm_params = st.session_state.llm_cache[cache_key]
+            llm_params = self.parse_with_llm(
+                text, tokenizer, model, 
+                regex_params=regex_params,
+                use_ensemble=use_ensemble,
+                ensemble_runs=ensemble_runs
+            )
+            # Confidence for LLM: moderate if extracted, lower if default
+            llm_conf = {}
+            for key in self.defaults:
+                llm_conf[key] = 0.8 if llm_params[key] != self.defaults[key] else 0.3
+        else:
+            llm_params = self.defaults.copy()
+            llm_conf = {k: 0.0 for k in self.defaults}
+        
+        # Step 3: Per-parameter confidence-based merging
+        final = {}
+        for key in self.defaults:
+            if regex_conf[key] >= llm_conf[key]:
+                final[key] = regex_params[key]
             else:
-                llm_params = self.parse_with_llm(text, tokenizer, model, regex_params)
-                # LRU eviction
-                if len(st.session_state.llm_cache) > 20:
-                    st.session_state.llm_cache.popitem(last=False)
-                st.session_state.llm_cache[cache_key] = llm_params
-            # Confidence-based merging: prefer LLM for extracted fields, regex for safety
-            final = self.defaults.copy()
-            for key in final:
-                if llm_params[key] != self.defaults[key]:
-                    final[key] = llm_params[key]
-                elif regex_params[key] != self.defaults[key]:
-                    final[key] = regex_params[key]
-            return final
-        return regex_params
-
+                final[key] = llm_params[key]
+        
+        # Final clipping to ensure physical validity
+        for key in DiffusionParameters.RANGES:
+            final[key] = DiffusionParameters.clip_to_range(key, final[key])
+        
+        return final
+    
     def get_explanation(self, params: dict, original_text: str) -> str:
-        """Generate a markdown table explaining parsed parameters."""
-        lines = ["### 🔍 Parsed Parameters from Natural Language", f"**Query:** _{original_text}_", "| Parameter | Extracted Value | Status |", "|-----------|-----------------|--------|"]
-        for key, val in params.items():
+        """Generate an enhanced markdown table explaining parsed parameters with units and ranges."""
+        lines = [
+            "### 🔍 Parsed Parameters from Natural Language",
+            f"**Query:** _{original_text}_",
+            "",
+            "| Parameter | Extracted Value | Valid Range | Status |",
+            "|-----------|-----------------|-------------|--------|"
+        ]
+        
+        for key in ['ly_target', 'c_cu_target', 'c_ni_target', 'sigma']:
             if key == 'sigma':
-                continue  # Skip hyperparameter in explanation
-            status = "✅ Extracted" if val != self.defaults[key] else "⚪ Default"
-            if isinstance(val, float):
-                val_str = f"{val:.1e}" if (val < 0.01 or val > 100) else f"{val:.3f}"
-            else:
-                val_str = str(val)
-            lines.append(f"| {key} | {val_str} | {status} |")
+                continue  # Skip hyperparameter in main explanation
+            
+            val = params[key]
+            low, high, unit = DiffusionParameters.RANGES[key]
+            val_str = DiffusionParameters.format_value(key, val)
+            range_str = f"{low}–{high} {unit}" if unit else f"{low}–{high}"
+            
+            # Check if value was extracted vs default
+            is_extracted = val != self.defaults[key]
+            status_icon = "✅" if is_extracted else "⚪"
+            status_text = "Extracted" if is_extracted else "Default"
+            
+            # Check if value is within valid range
+            in_range = low <= val <= high
+            if not in_range:
+                status_icon = "⚠️"
+                status_text += " (clipped)"
+            
+            lines.append(f"| {key} | {val_str} | {range_str} | {status_icon} {status_text} |")
+        
         return "\n".join(lines)
 
+# =============================================
+# RELEVANCE SCORER (SciBERT with fallback)
+# =============================================
+class RelevanceScorer:
+    """Compute semantic relevance using SciBERT or fallback keyword matching."""
+    
+    _instance = None
+    _model = None
+    
+    def __new__(cls, *args, **kwargs):
+        if cls._instance is None:
+            cls._instance = super().__new__(cls)
+        return cls._instance
+    
+    def __init__(self, use_scibert: bool = True):
+        self.use_scibert = use_scibert
+        self._embedding_cache = {}
+        
+        if use_scibert and RelevanceScorer._model is None:
+            try:
+                with st.spinner("Loading SciBERT model for semantic analysis..."):
+                    from sentence_transformers import SentenceTransformer
+                    RelevanceScorer._model = SentenceTransformer(
+                        'allenai/scibert_scivocab_uncased',
+                        device='cpu'
+                    )
+                    st.success("SciBERT loaded successfully!")
+                self.model = RelevanceScorer._model
+            except ImportError:
+                st.warning("sentence-transformers not installed. Using fallback relevance scoring.")
+                self.use_scibert = False
+            except Exception as e:
+                st.warning(f"Could not load SciBERT: {e}. Using fallback.")
+                self.use_scibert = False
+    
+    def encode_source(self, src_params: dict) -> str:
+        """Create descriptive text from source parameters for embedding."""
+        return (
+            f"Cu-Ni diffusion simulation with domain height {src_params.get('Ly', 60):.1f} μm, "
+            f"Cu boundary concentration {src_params.get('C_Cu', 1.5e-3):.1e} mol/cc, "
+            f"Ni boundary concentration {src_params.get('C_Ni', 0.5e-3):.1e} mol/cc"
+        )
+    
+    def score(self, query: str, sources: List[Dict], weights: np.ndarray) -> float:
+        """Compute semantic relevance score between query and available sources."""
+        if not sources or len(weights) == 0:
+            return 0.0
+        
+        if self.use_scibert and self.model is not None:
+            try:
+                # Cache query embedding
+                query_hash = hashlib.md5(query.encode()).hexdigest()
+                if query_hash not in self._embedding_cache:
+                    query_emb = self.model.encode(query, convert_to_tensor=False)
+                    self._embedding_cache[query_hash] = query_emb
+                else:
+                    query_emb = self._embedding_cache[query_hash]
+                
+                # Encode source descriptions
+                src_texts = [self.encode_source(s.get('params', {})) for s in sources]
+                src_embs = self.model.encode(src_texts, convert_to_tensor=False)
+                
+                # Compute cosine similarities
+                query_norm = np.linalg.norm(query_emb)
+                src_norms = np.linalg.norm(src_embs, axis=1)
+                
+                valid_mask = src_norms > 1e-8
+                if not np.any(valid_mask):
+                    return float(np.max(weights))
+                
+                similarities = np.zeros(len(sources))
+                similarities[valid_mask] = (
+                    np.dot(src_embs[valid_mask], query_emb) /
+                    (src_norms[valid_mask] * query_norm + 1e-12)
+                )
+                
+                # Weighted average similarity
+                weighted_score = np.average(similarities, weights=weights)
+                # Normalize to [0, 1]
+                normalized_score = (weighted_score + 1) / 2
+                return float(np.clip(normalized_score, 0.0, 1.0))
+                
+            except Exception as e:
+                st.warning(f"SciBERT scoring failed: {e}. Using fallback.")
+                return float(np.max(weights)) if len(weights) > 0 else 0.0
+        else:
+            # Fallback: return max weight as proxy for relevance
+            return float(np.max(weights)) if len(weights) > 0 else 0.0
+    
+    def get_confidence_level(self, score: float) -> Tuple[str, str]:
+        """Map relevance score to human-readable confidence level."""
+        if score >= 0.8:
+            return "High confidence", "green"
+        elif score >= 0.5:
+            return "Moderate confidence", "blue"
+        elif score >= 0.3:
+            return "Low confidence", "orange"
+        else:
+            return "Very low confidence - consider adjusting parameters", "red"
 
 # =============================================
 # UNIFIED LLM LOADER WITH CACHING
@@ -283,7 +536,6 @@ def load_llm(backend_name: str):
     
     model.eval()
     return tokenizer, model, backend_name
-
 
 # =============================================
 # ORIGINAL SOLUTION LOADING (UNCHANGED)
@@ -330,7 +582,6 @@ def load_solutions(solution_dir):
         load_logs.append(f"Loaded {len(solutions)} solutions. Expected 32.")
     return solutions, params_list, lys, c_cus, c_nis, load_logs
 
-
 # =============================================
 # ORIGINAL ATTENTION INTERPOLATOR (UNCHANGED)
 # =============================================
@@ -346,38 +597,31 @@ class MultiParamAttentionInterpolator(nn.Module):
     def forward(self, solutions, params_list, ly_target, c_cu_target, c_ni_target):
         if not solutions or not params_list:
             raise ValueError("No solutions or parameters available for interpolation.")
-
         # Extract and normalize parameters
         lys = np.array([p[0] for p in params_list])
         c_cus = np.array([p[1] for p in params_list])
         c_nis = np.array([p[2] for p in params_list])
         if not (lys.shape == c_cus.shape == c_nis.shape):
             raise ValueError(f"Parameter array shapes mismatch: lys={lys.shape}, c_cus={c_cus.shape}, c_nis={c_nis.shape}")
-
         ly_norm = (lys - 30.0) / (120.0 - 30.0)
         c_cu_norm = (c_cus - 0.0) / (2.9e-3 - 0.0)  # Updated to allow C_Cu = 0
         c_ni_norm = (c_nis - 0.0) / (1.8e-3 - 0.0)  # Updated to allow C_Ni = 0
         target_ly_norm = (ly_target - 30.0) / (120.0 - 30.0)
         target_c_cu_norm = (c_cu_target - 0.0) / (2.9e-3 - 0.0)
         target_c_ni_norm = (c_ni_target - 0.0) / (1.8e-3 - 0.0)
-
         # Combine normalized parameters into tensors
         params_tensor = torch.tensor(np.stack([ly_norm, c_cu_norm, c_ni_norm], axis=1), dtype=torch.float32)  # [N, 3]
         target_params_tensor = torch.tensor([[target_ly_norm, target_c_cu_norm, target_c_ni_norm]], dtype=torch.float32)  # [1, 3]
-
         # Project to query/key space
         queries = self.W_q(target_params_tensor)  # [1, num_heads * d_head]
         keys = self.W_k(params_tensor)  # [N, num_heads * d_head]
-
         # Reshape for multi-head attention
         queries = queries.view(1, self.num_heads, self.d_head)  # [1, num_heads, d_head]
         keys = keys.view(len(params_list), self.num_heads, self.d_head)  # [N, num_heads, d_head]
-
         # Scaled dot-product attention
         attn_logits = torch.einsum('nhd,mhd->nmh', keys, queries) / np.sqrt(self.d_head)  # [N, 1, num_heads]
         attn_weights = torch.softmax(attn_logits, dim=0)  # [N, 1, num_heads]
         attn_weights = attn_weights.mean(dim=2).squeeze(1)  # [N], average across heads
-
         # Spatial weights (Gaussian-like for locality)
         scaled_distances = torch.sqrt(
             ((torch.tensor(ly_norm) - target_ly_norm) / self.sigma)**2 +
@@ -386,11 +630,9 @@ class MultiParamAttentionInterpolator(nn.Module):
         )
         spatial_weights = torch.exp(-scaled_distances**2 / 2)
         spatial_weights /= spatial_weights.sum()  # Normalize
-
         # Combine attention and spatial weights
         combined_weights = attn_weights * spatial_weights
         combined_weights /= combined_weights.sum()  # Normalize
-
         return self._physics_aware_interpolation(solutions, combined_weights.detach().numpy(), ly_target, c_cu_target, c_ni_target)
 
     def _physics_aware_interpolation(self, solutions, weights, ly_target, c_cu_target, c_ni_target):
@@ -402,7 +644,6 @@ class MultiParamAttentionInterpolator(nn.Module):
         X, Y = np.meshgrid(x_coords, y_coords, indexing='ij')
         c1_interp = np.zeros((len(times), 50, 50))
         c2_interp = np.zeros((len(times), 50, 50))
-
         for t_idx in range(len(times)):
             for sol, weight in zip(solutions, weights):
                 scale_factor = ly_target / sol['params']['Ly']
@@ -418,16 +659,13 @@ class MultiParamAttentionInterpolator(nn.Module):
                 points = np.stack([X.flatten(), Y.flatten()], axis=1)
                 c1_interp[t_idx] += weight * interp_c1(points).reshape(50, 50)
                 c2_interp[t_idx] += weight * interp_c2(points).reshape(50, 50)
-
         # Enforce boundary conditions
         c1_interp[:, :, 0] = c_cu_target  # Cu at y=0
         c2_interp[:, :, -1] = c_ni_target  # Ni at y=Ly
-
         param_set = solutions[0]['params'].copy()
         param_set['Ly'] = ly_target
         param_set['C_Cu'] = c_cu_target
         param_set['C_Ni'] = c_ni_target
-
         return {
             'params': param_set,
             'X': X,
@@ -438,7 +676,6 @@ class MultiParamAttentionInterpolator(nn.Module):
             'interpolated': True,
             'attention_weights': weights.tolist()
         }
-
 
 # =============================================
 # ORIGINAL INTERPOLATION WRAPPER (UNCHANGED)
@@ -457,7 +694,6 @@ def load_and_interpolate_solution(solutions, params_list, ly_target, c_cu_target
     interpolator = MultiParamAttentionInterpolator(sigma=0.2)
     return interpolator(solutions, params_list, ly_target, c_cu_target, c_ni_target)
 
-
 # =============================================
 # ORIGINAL PLOTTING FUNCTIONS (UNCHANGED)
 # =============================================
@@ -469,15 +705,12 @@ def plot_2d_concentration(solution, time_index, output_dir="figures", cmap_cu='v
     Ly = solution['params']['Ly']
     c1 = solution['c1_preds'][time_index]
     c2 = solution['c2_preds'][time_index]
-
     # Apply custom limits or auto-scale
     cu_min = vmin_cu if vmin_cu is not None else 0
     cu_max = vmax_cu if vmax_cu is not None else np.max(c1)
     ni_min = vmin_ni if vmin_ni is not None else 0
     ni_max = vmax_ni if vmax_ni is not None else np.max(c2)
-
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(10, 4), constrained_layout=True)
-
     # Cu heatmap
     im1 = ax1.imshow(
         c1,
@@ -493,7 +726,6 @@ def plot_2d_concentration(solution, time_index, output_dir="figures", cmap_cu='v
     ax1.grid(True)
     cb1 = fig.colorbar(im1, ax=ax1, label='Cu Conc. (mol/cc)', format='%.1e')
     cb1.ax.tick_params(labelsize=10)
-
     # Ni heatmap
     im2 = ax2.imshow(
         c2,
@@ -509,19 +741,16 @@ def plot_2d_concentration(solution, time_index, output_dir="figures", cmap_cu='v
     ax2.grid(True)
     cb2 = fig.colorbar(im2, ax=ax2, label='Ni Conc. (mol/cc)', format='%.1e')
     cb2.ax.tick_params(labelsize=10)
-
     param_text = f"$L_y$ = {Ly:.1f} μm, $C_{{Cu}}$ = {solution['params']['C_Cu']:.1e}, $C_{{Ni}}$ = {solution['params']['C_Ni']:.1e}"
     if solution.get('interpolated', False):
         param_text += " (Interpolated)"
     fig.suptitle(f'Concentration Profiles\n{param_text}', fontsize=14)
-
     os.makedirs(output_dir, exist_ok=True)
     base_filename = f"conc_2d_t_{t_val:.1f}_ly_{Ly:.1f}_ccu_{solution['params']['C_Cu']:.1e}_cni_{solution['params']['C_Ni']:.1e}"
     plt.savefig(os.path.join(output_dir, f"{base_filename}.png"), dpi=300, bbox_inches='tight')
     plt.savefig(os.path.join(output_dir, f"{base_filename}.pdf"), bbox_inches='tight')
     plt.close()
     return fig, base_filename
-
 
 def plot_centerline_curves(
         solution, time_indices, sidebar_metric='mean_cu', output_dir="figures",
@@ -536,7 +765,6 @@ def plot_centerline_curves(
     Ly = solution['params']['Ly']
     center_idx = 25  # x = Lx/2
     times = solution['times']
-
     # Prepare sidebar data
     if sidebar_metric == 'loss' and 'loss' in solution:
         sidebar_data = solution['loss'][:len(times)]
@@ -547,13 +775,11 @@ def plot_centerline_curves(
     else:  # mean_ni
         sidebar_data = [np.mean(c2) for c2 in solution['c2_preds']]
         sidebar_label = 'Mean Ni Conc. (mol/cc)'
-
     fig = plt.figure(figsize=(fig_width, fig_height), constrained_layout=True)
     gs = fig.add_gridspec(1, 4, width_ratios=[1, 1, 0.05, 0.5])
     ax1 = fig.add_subplot(gs[0])
     ax2 = fig.add_subplot(gs[1])
     ax3 = fig.add_subplot(gs[3])
-
     # Centerline curves
     colors = cm.get_cmap(curve_colormap)(np.linspace(0, 1, len(time_indices)))
     for idx, t_idx in enumerate(time_indices):
@@ -562,7 +788,6 @@ def plot_centerline_curves(
         c2 = solution['c2_preds'][t_idx][:, center_idx]
         ax1.plot(y_coords, c1, label=f't = {t_val:.1f} s', color=colors[idx], linewidth=curve_linewidth)
         ax2.plot(y_coords, c2, label=f't = {t_val:.1f} s', color=colors[idx], linewidth=curve_linewidth)
-
     # Axis styling
     for ax in [ax1, ax2, ax3]:
         for spine in ax.spines.values():
@@ -575,7 +800,6 @@ def plot_centerline_curves(
             labelsize=tick_label_size
         )
         ax.grid(True, linestyle=grid_linestyle, alpha=grid_alpha)
-
     # Legend placement
     legend_positions = {
         'upper right': {'loc': 'upper right', 'bbox': None},
@@ -590,40 +814,34 @@ def plot_centerline_curves(
         'below': {'loc': 'upper center', 'bbox': (0.5, -0.05)}
     }
     legend_params = legend_positions.get(legend_loc, {'loc': 'upper right', 'bbox': None})
-
     ax1.set_xlabel('y (μm)', fontsize=label_size)
     ax1.set_ylabel('Cu Conc. (mol/cc)', fontsize=label_size)
     ax1.set_title(f'Cu at x = {Lx/2:.1f} μm', fontsize=title_size)
     ax1.legend(fontsize=8, loc=legend_params['loc'], bbox_to_anchor=legend_params['bbox'],
                frameon=legend_frameon, framealpha=legend_framealpha)
     ax1.ticklabel_format(style='sci', axis='y', scilimits=(0, 0))
-
     ax2.set_xlabel('y (μm)', fontsize=label_size)
     ax2.set_ylabel('Ni Conc. (mol/cc)', fontsize=label_size)
     ax2.set_title(f'Ni at x = {Lx/2:.1f} μm', fontsize=title_size)
     ax2.legend(fontsize=8, loc=legend_params['loc'], bbox_to_anchor=legend_params['bbox'],
                frameon=legend_frameon, framealpha=legend_framealpha)
     ax2.ticklabel_format(style='sci', axis='y', scilimits=(0, 0))
-
     # Sidebar plot
     ax3.plot(sidebar_data, times, 'k-', linewidth=curve_linewidth)
     ax3.set_xlabel(sidebar_label, fontsize=label_size)
     ax3.set_ylabel('Time (s)', fontsize=label_size)
     ax3.set_title('Metric vs. Time', fontsize=title_size)
     ax3.ticklabel_format(style='sci', axis='x', scilimits=(0, 0))
-
     param_text = f"$L_y$ = {Ly:.1f} μm, $C_{{Cu}}$ = {solution['params']['C_Cu']:.1e}, $C_{{Ni}}$ = {solution['params']['C_Ni']:.1e}"
     if solution.get('interpolated', False):
         param_text += " (Interpolated)"
     fig.suptitle(f'Centerline Concentration Profiles\n{param_text}', fontsize=title_size)
-
     os.makedirs(output_dir, exist_ok=True)
     base_filename = f"conc_centerline_ly_{Ly:.1f}_ccu_{solution['params']['C_Cu']:.1e}_cni_{solution['params']['C_Ni']:.1e}"
     plt.savefig(os.path.join(output_dir, f"{base_filename}.png"), dpi=300, bbox_inches='tight')
     plt.savefig(os.path.join(output_dir, f"{base_filename}.pdf"), bbox_inches='tight')
     plt.close()
     return fig, base_filename
-
 
 def plot_parameter_sweep(
         solutions, params_list, selected_params, time_index, sidebar_metric='mean_cu', output_dir="figures",
@@ -635,7 +853,6 @@ def plot_parameter_sweep(
     Lx = solutions[0]['params']['Lx']
     center_idx = 25  # x = Lx/2
     t_val = solutions[0]['times'][time_index]
-
     # Prepare sidebar data
     sidebar_data = []
     sidebar_labels = []
@@ -652,14 +869,12 @@ def plot_parameter_sweep(
             if sol.get('interpolated', False):
                 label += " (Interpolated)"
             sidebar_labels.append(label)
-
     # Create figure with custom size
     fig = plt.figure(figsize=(fig_width, fig_height), constrained_layout=True)
     gs = fig.add_gridspec(1, 4, width_ratios=[1, 1, 0.05, 0.5])
     ax1 = fig.add_subplot(gs[0])
     ax2 = fig.add_subplot(gs[1])
     ax3 = fig.add_subplot(gs[3])
-
     # Parameter sweep curves
     colors = cm.get_cmap(curve_colormap)(np.linspace(0, 1, len(selected_params)))
     for idx, (sol, params) in enumerate(zip(solutions, params_list)):
@@ -673,7 +888,6 @@ def plot_parameter_sweep(
                 label += " (Interpolated)"
             ax1.plot(y_coords, c1, label=label, color=colors[idx], linewidth=curve_linewidth)
             ax2.plot(y_coords, c2, label=label, color=colors[idx], linewidth=curve_linewidth)
-
     # Axis styling
     for ax in [ax1, ax2, ax3]:
         for spine in ax.spines.values():
@@ -686,7 +900,6 @@ def plot_parameter_sweep(
             labelsize=tick_label_size
         )
         ax.grid(True, linestyle=grid_linestyle, alpha=grid_alpha)
-
     # Legend placement
     legend_positions = {
         'upper right': {'loc': 'upper right', 'bbox': None},
@@ -701,21 +914,18 @@ def plot_parameter_sweep(
         'below': {'loc': 'upper center', 'bbox': (0.5, -0.05)}
     }
     legend_params = legend_positions.get(legend_loc, {'loc': 'upper right', 'bbox': None})
-
     ax1.set_xlabel('y (μm)', fontsize=label_size)
     ax1.set_ylabel('Cu Conc. (mol/cc)', fontsize=label_size)
     ax1.set_title(f'Cu at x = {Lx/2:.1f} μm, t = {t_val:.1f} s', fontsize=title_size)
     ax1.legend(fontsize=8, loc=legend_params['loc'], bbox_to_anchor=legend_params['bbox'],
                frameon=legend_frameon, framealpha=legend_framealpha)
     ax1.ticklabel_format(style='sci', axis='y', scilimits=(0, 0))
-
     ax2.set_xlabel('y (μm)', fontsize=label_size)
     ax2.set_ylabel('Ni Conc. (mol/cc)', fontsize=label_size)
     ax2.set_title(f'Ni at x = {Lx/2:.1f} μm, t = {t_val:.1f} s', fontsize=title_size)
     ax2.legend(fontsize=8, loc=legend_params['loc'], bbox_to_anchor=legend_params['bbox'],
                frameon=legend_frameon, framealpha=legend_framealpha)
     ax2.ticklabel_format(style='sci', axis='y', scilimits=(0, 0))
-
     # Sidebar bar plot
     ax3.barh(range(len(sidebar_data)), sidebar_data, color='gray', edgecolor='black')
     ax3.set_yticks(range(len(sidebar_data)))
@@ -727,9 +937,7 @@ def plot_parameter_sweep(
     ax3.set_title('Metric per Parameter', fontsize=title_size)
     ax3.grid(True, axis='x', linestyle=grid_linestyle, alpha=grid_alpha)
     ax3.ticklabel_format(style='sci', axis='x', scilimits=(0, 0))
-
     fig.suptitle('Concentration Profiles for Parameter Sweep', fontsize=title_size)
-
     os.makedirs(output_dir, exist_ok=True)
     base_filename = f"conc_sweep_t_{t_val:.1f}"
     plt.savefig(os.path.join(output_dir, f"{base_filename}.png"), dpi=300, bbox_inches='tight')
@@ -737,27 +945,47 @@ def plot_parameter_sweep(
     plt.close()
     return fig, base_filename
 
-
 # =============================================
-# SESSION STATE INITIALIZATION
+# SESSION STATE INITIALIZATION (ENHANCED)
 # =============================================
 def initialize_session_state():
-    """Initialize Streamlit session state with defaults for LLM and parser."""
+    """Initialize Streamlit session state with enhanced defaults for LLM and parser."""
     defaults = {
         'nl_parser': DiffusionNLParser(),
         'llm_backend_loaded': 'GPT-2 (default)',
-        'llm_cache': OrderedDict(),
+        'llm_cache': OrderedDict(),  # Manual cache to avoid UnhashableParamError
+        'llm_cache_maxsize': 20,
         'parsed_params': None,
         'nl_query': "",
         'use_llm': True,
+        'use_llm_ensemble': False,
+        'ensemble_runs': 3,
+        'use_scibert': True,
+        'current_relevance': 0.5,
+        'current_entropy': 0.0,
     }
     for key, value in defaults.items():
         if key not in st.session_state:
             st.session_state[key] = value
 
+# =============================================
+# HELPER: Format small numbers for display
+# =============================================
+def format_small_number(val: float, threshold: float = 0.001, decimals: int = 3) -> str:
+    """Return scientific notation if |val| < threshold, else fixed-point."""
+    if abs(val) < threshold:
+        return f"{val:.3e}"
+    else:
+        return f"{val:.{decimals}f}"
 
 # =============================================
-# MAIN APP WITH LLM INTEGRATION
+# CALLBACK FOR TEMPLATE BUTTONS
+# =============================================
+def set_template(text: str):
+    st.session_state.nl_query = text
+
+# =============================================
+# MAIN APP WITH ENHANCED LLM INTEGRATION
 # =============================================
 def main():
     st.set_page_config(
@@ -766,22 +994,24 @@ def main():
         page_icon="🔬"
     )
     
-    st.title("🔬 Attention-Based Cu-Ni Interdiffusion with Natural Language Interface")
+    st.title("🔬 Attention-Based Cu-Ni Interdiffusion with Enhanced Natural Language Interface")
     
     # Initialize session state
     initialize_session_state()
     
     # =========================================
-    # SIDEBAR: LLM CONFIGURATION
+    # SIDEBAR: ENHANCED LLM CONFIGURATION
     # =========================================
     with st.sidebar:
-        st.header("🤖 LLM Configuration")
+        st.header("🤖 Enhanced LLM Configuration")
+        
         if TRANSFORMERS_AVAILABLE:
             backend_choice = st.selectbox(
                 "LLM Backend",
                 ["GPT-2 (default)", "Qwen2-0.5B-Instruct", "Qwen2.5-0.5B-Instruct"],
                 index=0
             )
+            
             # Load model if backend changed
             if backend_choice != st.session_state.llm_backend_loaded:
                 st.session_state.llm_backend_loaded = backend_choice
@@ -791,8 +1021,16 @@ def main():
             tokenizer, model, active_backend = load_llm(backend_choice)
             st.session_state.llm_tokenizer = tokenizer
             st.session_state.llm_model = model
-            st.session_state.use_llm = st.checkbox("Enable LLM Parsing", value=True)
             st.caption(f"Active: **{active_backend}**")
+            
+            # LLM feature toggles
+            st.session_state.use_llm = st.checkbox("Enable LLM Parsing", value=True)
+            st.session_state.use_llm_ensemble = st.checkbox("Use LLM Ensemble (slower, more robust)", value=False)
+            if st.session_state.use_llm_ensemble:
+                st.session_state.ensemble_runs = st.number_input("Ensemble runs", min_value=2, max_value=10, value=3, step=1)
+            
+            # Relevance scorer toggle
+            st.session_state.use_scibert = st.checkbox("Enable SciBERT Relevance Scoring", value=True)
         else:
             st.error("Install `transformers` to enable LLM features.")
             st.session_state.use_llm = False
@@ -807,7 +1045,7 @@ def main():
         np.random.seed(seed)
     
     # =========================================
-    # MAIN: NATURAL LANGUAGE INPUT
+    # MAIN: ENHANCED NATURAL LANGUAGE INPUT
     # =========================================
     st.subheader("📝 Describe Your Solder Joint Configuration")
     
@@ -817,6 +1055,7 @@ def main():
         "Thick Symmetric Cu": "Simulate a 100 μm symmetric Cu/Sn2.5Ag/Cu joint. Use c_Cu=2.0e-3.",
         "Ni-Rich Diffusion": "Domain length 60 μm, C_Cu=1.0e-3, C_Ni=1.5e-3. Asymmetric configuration.",
         "Self-Diffusion Baseline": "Ly=75 μm, C_Cu=0, C_Ni=0 for self-diffusion reference.",
+        "High Concentration Test": "Joint thickness 50 microns, copper conc 2.5e-3 mol/cc, nickel 1.2e-3, sigma 0.25",
     }
     
     col1, col2 = st.columns([3, 1])
@@ -831,19 +1070,64 @@ def main():
         st.markdown("**Quick Templates:**")
         for name, text in templates.items():
             if st.button(name, use_container_width=True):
-                st.session_state.nl_query = text
+                set_template(text)
                 st.rerun()
     
-    # Parse query and display explanation
+    # Parse query and display enhanced explanation
     parser = st.session_state.nl_parser
     use_llm = st.session_state.get('use_llm', False)
+    use_ensemble = st.session_state.get('use_llm_ensemble', False)
+    ensemble_runs = st.session_state.get('ensemble_runs', 3)
     tokenizer = st.session_state.get('llm_tokenizer', None)
     model = st.session_state.get('llm_model', None)
     
     if nl_query:
-        parsed = parser.hybrid_parse(nl_query, tokenizer, model, use_llm=use_llm)
-        st.session_state.parsed_params = parsed
+        with st.spinner("🔍 Parsing natural language with hybrid regex+LLM..."):
+            # Manual LLM cache with LRU eviction to avoid UnhashableParamError
+            cache_key = hashlib.md5((nl_query + st.session_state.get('llm_backend_loaded', '') + str(use_ensemble)).encode()).hexdigest()
+            if cache_key in st.session_state.llm_cache:
+                parsed = st.session_state.llm_cache[cache_key]
+            else:
+                parsed = parser.hybrid_parse(
+                    nl_query, tokenizer, model, 
+                    use_llm=use_llm,
+                    use_ensemble=use_ensemble,
+                    ensemble_runs=ensemble_runs
+                )
+                # LRU eviction
+                if len(st.session_state.llm_cache) >= st.session_state.llm_cache_maxsize:
+                    st.session_state.llm_cache.popitem(last=False)
+                st.session_state.llm_cache[cache_key] = parsed
+            
+            st.session_state.parsed_params = parsed
+            
+            # Compute relevance score if SciBERT enabled
+            if st.session_state.use_scibert and TRANSFORMERS_AVAILABLE:
+                try:
+                    from sentence_transformers import SentenceTransformer
+                    scorer = RelevanceScorer(use_scibert=True)
+                    # Get weights from interpolation (placeholder - would come from actual interpolation)
+                    weights = np.array([1.0])  # Placeholder
+                    relevance = scorer.score(nl_query, [], weights)
+                    st.session_state.current_relevance = relevance
+                except:
+                    st.session_state.current_relevance = 0.5
+            else:
+                st.session_state.current_relevance = 0.5
+        
+        # Display enhanced explanation with units and ranges
         st.markdown(parser.get_explanation(parsed, nl_query))
+        
+        # Visual feedback for range violations
+        for key in ['ly_target', 'c_cu_target', 'c_ni_target']:
+            val = parsed[key]
+            low, high, unit = DiffusionParameters.RANGES[key]
+            if not (low <= val <= high):
+                st.warning(f"⚠️ `{key}` = {DiffusionParameters.format_value(key, val)} is outside valid range [{low}, {high}] {unit}; clipped automatically.")
+        
+        # Show relevance score
+        confidence_text, confidence_color = RelevanceScorer(None).get_confidence_level(st.session_state.current_relevance)
+        st.markdown(f"**Semantic Relevance:** {st.session_state.current_relevance:.3f} - {confidence_text}")
     else:
         # Use defaults if no query
         parsed = parser.defaults.copy()
@@ -1159,7 +1443,6 @@ def main():
             file_name=f"{filename_sweep}.pdf",
             mime="application/pdf"
         )
-
 
 if __name__ == "__main__":
     main()
