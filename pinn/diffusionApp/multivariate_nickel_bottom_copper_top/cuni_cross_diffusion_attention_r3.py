@@ -10,6 +10,7 @@ ATTENTION-BASED CU-NI INTERDIFFUSION VISUALIZER WITH ENHANCED LLM NATURAL LANGUA
 - Cached LLM loading, robust JSON extraction, and fallback mechanisms
 - SciBERT semantic relevance scoring with keyword fallback
 - Prominent parameter display with units, valid ranges, and extraction status
+- Parameters: Ly (μm), c_cu_target (mol/cc), c_ni_target (mol/cc), sigma (locality)
 """
 
 import os
@@ -131,29 +132,31 @@ class DiffusionNLParser:
     
     def __init__(self):
         self.defaults = DiffusionParameters.DEFAULTS.copy()
-        # Multi-pattern regex for linguistic diversity
+        # Multi-pattern regex for linguistic diversity - extracts Ly, c_cu_target, c_ni_target
         self.patterns = {
             'ly_target': [
-                r'(?:joint\s*thickness|domain\s*length|L_y|Ly|domain\s*size)\s*[=:]\s*(\d+(?:\.\d+)?)',
+                r'(?:joint\s*thickness|domain\s*length|L_y|Ly|domain\s*size|height)\s*[=:]\s*(\d+(?:\.\d+)?)',
                 r'(\d+(?:\.\d+)?)\s*(?:μm|um|microns?|micrometers?)',
-                r'(?:thickness|length|size)\s*(?:of|is|=|:)?\s*(\d+(?:\.\d+)?)\s*(?:μm|um)?',
-                r'(\d+(?:\.\d+)?)\s*μm\s*(?:joint|domain|length)',
+                r'(?:thickness|length|size|height)\s*(?:of|is|=|:)?\s*(\d+(?:\.\d+)?)\s*(?:μm|um)?',
+                r'(\d+(?:\.\d+)?)\s*μm\s*(?:joint|domain|length|height)',
             ],
             'c_cu_target': [
-                r'(?:Cu\s*concentration|C_Cu|c_Cu|top\s*concentration|copper\s*conc\.?)\s*[=:]\s*([\d.]+(?:e[+-]?\d+)?)',
+                r'(?:Cu\s*concentration|C_Cu|c_Cu|top\s*concentration|copper\s*conc\.?|Cu\s*boundary)\s*[=:]\s*([\d.]+(?:e[+-]?\d+)?)',
                 r'([\d.]+(?:e[+-]?\d+)?)\s*(?:mol/cc|molar|M)\s*(?:Cu|copper|top)',
                 r'(?:top|upper)\s*(?:boundary\s*)?(?:Cu|copper)\s*[=:]\s*([\d.]+(?:e[+-]?\d+)?)',
                 r'Cu\s*[=:]\s*([\d.]+(?:e[+-]?\d+)?)\s*(?:mol/cc)?',
+                r'copper\s*(?:concentration|conc\.?)\s*[=:]\s*([\d.]+(?:e[+-]?\d+)?)',
             ],
             'c_ni_target': [
-                r'(?:Ni\s*concentration|C_Ni|c_Ni|bottom\s*concentration|nickel\s*conc\.?)\s*[=:]\s*([\d.]+(?:e[+-]?\d+)?)',
+                r'(?:Ni\s*concentration|C_Ni|c_Ni|bottom\s*concentration|nickel\s*conc\.?|Ni\s*boundary)\s*[=:]\s*([\d.]+(?:e[+-]?\d+)?)',
                 r'([\d.]+(?:e[+-]?\d+)?)\s*(?:mol/cc|molar|M)\s*(?:Ni|nickel|bottom)',
                 r'(?:bottom|lower)\s*(?:boundary\s*)?(?:Ni|nickel)\s*[=:]\s*([\d.]+(?:e[+-]?\d+)?)',
                 r'Ni\s*[=:]\s*([\d.]+(?:e[+-]?\d+)?)\s*(?:mol/cc)?',
+                r'nickel\s*(?:concentration|conc\.?)\s*[=:]\s*([\d.]+(?:e[+-]?\d+)?)',
             ],
             'sigma': [
-                r'(?:sigma|σ|locality)\s*[=:]\s*(\d+(?:\.\d+)?)',
-                r'(?:interpolation\s*sigma|attention\s*sigma)\s*[=:]\s*(\d+(?:\.\d+)?)',
+                r'(?:sigma|σ|locality|interpolation\s*sigma)\s*[=:]\s*(\d+(?:\.\d+)?)',
+                r'(?:attention\s*sigma|smoothness)\s*[=:]\s*(\d+(?:\.\d+)?)',
             ],
         }
     
@@ -224,8 +227,8 @@ class DiffusionNLParser:
             # Qwen models benefit from temperature=0 for deterministic JSON
             temperature = 0.0 if "Qwen" in backend else 0.1
         
-        # Build enhanced prompt with explicit schema and constraints
-        system = """You are a materials science expert. Extract simulation parameters from the user's query.
+        # Build enhanced prompt with explicit schema and constraints for Cu-Ni parameters
+        system = """You are a materials science expert. Extract Cu-Ni diffusion simulation parameters from the user's query.
 Reply ONLY with a valid JSON object. Clip every numeric value to its exact valid range."""
         
         examples = """
@@ -238,12 +241,14 @@ Examples:
   → {"ly_target": 45.0, "c_cu_target": 1.5e-3, "c_ni_target": 0.3e-3, "sigma": 0.2}
 - "Thin joint 40 microns, copper 1.8e-3, nickel 0.4e-3, sigma 0.15"
   → {"ly_target": 40.0, "c_cu_target": 1.8e-3, "c_ni_target": 0.4e-3, "sigma": 0.15}
+- "Cu boundary 1.5e-3 mol/cc, Ni boundary 0.5e-3, domain 60 μm"
+  → {"ly_target": 60.0, "c_cu_target": 1.5e-3, "c_ni_target": 0.5e-3, "sigma": 0.2}
 """
         
         defaults_json = json.dumps(self.defaults)
         regex_hint = f"\nRegex hint (use as reference): {json.dumps(regex_params or {})}" if regex_params else ""
         
-        # Explicit schema declaration in prompt
+        # Explicit schema declaration in prompt with Cu-Ni specific parameters
         schema_text = """
 JSON keys must be:
 - ly_target: float, domain height in μm, valid range [30.0, 120.0] μm
@@ -255,6 +260,7 @@ Rules:
 1. Clip every numeric value to its exact valid range before output
 2. If a parameter is not mentioned, use the default value
 3. Output ONLY valid JSON, no additional text
+4. Use scientific notation for small concentrations (e.g., 1.5e-3 not 0.0015)
 """
         
         user = f"""{examples}{schema_text}{regex_hint}
@@ -389,7 +395,10 @@ JSON:"""
             "|-----------|-----------------|-------------|--------|"
         ]
         
-        for key in ['ly_target', 'c_cu_target', 'c_ni_target', 'sigma']:
+        # Display in user-friendly order: Ly, Cu concentration, Ni concentration
+        display_order = ['ly_target', 'c_cu_target', 'c_ni_target', 'sigma']
+        
+        for key in display_order:
             if key == 'sigma':
                 continue  # Skip hyperparameter in main explanation
             
@@ -409,7 +418,14 @@ JSON:"""
                 status_icon = "⚠️"
                 status_text += " (clipped)"
             
-            lines.append(f"| {key} | {val_str} | {range_str} | {status_icon} {status_text} |")
+            # User-friendly parameter names
+            param_display = {
+                'ly_target': 'Domain Height (Ly)',
+                'c_cu_target': 'Cu Boundary Concentration',
+                'c_ni_target': 'Ni Boundary Concentration',
+            }.get(key, key)
+            
+            lines.append(f"| {param_display} | {val_str} | {range_str} | {status_icon} {status_text} |")
         
         return "\n".join(lines)
 
@@ -1049,7 +1065,7 @@ def main():
     # =========================================
     st.subheader("📝 Describe Your Solder Joint Configuration")
     
-    # Template buttons for quick queries
+    # Template buttons for quick queries - using Cu-Ni specific parameters
     templates = {
         "Thin Asymmetric Joint": "Analyze a 40 μm asymmetric Cu-Ni joint with top Cu concentration 1.8e-3 and bottom Ni 0.4e-3.",
         "Thick Symmetric Cu": "Simulate a 100 μm symmetric Cu/Sn2.5Ag/Cu joint. Use c_Cu=2.0e-3.",
@@ -1155,7 +1171,7 @@ def main():
     c_cus = sorted(set(c_cus))
     c_nis = sorted(set(c_nis))
     
-    # Parameter selection with parsed defaults
+    # Parameter selection with parsed defaults - using user-friendly labels
     col1, col2, col3 = st.columns(3)
     with col1:
         ly_choice = st.selectbox(
