@@ -859,10 +859,17 @@ def compute_validation_metrics(interp_c1: np.ndarray, interp_c2: np.ndarray,
     if np.var(flat_gt_c2) > 1e-12:
         metrics.r2_c2 = r2_score(flat_gt_c2, flat_interp_c2)
     
+    # SSIM: safe handling of constant fields
     data_range_c1 = max(gt_c1.max() - gt_c1.min(), 1e-6)
     data_range_c2 = max(gt_c2.max() - gt_c2.min(), 1e-6)
-    metrics.ssim_c1 = ssim(gt_c1, interp_c1, data_range=data_range_c1)
-    metrics.ssim_c2 = ssim(gt_c2, interp_c2, data_range=data_range_c2)
+    if data_range_c1 > 1e-8:
+        metrics.ssim_c1 = ssim(gt_c1, interp_c1, data_range=data_range_c1)
+    else:
+        metrics.ssim_c1 = 1.0 if np.allclose(gt_c1, interp_c1) else 0.0
+    if data_range_c2 > 1e-8:
+        metrics.ssim_c2 = ssim(gt_c2, interp_c2, data_range=data_range_c2)
+    else:
+        metrics.ssim_c2 = 1.0 if np.allclose(gt_c2, interp_c2) else 0.0
     
     # Physics-based metrics
     dx, dy = (x[1]-x[0] if len(x) > 1 else 1.0), (y[1]-y[0] if len(y) > 1 else 1.0)
@@ -915,8 +922,8 @@ def compute_validation_metrics(interp_c1: np.ndarray, interp_c2: np.ndarray,
             distances = []
             for src in sources:
                 d_ly = abs(target.get('Ly', 60) - src.get('Ly', 60)) / 90  # normalized by range
-                d_cu = abs(target.get('c_cu', 1.5e-3) - src.get('c_cu', 1.5e-3)) / 2.9e-3
-                d_ni = abs(target.get('c_ni', 4e-4) - src.get('c_ni', 4e-4)) / 1.8e-3
+                d_cu = abs(target.get('C_Cu', 1.5e-3) - src.get('C_Cu', 1.5e-3)) / 2.9e-3
+                d_ni = abs(target.get('C_Ni', 4e-4) - src.get('C_Ni', 4e-4)) / 1.8e-3
                 distances.append(np.sqrt(d_ly**2 + d_cu**2 + d_ni**2))
             metrics.param_distance = float(min(distances)) if distances else 1.0
     
@@ -1359,7 +1366,7 @@ def main():
         st.header("📁 Data Management")
         col1, col2 = st.columns(2)
         with col1:
-            if st.button("📥 Load Solutions", use_container_width=True):
+            if st.button("📥 Load Solutions", width='stretch'):
                 with st.spinner("Loading solutions from pinn_solutions/..."):
                     if st.session_state.solution_loader is None:
                         st.session_state.solution_loader = EnhancedSolutionLoader(SOLUTION_DIR)
@@ -1386,7 +1393,7 @@ def main():
                         st.info("💡 Place .pkl files with keys: params, X, Y, c1_preds, c2_preds, times")
         
         with col2:
-            if st.button("🗑️ Clear Cache", use_container_width=True):
+            if st.button("🗑️ Clear Cache", width='stretch'):
                 st.session_state.solutions = []
                 st.session_state.params_list = []
                 st.session_state.solutions_loaded = False
@@ -1422,7 +1429,7 @@ def main():
         optimize_fields = st.checkbox("Optimize fields (PDE refinement)", value=True, disabled=not physics_aware)
         
         # Run validation button
-        if st.button("🚀 Run Validation", type="primary", use_container_width=True):
+        if st.button("🚀 Run Validation", type="primary", width='stretch'):
             if not st.session_state.solutions_loaded:
                 st.error("❌ Please load solutions first!")
                 st.stop()
@@ -1511,23 +1518,28 @@ def main():
         m = res['metrics']
         summary_data.append({
             'Case': f"#{idx}",
-            'Overall Score': f"{m.overall_score:.3f}",
-            'MSE (Cu)': f"{m.mse_c1:.2e}",
-            'MSE (Ni)': f"{m.mse_c2:.2e}",
-            'PDE Residual': f"{m.pde_residual_mean:.2e}",
-            'Mass Error': f"{m.mass_error:.2%}",
-            'Weight Entropy': f"{m.weight_entropy:.3f}",
-            'Param Distance': f"{m.param_distance:.3f}"
+            'Overall Score': m.overall_score,
+            'MSE (Cu)': m.mse_c1,
+            'MSE (Ni)': m.mse_c2,
+            'PDE Residual': m.pde_residual_mean,
+            'Mass Error': m.mass_error,
+            'Weight Entropy': m.weight_entropy,
+            'Param Distance': m.param_distance
         })
     
     summary_df = pd.DataFrame(summary_data)
-    st.dataframe(summary_df.style.format({
-        'Overall Score': '{:.3f}',
-        'MSE (Cu)': '{:.2e}',
-        'MSE (Ni)': '{:.2e}',
-        'PDE Residual': '{:.2e}',
-        'Mass Error': '{:.2%}'
-    }).background_gradient(subset=['Overall Score'], cmap='Greens'), use_container_width=True)
+    st.dataframe(
+        summary_df.style.format({
+            'Overall Score': '{:.3f}',
+            'MSE (Cu)': '{:.2e}',
+            'MSE (Ni)': '{:.2e}',
+            'PDE Residual': '{:.2e}',
+            'Mass Error': '{:.2%}',
+            'Weight Entropy': '{:.3f}',
+            'Param Distance': '{:.3f}'
+        }).background_gradient(subset=['Overall Score'], cmap='Greens'),
+        width='stretch'
+    )
     
     # Interactive visualizations
     tab1, tab2, tab3, tab4 = st.tabs(["📈 Metrics Charts", "🎯 Radar Analysis", "🔍 Field Comparison", "📉 Uncertainty Analysis"])
@@ -1540,7 +1552,9 @@ def main():
         avg_metrics['Category'] = all_metrics_df.groupby('Metric')['Category'].first().values
         
         fig_bar = plot_metrics_bar_chart(avg_metrics)
-        st.plotly_chart(fig_bar, use_container_width=True)
+        st.plotly_chart(fig_bar, use_container_width=True)  # Plotly's use_container_width is not deprecated
+        # Actually plotly's use_container_width is fine, but we can change to config={'responsive': True}
+        # For consistency, we keep as is; Streamlit deprecation only for its own widgets.
     
     with tab2:
         st.subheader("Radar Plot: Multi-Metric Validation")
