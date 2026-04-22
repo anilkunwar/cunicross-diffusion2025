@@ -1053,9 +1053,12 @@ def main():
             st.write("**Source Weights:**")
             weight_df = pd.DataFrame({
                 'Source': [f"S{i+1}" for i in range(len(weights))],
-                'Weight': [f"{w:.4f}" for w in weights]
+                'Weight': weights   # keep numeric
             })
-            st.dataframe(weight_df.style.bar(subset=['Weight'], color='#5fba7d'), use_container_width=True)
+            st.dataframe(
+                weight_df.style.format({'Weight': '{:.4f}'}).bar(subset=['Weight'], color='#5fba7d'),
+                use_container_width=True
+            )
     else:
         st.write("**Status**: ✅ Exact precomputed solution")
     
