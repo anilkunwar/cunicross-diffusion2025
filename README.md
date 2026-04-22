@@ -9,7 +9,7 @@ Basic Model with the Concentration Field Visualization (Includes the variation i
 
   [![crossdiffusiongpt](https://img.shields.io/badge/crossdiffgpt-v1.0-yellow)](https://cunicrossdiffusion-gpt1.streamlit.app/) (The gpt interface to performing NAIF of PINNs solutions)
 
-  [![crossdiffusioninterpolationvalidation](https://img.shields.io/badge/crossdiffvalidation-v1.0-yellow)](https://cunicrossdiffusion-interpolation-validation1.streamlit.app/) (Validation of the interpolation output with the original PINNs solutions)
+  [![crossdiffusioninterpolationvalidation](https://img.shields.io/badge/crossdiffvalidation-v1.0-yellow)](https://cunicrossdiffusion-interpolation-validation1.streamlit.app/) (Validation of the interpolation output with the original PINNs solutions, Not yet completed)
 
 # Size effect of the UBM on the diffusion mechanism
 
