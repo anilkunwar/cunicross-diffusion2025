@@ -1,1264 +1,1056 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-ATTENTION-BASED CU-NI INTERDIFFUSION VISUALIZER WITH LLM NATURAL LANGUAGE INTERFACE
-====================================================================================
-- Natural language parsing of diffusion parameters (regex + GPT-2/Qwen hybrid)
-- Multi-head attention with spatial locality for physics-aware interpolation
-- Publication-quality 2D heatmaps, centerline curves, and parameter sweeps
-- Full figure customization and PNG/PDF export
-- Cached LLM loading, robust JSON extraction, and confidence-based fallbacks
-- EXTRACTABLE CONCENTRATION FEATURES: profiles, gradients, integrated totals, CSV export
+PHYSICS-INFORMED VALIDATION & UNCERTAINTY QUANTIFICATION MODULE
+================================================================
+- Validates attention-interpolated fields against held-out PINN simulations
+- Quantifies uncertainty via weight entropy, parameter distance, ensemble variance
+- Enforces physics constraints: PDE residuals, boundary conditions, mass conservation
+- Interactive visualization: bar charts, radar plots, scatter matrices, residual heatmaps
+- Exportable metrics tables and diagnostic reports
 """
-import os
-import pickle
-import numpy as np
 import streamlit as st
-import matplotlib.pyplot as plt
-from matplotlib import cm
-import pandas as pd
-from scipy.interpolate import RegularGridInterpolator
-import matplotlib as mpl
 import torch
 import torch.nn as nn
-import re
-import json
+import torch.optim as optim
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+import plotly.express as px
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
+import pickle
+import os
 import hashlib
-from collections import OrderedDict
-from typing import Dict, Any, Optional, List, Tuple
+from scipy.interpolate import RegularGridInterpolator
+from scipy.ndimage import gaussian_filter
+from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
+from skimage.metrics import structural_similarity as ssim
+import warnings
+from typing import Dict, List, Tuple, Optional, Union
+from dataclasses import dataclass, field
+from datetime import datetime
+import logging
 
-# Configure Matplotlib for publication-quality figures
-mpl.rcParams['font.family'] = 'Arial'
-mpl.rcParams['font.size'] = 12
-mpl.rcParams['axes.linewidth'] = 1.5
-mpl.rcParams['xtick.major.width'] = 1.5
-mpl.rcParams['ytick.major.width'] = 1.5
-mpl.rcParams['axes.titlesize'] = 14
-mpl.rcParams['axes.labelsize'] = 12
-mpl.rcParams['legend.fontsize'] = 10
-mpl.rcParams['figure.dpi'] = 300
-mpl.rcParams['legend.frameon'] = True
-mpl.rcParams['legend.framealpha'] = 0.8
-mpl.rcParams['grid.linestyle'] = '--'
-mpl.rcParams['grid.alpha'] = 0.3
-
-SOLUTION_DIR = os.path.join(os.path.dirname(__file__), "pinn_solutions")
-
-# Available colormaps for selection
-COLORMAPS = [
-    "viridis", "plasma", "inferno", "magma", "cividis",
-    "Greys", "Purples", "Blues", "Greens", "Oranges", "Reds",
-    "YlOrBr", "YlOrRd", "OrRd", "PuRd", "RdPu", "BuPu", "GnBu",
-    "PuBu", "YlGnBu", "PuBuGn", "BuGn", "YlGn",
-    "cubehelix", "binary", "gist_yarg", "gist_gray", "gray", "bone",
-    "pink", "spring", "summer", "autumn", "winter",
-    "PiYG", "PRGn", "BrBG", "PuOr", "RdGy", "RdBu", "RdYlBu", "RdYlGn",
-    "Spectral", "coolwarm", "bwr", "seismic",
-    "twilight", "twilight_shifted", "hsv",
-    "Pastel1", "Pastel2", "Paired", "Accent", "Dark2", "Set1", "Set2", "Set3",
-    "tab10", "tab20", "tab20b", "tab20c",
-    "flag", "prism", "ocean", "gist_earth", "terrain", "gist_stern", "gnuplot",
-    "gnuplot2", "CMRmap", "cubehelix", "brg", "gist_rainbow", "rainbow",
-    "jet", "nipy_spectral", "gist_ncar",
-    "viridis_r", "plasma_r", "inferno_r", "magma_r", "cividis_r", "Greys_r",
-    "Purples_r", "Blues_r", "Greens_r", "Oranges_r", "Reds_r", "YlOrBr_r",
-    "YlOrRd_r", "OrRd_r", "PuRd_r", "RdPu_r", "BuPu_r", "GnBu_r", "PuBu_r",
-    "YlGnBu_r", "PuBuGn_r", "BuGn_r", "YlGn_r", "twilight_r", "twilight_shifted_r",
-    "hsv_r", "Spectral_r", "coolwarm_r", "bwr_r", "seismic_r", "RdBu_r",
-    "PiYG_r", "PRGn_r", "BrBG_r", "PuOr_r", "RdGy_r", "RdYlBu_r", "RdYlGn_r",
-]
+warnings.filterwarnings('ignore')
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 # =============================================
-# LLM IMPORT WITH GRACEFUL FALLBACK
+# GLOBAL CONFIGURATION
 # =============================================
-try:
-    from transformers import GPT2Tokenizer, GPT2LMHeadModel, AutoTokenizer, AutoModelForCausalLM
-    TRANSFORMERS_AVAILABLE = True
-except ImportError:
-    TRANSFORMERS_AVAILABLE = False
-    st.warning("⚠️ `transformers` not installed. LLM features will be disabled. Install via `pip install transformers torch`")
+plt.rcParams.update({
+    'font.size': 12,
+    'axes.titlesize': 14,
+    'axes.labelsize': 12,
+    'xtick.labelsize': 10,
+    'ytick.labelsize': 10,
+    'legend.fontsize': 10,
+    'figure.dpi': 300,
+    'figure.autolayout': True,
+    'axes.grid': True,
+    'grid.alpha': 0.3,
+    'grid.linestyle': '--'
+})
+
+# Physical constants for Cu-Ni cross-diffusion
+PHYSICS_CONSTANTS = {
+    'D11': 0.006,      # Cu self-diffusivity (μm²/s)
+    'D12': 0.00427,    # Cu-Ni cross-diffusivity
+    'D21': 0.003697,   # Ni-Cu cross-diffusivity
+    'D22': 0.0054,     # Ni self-diffusivity
+    'C_CU_RANGE': (0.0, 2.9e-3),   # mol/cc
+    'C_NI_RANGE': (0.0, 1.8e-3),   # mol/cc
+    'LY_RANGE': (30.0, 120.0),     # μm
+    'T_MAX': 200.0,                # s
+    'MASS_TOLERANCE': 1e-4,        # Relative mass conservation tolerance
+}
 
 # =============================================
-# NATURAL LANGUAGE PARSER (Hybrid Regex + LLM)
+# PHYSICS-INFORMED LOSS FUNCTIONS
 # =============================================
-class DiffusionNLParser:
-    """Extracts Cu-Ni diffusion parameters from natural language using regex + LLM hybrid parsing."""
+def compute_pde_residual(c1: np.ndarray, c2: np.ndarray, 
+                        x: np.ndarray, y: np.ndarray, t: float,
+                        D11: float, D12: float, D21: float, D22: float,
+                        dx: float, dy: float) -> np.ndarray:
+    """
+    Compute Fick's second law residual for cross-diffusion:
+    ∂c₁/∂t = D₁₁∇²c₁ + D₁₂∇²c₂
+    ∂c₂/∂t = D₂₁∇²c₁ + D₂₂∇²c₂
     
-    def __init__(self):
-        self.defaults = {
-            'ly_target': 60.0,
-            'c_cu_target': 1.5e-3,
-            'c_ni_target': 0.5e-3,
-            'sigma': 0.20,
+    Uses finite differences for spatial derivatives.
+    Returns residual field of shape (ny, nx).
+    """
+    ny, nx = c1.shape
+    
+    # Laplacian using 5-point stencil
+    def laplacian(c):
+        lap = np.zeros_like(c)
+        # Interior points
+        lap[1:-1, 1:-1] = (
+            (c[2:, 1:-1] - 2*c[1:-1, 1:-1] + c[:-2, 1:-1]) / dy**2 +
+            (c[1:-1, 2:] - 2*c[1:-1, 1:-1] + c[1:-1, :-2]) / dx**2
+        )
+        # Boundary: one-sided differences (Neumann assumed)
+        lap[0, 1:-1] = (c[1, 1:-1] - c[0, 1:-1]) / dy**2 + \
+                      (c[0, 2:] - 2*c[0, 1:-1] + c[0, :-2]) / dx**2
+        lap[-1, 1:-1] = (c[-1, 1:-1] - c[-2, 1:-1]) / dy**2 + \
+                       (c[-1, 2:] - 2*c[-1, 1:-1] + c[-1, :-2]) / dx**2
+        lap[1:-1, 0] = (c[1:-1, 1] - c[1:-1, 0]) / dx**2 + \
+                      (c[2:, 0] - 2*c[1:-1, 0] + c[:-2, 0]) / dy**2
+        lap[1:-1, -1] = (c[1:-1, -1] - c[1:-1, -2]) / dx**2 + \
+                       (c[2:, -1] - 2*c[1:-1, -1] + c[:-2, -1]) / dy**2
+        return lap
+    
+    lap_c1 = laplacian(c1)
+    lap_c2 = laplacian(c2)
+    
+    # Time derivative approximation (forward difference from previous timestep)
+    # For single-time validation, assume quasi-steady: ∂c/∂t ≈ 0
+    # For multi-time, pass c1_prev, c2_prev and dt
+    residual1 = -(D11 * lap_c1 + D12 * lap_c2)  # ∂c₁/∂t ≈ 0
+    residual2 = -(D21 * lap_c1 + D22 * lap_c2)
+    
+    return np.sqrt(residual1**2 + residual2**2)
+
+
+def enforce_boundary_conditions(c1: np.ndarray, c2: np.ndarray,
+                               x: np.ndarray, y: np.ndarray,
+                               c_cu_top: float, c_cu_bottom: float,
+                               c_ni_top: float, c_ni_bottom: float,
+                               enforce_type: str = 'hard') -> Tuple[np.ndarray, np.ndarray]:
+    """
+    Enforce Dirichlet boundary conditions on interpolated fields.
+    
+    Args:
+        enforce_type: 'hard' (direct assignment) or 'soft' (blending with Gaussian weight)
+    """
+    c1_bc = c1.copy()
+    c2_bc = c2.copy()
+    ny, nx = c1.shape
+    
+    if enforce_type == 'hard':
+        # Top boundary (y = Ly)
+        c1_bc[:, -1] = c_cu_top
+        c2_bc[:, -1] = c_ni_top
+        # Bottom boundary (y = 0)
+        c1_bc[:, 0] = c_cu_bottom
+        c2_bc[:, 0] = c_ni_bottom
+        # Side boundaries: Neumann (zero flux) - already satisfied by interpolation
+    elif enforce_type == 'soft':
+        # Gaussian blending near boundaries
+        boundary_width = 3  # cells
+        y_weight = np.exp(-((np.arange(ny) - ny/2)**2) / (2 * (ny/4)**2))
+        x_weight = np.exp(-((np.arange(nx) - nx/2)**2) / (2 * (nx/4)**2))
+        X, Y = np.meshgrid(x_weight, y_weight)
+        blend = 1 - X * Y  # 1 at center, 0 at boundaries
+        
+        # Apply boundary values with blending
+        c1_bc = blend * c1 + (1 - blend) * np.where(
+            (np.arange(ny)[:, None] == 0) | (np.arange(ny)[:, None] == ny-1),
+            np.where(np.arange(ny)[:, None] == 0, c_cu_bottom, c_cu_top),
+            c1
+        )
+        c2_bc = blend * c2 + (1 - blend) * np.where(
+            (np.arange(ny)[:, None] == 0) | (np.arange(ny)[:, None] == ny-1),
+            np.where(np.arange(ny)[:, None] == 0, c_ni_bottom, c_ni_top),
+            c2
+        )
+    
+    return c1_bc, c2_bc
+
+
+def compute_mass_conservation(c1: np.ndarray, c2: np.ndarray, 
+                             x: np.ndarray, y: np.ndarray,
+                             c_cu_initial: float, c_ni_initial: float) -> Dict[str, float]:
+    """
+    Compute relative mass conservation error.
+    Assumes initial uniform concentration c_initial.
+    """
+    dx = x[1] - x[0] if len(x) > 1 else 1.0
+    dy = y[1] - y[0] if len(y) > 1 else 1.0
+    area = dx * dy
+    
+    # Total mass at current time
+    mass_c1 = np.sum(c1) * area
+    mass_c2 = np.sum(c2) * area
+    
+    # Initial mass (uniform)
+    nx, ny = c1.shape
+    initial_mass_c1 = c_cu_initial * nx * ny * area
+    initial_mass_c2 = c_ni_initial * nx * ny * area
+    
+    # Relative error
+    error_c1 = abs(mass_c1 - initial_mass_c1) / (initial_mass_c1 + 1e-12)
+    error_c2 = abs(mass_c2 - initial_mass_c2) / (initial_mass_c2 + 1e-12)
+    
+    return {
+        'mass_error_c1': error_c1,
+        'mass_error_c2': error_c2,
+        'mass_error_max': max(error_c1, error_c2),
+        'mass_c1': mass_c1,
+        'mass_c2': mass_c2
+    }
+
+
+# =============================================
+# VALIDATION METRICS COMPUTATION
+# =============================================
+@dataclass
+class ValidationMetrics:
+    """Container for comprehensive validation metrics."""
+    # Pointwise errors
+    mse_c1: float = 0.0
+    mse_c2: float = 0.0
+    mae_c1: float = 0.0
+    mae_c2: float = 0.0
+    max_error_c1: float = 0.0
+    max_error_c2: float = 0.0
+    r2_c1: float = 0.0
+    r2_c2: float = 0.0
+    ssim_c1: float = 0.0
+    ssim_c2: float = 0.0
+    
+    # Physics-based metrics
+    pde_residual_mean: float = 0.0
+    pde_residual_max: float = 0.0
+    bc_error_top_c1: float = 0.0
+    bc_error_top_c2: float = 0.0
+    bc_error_bottom_c1: float = 0.0
+    bc_error_bottom_c2: float = 0.0
+    mass_error: float = 0.0
+    
+    # Uncertainty metrics
+    weight_entropy: float = 0.0
+    param_distance: float = 0.0
+    ensemble_variance_c1: float = 0.0
+    ensemble_variance_c2: float = 0.0
+    
+    # Composite score (0-1, higher is better)
+    overall_score: float = 0.0
+    
+    def to_dict(self) -> Dict:
+        return {k: v for k, v in self.__dict__.items()}
+    
+    def to_dataframe(self) -> pd.DataFrame:
+        data = []
+        for key, value in self.__dict__.items():
+            category = 'pointwise' if key.startswith(('mse', 'mae', 'max_error', 'r2', 'ssim')) else \
+                      'physics' if key.startswith(('pde', 'bc', 'mass')) else \
+                      'uncertainty' if key.startswith(('weight', 'param', 'ensemble')) else \
+                      'composite'
+            data.append({'Metric': key, 'Value': value, 'Category': category})
+        return pd.DataFrame(data)
+
+
+def compute_validation_metrics(interp_c1: np.ndarray, interp_c2: np.ndarray,
+                              gt_c1: np.ndarray, gt_c2: np.ndarray,
+                              x: np.ndarray, y: np.ndarray, t: float,
+                              params: Dict, weights: Optional[np.ndarray] = None,
+                              ensemble_fields: Optional[List[Dict]] = None) -> ValidationMetrics:
+    """
+    Compute comprehensive validation metrics comparing interpolated vs ground-truth PINN fields.
+    """
+    metrics = ValidationMetrics()
+    
+    # Flatten for pointwise metrics
+    flat_interp_c1 = interp_c1.flatten()
+    flat_interp_c2 = interp_c2.flatten()
+    flat_gt_c1 = gt_c1.flatten()
+    flat_gt_c2 = gt_c2.flatten()
+    
+    # Pointwise errors
+    metrics.mse_c1 = mean_squared_error(flat_gt_c1, flat_interp_c1)
+    metrics.mse_c2 = mean_squared_error(flat_gt_c2, flat_interp_c2)
+    metrics.mae_c1 = mean_absolute_error(flat_gt_c1, flat_interp_c1)
+    metrics.mae_c2 = mean_absolute_error(flat_gt_c2, flat_interp_c2)
+    metrics.max_error_c1 = np.max(np.abs(flat_gt_c1 - flat_interp_c1))
+    metrics.max_error_c2 = np.max(np.abs(flat_gt_c2 - flat_interp_c2))
+    
+    # R² and SSIM (only if variance > 0)
+    if np.var(flat_gt_c1) > 1e-12:
+        metrics.r2_c1 = r2_score(flat_gt_c1, flat_interp_c1)
+    if np.var(flat_gt_c2) > 1e-12:
+        metrics.r2_c2 = r2_score(flat_gt_c2, flat_interp_c2)
+    
+    data_range_c1 = max(gt_c1.max() - gt_c1.min(), 1e-6)
+    data_range_c2 = max(gt_c2.max() - gt_c2.min(), 1e-6)
+    metrics.ssim_c1 = ssim(gt_c1, interp_c1, data_range=data_range_c1)
+    metrics.ssim_c2 = ssim(gt_c2, interp_c2, data_range=data_range_c2)
+    
+    # Physics-based metrics
+    dx = x[1] - x[0] if len(x) > 1 else 1.0
+    dy = y[1] - y[0] if len(y) > 1 else 1.0
+    
+    residual = compute_pde_residual(
+        interp_c1, interp_c2, x, y, t,
+        params.get('D11', PHYSICS_CONSTANTS['D11']),
+        params.get('D12', PHYSICS_CONSTANTS['D12']),
+        params.get('D21', PHYSICS_CONSTANTS['D21']),
+        params.get('D22', PHYSICS_CONSTANTS['D22']),
+        dx, dy
+    )
+    metrics.pde_residual_mean = np.mean(residual)
+    metrics.pde_residual_max = np.max(residual)
+    
+    # Boundary condition errors
+    ny, nx = interp_c1.shape
+    metrics.bc_error_top_c1 = np.abs(np.mean(interp_c1[:, -1]) - params.get('c_cu_top', 0))
+    metrics.bc_error_top_c2 = np.abs(np.mean(interp_c2[:, -1]) - params.get('c_ni_top', 0))
+    metrics.bc_error_bottom_c1 = np.abs(np.mean(interp_c1[:, 0]) - params.get('c_cu_bottom', 0))
+    metrics.bc_error_bottom_c2 = np.abs(np.mean(interp_c2[:, 0]) - params.get('c_ni_bottom', 0))
+    
+    # Mass conservation
+    mass_metrics = compute_mass_conservation(
+        interp_c1, interp_c2, x, y,
+        params.get('c_cu_initial', 1.5e-3),
+        params.get('c_ni_initial', 4.0e-4)
+    )
+    metrics.mass_error = mass_metrics['mass_error_max']
+    
+    # Uncertainty metrics
+    if weights is not None and len(weights) > 0:
+        eps = 1e-10
+        metrics.weight_entropy = -np.sum(weights * np.log(weights + eps))
+    
+    if 'target_params' in params and 'source_params' in params:
+        # Normalized parameter distance
+        target = params['target_params']
+        sources = params['source_params']
+        if sources:
+            distances = []
+            for src in sources:
+                d_ly = abs(target.get('Ly', 60) - src.get('Ly', 60)) / 90  # normalized by range
+                d_cu = abs(target.get('c_cu', 1.5e-3) - src.get('c_cu', 1.5e-3)) / 2.9e-3
+                d_ni = abs(target.get('c_ni', 4e-4) - src.get('c_ni', 4e-4)) / 1.8e-3
+                distances.append(np.sqrt(d_ly**2 + d_cu**2 + d_ni**2))
+            metrics.param_distance = np.min(distances)
+    
+    # Ensemble variance (if multiple interpolations available)
+    if ensemble_fields and len(ensemble_fields) > 1:
+        c1_ensemble = np.stack([f['c1'] for f in ensemble_fields], axis=0)
+        c2_ensemble = np.stack([f['c2'] for f in ensemble_fields], axis=0)
+        metrics.ensemble_variance_c1 = np.mean(np.var(c1_ensemble, axis=0))
+        metrics.ensemble_variance_c2 = np.mean(np.var(c2_ensemble, axis=0))
+    
+    # Composite score: weighted combination (higher = better)
+    # Normalize each metric to 0-1 scale (error metrics inverted)
+    scores = []
+    scores.append(np.exp(-metrics.mse_c1 / 1e-6))  # MSE ~1e-6 is good
+    scores.append(np.exp(-metrics.mse_c2 / 1e-6))
+    scores.append(metrics.r2_c1 if metrics.r2_c1 > 0 else 0)
+    scores.append(metrics.r2_c2 if metrics.r2_c2 > 0 else 0)
+    scores.append(metrics.ssim_c1)
+    scores.append(metrics.ssim_c2)
+    scores.append(np.exp(-metrics.pde_residual_mean / 1e-4))
+    scores.append(1 - metrics.mass_error)
+    scores.append(np.exp(-metrics.param_distance / 0.3))  # distance < 0.3 is close
+    
+    metrics.overall_score = np.mean(scores)
+    
+    return metrics
+
+
+# =============================================
+# VISUALIZATION FUNCTIONS
+# =============================================
+def plot_metrics_bar_chart(metrics_df: pd.DataFrame, 
+                          title: str = "Validation Metrics",
+                          color_map: Optional[Dict] = None) -> go.Figure:
+    """Create interactive bar chart of validation metrics, grouped by category."""
+    if color_map is None:
+        color_map = {
+            'pointwise': '#2E86AB',
+            'physics': '#A23B72',
+            'uncertainty': '#F18F01',
+            'composite': '#C73E1D'
         }
-        # Flexible patterns: delimiter (= or :) is optional, simple "Cu 1.2e-3" works
-        self.patterns = {
-            'ly_target': [
-                r'(?:joint\s*thickness|domain\s*length|L_y|Ly)\s*[=:]?\s*(\d+(?:\.\d+)?)',
-                r'(\d+(?:\.\d+)?)\s*(?:μm|um|microns?)',
-            ],
-            'c_cu_target': [
-                r'(?:Cu\s*concentration|C_Cu|c_Cu|top\s*concentration)\s*[=:]?\s*([\d.]+(?:e[+-]?\d+)?)',
-                r'Cu\s*[=:]?\s*([\d.]+(?:e[+-]?\d+)?)',
-            ],
-            'c_ni_target': [
-                r'(?:Ni\s*concentration|C_Ni|c_Ni|bottom\s*concentration)\s*[=:]?\s*([\d.]+(?:e[+-]?\d+)?)',
-                r'Ni\s*[=:]?\s*([\d.]+(?:e[+-]?\d+)?)',
-            ],
+    
+    # Normalize error metrics for better visualization (invert and scale)
+    df = metrics_df.copy()
+    error_metrics = ['mse_c1', 'mse_c2', 'mae_c1', 'mae_c2', 'max_error_c1', 'max_error_c2',
+                    'pde_residual_mean', 'pde_residual_max', 'bc_error_top_c1', 'bc_error_top_c2',
+                    'bc_error_bottom_c1', 'bc_error_bottom_c2', 'mass_error']
+    for col in error_metrics:
+        if col in df['Metric'].values:
+            idx = df[df['Metric'] == col].index[0]
+            val = df.loc[idx, 'Value']
+            # Map error to [0,1] where 0 error = 1.0 score
+            if val < 1e-8:
+                df.loc[idx, 'Value'] = 1.0
+            else:
+                df.loc[idx, 'Value'] = np.exp(-val / 1e-4)  # exponential decay
+    
+    fig = go.Figure()
+    
+    for category in df['Category'].unique():
+        cat_df = df[df['Category'] == category]
+        fig.add_trace(go.Bar(
+            x=cat_df['Metric'],
+            y=cat_df['Value'],
+            name=category,
+            marker_color=color_map.get(category, '#666666'),
+            text=cat_df['Value'].apply(lambda x: f'{x:.3f}'),
+            textposition='auto',
+            hovertemplate='<b>%{x}</b><br>Score: %{y:.3f}<extra></extra>'
+        ))
+    
+    fig.update_layout(
+        title=dict(text=title, x=0.5),
+        xaxis_title="Metric",
+        yaxis_title="Normalized Score (0-1, higher=better)",
+        barmode='group',
+        legend_title="Category",
+        height=500,
+        hovermode='x unified'
+    )
+    
+    return fig
+
+
+def plot_radar_chart(metrics: ValidationMetrics, 
+                    title: str = "Validation Radar Plot") -> go.Figure:
+    """Create radar chart showing key validation metrics."""
+    # Select representative metrics (normalized to 0-1, higher=better)
+    categories = [
+        'MSE (Cu)', 'MSE (Ni)', 'R² (Cu)', 'R² (Ni)', 
+        'SSIM (Cu)', 'SSIM (Ni)', 'PDE Residual', 'Mass Cons.', 'Param. Distance'
+    ]
+    
+    # Normalize and invert error metrics
+    values = [
+        np.exp(-metrics.mse_c1 / 1e-6),
+        np.exp(-metrics.mse_c2 / 1e-6),
+        max(0, metrics.r2_c1),
+        max(0, metrics.r2_c2),
+        metrics.ssim_c1,
+        metrics.ssim_c2,
+        np.exp(-metrics.pde_residual_mean / 1e-4),
+        1 - metrics.mass_error,
+        np.exp(-metrics.param_distance / 0.3)
+    ]
+    
+    # Close the polygon
+    categories += [categories[0]]
+    values += [values[0]]
+    
+    fig = go.Figure(data=go.Scatterpolar(
+        r=values,
+        theta=categories,
+        fill='toself',
+        line_color='#2E86AB',
+        fillcolor='rgba(46, 134, 171, 0.3)',
+        name='Interpolated Solution'
+    ))
+    
+    fig.update_layout(
+        polar=dict(
+            radialaxis=dict(
+                visible=True,
+                range=[0, 1],
+                tickformat='.1f'
+            )),
+        title=dict(text=title, x=0.5),
+        showlegend=False,
+        height=500
+    )
+    
+    return fig
+
+
+def plot_residual_heatmap(residual: np.ndarray, x: np.ndarray, y: np.ndarray,
+                         title: str = "PDE Residual Field") -> go.Figure:
+    """Create interactive heatmap of PDE residual."""
+    fig = go.Figure(data=go.Heatmap(
+        z=residual.T,  # Transpose for correct orientation
+        x=x,
+        y=y,
+        colorscale='RdYlBu_r',
+        colorbar=dict(title="Residual"),
+        hovertemplate='x=%{x:.1f} μm, y=%{y:.1f} μm<br>Residual=%{z:.2e}<extra></extra>'
+    ))
+    
+    fig.update_layout(
+        title=dict(text=title, x=0.5),
+        xaxis_title="x (μm)",
+        yaxis_title="y (μm)",
+        width=600,
+        height=500,
+        hovermode='closest'
+    )
+    
+    return fig
+
+
+def plot_uncertainty_scatter(metrics_list: List[ValidationMetrics],
+                           param_names: List[str],
+                           title: str = "Uncertainty vs Parameter Distance") -> go.Figure:
+    """Scatter plot of uncertainty metrics vs parameter distance."""
+    df = pd.DataFrame([
+        {
+            'Param Distance': m.param_distance,
+            'Weight Entropy': m.weight_entropy,
+            'Ensemble Var (Cu)': m.ensemble_variance_c1,
+            'Ensemble Var (Ni)': m.ensemble_variance_c2,
+            'Overall Score': m.overall_score
         }
+        for m in metrics_list
+    ])
+    
+    fig = px.scatter(
+        df,
+        x='Param Distance',
+        y='Weight Entropy',
+        size='Overall Score',
+        color='Overall Score',
+        color_continuous_scale='Viridis',
+        hover_data=['Ensemble Var (Cu)', 'Ensemble Var (Ni)'],
+        title=title,
+        labels={'Param Distance': 'Normalized Parameter Distance',
+               'Weight Entropy': 'Attention Weight Entropy',
+               'Overall Score': 'Validation Score'}
+    )
+    
+    fig.update_layout(
+        height=500,
+        coloraxis_colorbar=dict(title="Score")
+    )
+    
+    return fig
 
-    def parse_regex(self, text: str) -> Dict[str, Any]:
-        """Extract parameters using flexible regex patterns."""
-        if not text:
-            return self.defaults.copy()
-        params = self.defaults.copy()
-        text_lower = text.lower()
-        
-        for key, patterns in self.patterns.items():
-            for pat in patterns:
-                match = re.search(pat, text_lower, re.IGNORECASE)
-                if match:
-                    val = match.group(1)
-                    try:
-                        if key in ['ly_target']:
-                            params[key] = float(val)
-                        elif key in ['c_cu_target', 'c_ni_target']:
-                            # Python's float handles scientific notation natively
-                            params[key] = float(val)
-                    except (ValueError, TypeError):
-                        pass
-                    break
-        # Clip to valid ranges
-        params['ly_target'] = np.clip(params['ly_target'], 30.0, 120.0)
-        params['c_cu_target'] = np.clip(params['c_cu_target'], 0.0, 2.9e-3)
-        params['c_ni_target'] = np.clip(params['c_ni_target'], 0.0, 1.8e-3)
-        return params
 
-    @staticmethod
-    def _extract_json_robust(generated: str) -> Optional[Dict]:
-        """Robustly extract JSON from LLM output with repair attempts."""
-        json_pattern = r'\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}'
-        match = re.search(json_pattern, generated, re.DOTALL)
-        if not match:
-            match = re.search(r'\{.*?\}', generated, re.DOTALL)
-        if not match:
-            return None
-        json_str = match.group(0)
-        json_str = re.sub(r'(true|false|null)\s*(")', r'\1,\2', json_str)
-        json_str = re.sub(r',\s*([}\]])', r'\1', json_str)
-        try:
-            return json.loads(json_str)
-        except json.JSONDecodeError:
-            return None
+def plot_comparison_heatmaps(interp_c1: np.ndarray, gt_c1: np.ndarray,
+                           interp_c2: np.ndarray, gt_c2: np.ndarray,
+                           x: np.ndarray, y: np.ndarray,
+                           title_prefix: str = "Field Comparison") -> Tuple[go.Figure, go.Figure]:
+    """Create side-by-side comparison heatmaps for interpolated vs ground truth."""
+    # Cu comparison
+    fig_c1 = make_subplots(
+        rows=1, cols=3,
+        subplot_titles=("Interpolated", "Ground Truth", "Absolute Error"),
+        horizontal_spacing=0.05
+    )
+    
+    fig_c1.add_trace(go.Heatmap(z=interp_c1.T, x=x, y=y, colorscale='viridis', showscale=True, name='Interp'), row=1, col=1)
+    fig_c1.add_trace(go.Heatmap(z=gt_c1.T, x=x, y=y, colorscale='viridis', showscale=False, name='GT'), row=1, col=2)
+    fig_c1.add_trace(go.Heatmap(z=np.abs(interp_c1 - gt_c1).T, x=x, y=y, colorscale='RdYlBu_r', showscale=True, name='Error'), row=1, col=3)
+    
+    fig_c1.update_layout(title=dict(text=f"{title_prefix} - Cu Concentration", x=0.5), height=400)
+    
+    # Ni comparison
+    fig_c2 = make_subplots(
+        rows=1, cols=3,
+        subplot_titles=("Interpolated", "Ground Truth", "Absolute Error"),
+        horizontal_spacing=0.05
+    )
+    
+    fig_c2.add_trace(go.Heatmap(z=interp_c2.T, x=x, y=y, colorscale='magma', showscale=True, name='Interp'), row=1, col=1)
+    fig_c2.add_trace(go.Heatmap(z=gt_c2.T, x=x, y=y, colorscale='magma', showscale=False, name='GT'), row=1, col=2)
+    fig_c2.add_trace(go.Heatmap(z=np.abs(interp_c2 - gt_c2).T, x=x, y=y, colorscale='RdYlBu_r', showscale=True, name='Error'), row=1, col=3)
+    
+    fig_c2.update_layout(title=dict(text=f"{title_prefix} - Ni Concentration", x=0.5), height=400)
+    
+    return fig_c1, fig_c2
 
-    def parse_with_llm(self, text: str, tokenizer, model, regex_params: Dict = None, temperature: float = None) -> Dict:
-        """Use LLM (GPT-2 or Qwen) to extract parameters from natural language."""
-        if not tokenizer or not model:
-            return self.parse_regex(text)
+
+# =============================================
+# PHYSICS-INFORMED INTERPOLATION ENHANCEMENT
+# =============================================
+class PhysicsAwareInterpolator:
+    """
+    Enhanced attention interpolator with physics constraints.
+    Adds PDE residual penalty, boundary enforcement, and mass conservation.
+    """
+    
+    def __init__(self, base_interpolator, physics_constants: Dict = None):
+        self.base = base_interpolator
+        self.constants = physics_constants or PHYSICS_CONSTANTS
+        self.enforce_bc = True
+        self.pde_weight = 0.1  # Weight for PDE residual in optimization
+        self.mass_weight = 0.05  # Weight for mass conservation
         
-        if temperature is None:
-            backend = st.session_state.get('llm_backend_loaded', 'GPT-2')
-            temperature = 0.0 if "Qwen" in backend else 0.1
+    def interpolate_with_physics(self, solutions: List[Dict], params_list: List[Dict],
+                               target_params: Dict, target_shape: Tuple[int, int] = (50, 50),
+                               time_norm: float = 1.0, optimize: bool = True) -> Dict:
+        """
+        Perform attention interpolation with optional physics-based refinement.
         
-        system = "You are a materials science expert. Extract simulation parameters from the user's query. Reply ONLY with a valid JSON object."
-        examples = """
-Examples:
-- "Analyze a 50 μm joint with Cu concentration 1.2e-3 and Ni 0.8e-3" → {"ly_target": 50.0, "c_cu_target": 1.2e-3, "c_ni_target": 0.8e-3, "sigma": 0.2}
-- "Domain length 80, C_Cu=2.0e-3, C_Ni=1.0e-3" → {"ly_target": 80.0, "c_cu_target": 2.0e-3, "c_ni_target": 1.0e-3, "sigma": 0.2}
-- "Ly=45um, top Cu=1.5e-3 mol/cc, bottom Ni=0.3e-3" → {"ly_target": 45.0, "c_cu_target": 1.5e-3, "c_ni_target": 0.3e-3, "sigma": 0.2}
-"""
-        defaults_json = json.dumps(self.defaults)
-        regex_hint = f"\nRegex hint (use as reference): {json.dumps(regex_params or {})}" if regex_params else ""
+        Args:
+            optimize: If True, apply gradient-based refinement to minimize PDE residual
+        """
+        # Step 1: Base attention interpolation
+        result = self.base(solutions, params_list, 
+                          target_params.get('Ly', 60),
+                          target_params.get('c_cu', 1.5e-3),
+                          target_params.get('c_ni', 4e-4))
         
-        user = f"""{examples}{regex_hint}
-Query: "{text}"
-JSON keys must be: ly_target (float, 30-120 μm), c_cu_target (float, 0-2.9e-3 mol/cc), c_ni_target (float, 0-1.8e-3 mol/cc), sigma (float, 0.05-0.5).
-Defaults: {defaults_json}
-JSON:"""
+        if not result or 'fields' not in result:
+            return result
         
-        if "Qwen" in st.session_state.get('llm_backend_loaded', ''):
-            messages = [{"role": "system", "content": system}, {"role": "user", "content": user}]
-            prompt = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
-        else:
-            prompt = f"{system}\n{user}\n"
+        fields = result['fields']
+        c1 = fields.get('c1_preds', [np.zeros(target_shape)])[0]
+        c2 = fields.get('c2_preds', [np.zeros(target_shape)])[0]
         
-        try:
-            inputs = tokenizer.encode(prompt, return_tensors='pt', truncation=True, max_length=512)
-            if torch.cuda.is_available():
-                inputs = inputs.to('cuda')
+        # Step 2: Enforce boundary conditions
+        if self.enforce_bc:
+            Lx = target_params.get('Lx', 60)
+            Ly = target_params.get('Ly', 60)
+            x = np.linspace(0, Lx, target_shape[1])
+            y = np.linspace(0, Ly, target_shape[0])
+            
+            c1, c2 = enforce_boundary_conditions(
+                c1, c2, x, y,
+                target_params.get('c_cu_top', 1.59e-3),
+                target_params.get('c_cu_bottom', 0.0),
+                target_params.get('c_ni_top', 0.0),
+                target_params.get('c_ni_bottom', 4e-4),
+                enforce_type='hard'
+            )
+        
+        # Step 3: Optional physics-based refinement via gradient descent
+        if optimize and torch.cuda.is_available():
+            c1, c2 = self._physics_refinement(
+                c1, c2, target_params, target_shape, time_norm
+            )
+        
+        # Update result
+        result['fields']['c1_preds'] = [c1]
+        result['fields']['c2_preds'] = [c2]
+        result['physics_enforced'] = True
+        
+        # Compute physics metrics for diagnostics
+        Lx = target_params.get('Lx', 60)
+        Ly = target_params.get('Ly', 60)
+        x = np.linspace(0, Lx, target_shape[1])
+        y = np.linspace(0, Ly, target_shape[0])
+        t = time_norm * target_params.get('t_max', 200)
+        
+        residual = compute_pde_residual(
+            c1, c2, x, y, t,
+            self.constants['D11'], self.constants['D12'],
+            self.constants['D21'], self.constants['D22'],
+            x[1]-x[0], y[1]-y[0]
+        )
+        
+        mass_metrics = compute_mass_conservation(
+            c1, c2, x, y,
+            target_params.get('c_cu_initial', 1.5e-3),
+            target_params.get('c_ni_initial', 4e-4)
+        )
+        
+        result['physics_diagnostics'] = {
+            'pde_residual_mean': float(np.mean(residual)),
+            'pde_residual_max': float(np.max(residual)),
+            'mass_error': float(mass_metrics['mass_error_max'])
+        }
+        
+        return result
+    
+    def _physics_refinement(self, c1: np.ndarray, c2: np.ndarray,
+                          target_params: Dict, target_shape: Tuple[int, int],
+                          time_norm: float, n_steps: int = 50, lr: float = 1e-4) -> Tuple[np.ndarray, np.ndarray]:
+        """
+        Refine interpolated fields by minimizing PDE residual via gradient descent.
+        Uses PyTorch for automatic differentiation.
+        """
+        # Convert to tensors
+        c1_t = torch.tensor(c1, dtype=torch.float32, requires_grad=True)
+        c2_t = torch.tensor(c2, dtype=torch.float32, requires_grad=True)
+        
+        Lx = target_params.get('Lx', 60)
+        Ly = target_params.get('Ly', 60)
+        t = time_norm * target_params.get('t_max', 200)
+        
+        x = torch.linspace(0, Lx, target_shape[1])
+        y = torch.linspace(0, Ly, target_shape[0])
+        X, Y = torch.meshgrid(x, y, indexing='ij')
+        
+        optimizer = optim.Adam([c1_t, c2_t], lr=lr)
+        
+        for step in range(n_steps):
+            optimizer.zero_grad()
+            
+            # Compute PDE residual loss
+            lap_c1 = self._laplacian_torch(c1_t, X, Y)
+            lap_c2 = self._laplacian_torch(c2_t, X, Y)
+            
+            # Time derivative approximation (quasi-steady)
+            residual1 = -(self.constants['D11'] * lap_c1 + self.constants['D12'] * lap_c2)
+            residual2 = -(self.constants['D21'] * lap_c1 + self.constants['D22'] * lap_c2)
+            
+            pde_loss = torch.mean(residual1**2 + residual2**2)
+            
+            # Boundary loss (soft constraint)
+            bc_loss = (
+                torch.mean((c1_t[:, -1] - target_params.get('c_cu_top', 1.59e-3))**2) +
+                torch.mean((c1_t[:, 0] - target_params.get('c_cu_bottom', 0.0))**2) +
+                torch.mean((c2_t[:, -1] - target_params.get('c_ni_top', 0.0))**2) +
+                torch.mean((c2_t[:, 0] - target_params.get('c_ni_bottom', 4e-4))**2)
+            )
+            
+            # Total loss
+            loss = self.pde_weight * pde_loss + self.mass_weight * bc_loss
+            
+            loss.backward()
+            optimizer.step()
+            
+            # Clip to physical ranges
             with torch.no_grad():
-                outputs = model.generate(
-                    inputs,
-                    max_new_tokens=200,
-                    temperature=temperature,
-                    do_sample=(temperature > 0),
-                    pad_token_id=tokenizer.eos_token_id
-                )
-            generated = tokenizer.decode(outputs[0], skip_special_tokens=True)
-            result = self._extract_json_robust(generated)
-            if result:
-                for key in self.defaults:
-                    if key not in result:
-                        result[key] = self.defaults[key]
-                result['ly_target'] = np.clip(float(result.get('ly_target', 60)), 30, 120)
-                result['c_cu_target'] = np.clip(float(result.get('c_cu_target', 1.5e-3)), 0, 2.9e-3)
-                result['c_ni_target'] = np.clip(float(result.get('c_ni_target', 0.5e-3)), 0, 1.8e-3)
-                if regex_params:
-                    for key in ['ly_target', 'c_cu_target', 'c_ni_target']:
-                        if key in regex_params and key in result:
-                            if abs(result[key] - regex_params[key]) > 1e-4:
-                                result[key] = regex_params[key]
-                return result
-        except Exception as e:
-            st.warning(f"LLM parsing failed: {e}. Falling back to regex.")
-        return self.parse_regex(text)
-
-    def hybrid_parse(self, text: str, tokenizer, model, use_llm: bool = True) -> Dict:
-        """Run regex first, then optionally LLM, and merge based on confidence."""
-        regex_params = self.parse_regex(text)
-        if use_llm and tokenizer and model:
-            cache_key = hashlib.md5((text + st.session_state.get('llm_backend_loaded', '')).encode()).hexdigest()
-            if 'llm_cache' not in st.session_state:
-                st.session_state.llm_cache = OrderedDict()
-            if cache_key in st.session_state.llm_cache:
-                llm_params = st.session_state.llm_cache[cache_key]
-            else:
-                llm_params = self.parse_with_llm(text, tokenizer, model, regex_params)
-                if len(st.session_state.llm_cache) > 20:
-                    st.session_state.llm_cache.popitem(last=False)
-                st.session_state.llm_cache[cache_key] = llm_params
-            final = self.defaults.copy()
-            for key in final:
-                if llm_params[key] != self.defaults[key]:
-                    final[key] = llm_params[key]
-                elif regex_params[key] != self.defaults[key]:
-                    final[key] = regex_params[key]
-            return final
-        return regex_params
-
-    def get_explanation(self, params: dict, original_text: str) -> str:
-        """Generate a markdown table explaining parsed parameters."""
-        lines = ["### 🔍 Parsed Parameters from Natural Language", f"**Query:** _{original_text}_", "| Parameter | Extracted Value | Status |", "|-----------|-----------------|--------|"]
-        for key, val in params.items():
-            if key == 'sigma':
-                continue
-            status = "✅ Extracted" if val != self.defaults[key] else "⚪ Default"
-            if isinstance(val, float):
-                val_str = f"{val:.1e}" if (val < 0.01 or val > 100) else f"{val:.3f}"
-            else:
-                val_str = str(val)
-            lines.append(f"| {key} | {val_str} | {status} |")
-        return "\n".join(lines)
-
-
-# =============================================
-# UNIFIED LLM LOADER WITH CACHING
-# =============================================
-@st.cache_resource(show_spinner="Loading LLM backend...")
-def load_llm(backend_name: str):
-    """Load tokenizer and model for specified backend. Cached forever per backend."""
-    if not TRANSFORMERS_AVAILABLE:
-        return None, None, "Regex Fallback Only"
+                c1_t.clamp_(0, self.constants['C_CU_RANGE'][1])
+                c2_t.clamp_(0, self.constants['C_NI_RANGE'][1])
+        
+        return c1_t.detach().numpy(), c2_t.detach().numpy()
     
-    if "GPT-2" in backend_name:
-        tokenizer = GPT2Tokenizer.from_pretrained('gpt2')
-        model = GPT2LMHeadModel.from_pretrained('gpt2')
-    elif "Qwen2-0.5B" in backend_name:
-        tokenizer = AutoTokenizer.from_pretrained("Qwen/Qwen2-0.5B-Instruct", trust_remote_code=True)
-        model = AutoModelForCausalLM.from_pretrained("Qwen/Qwen2-0.5B-Instruct", torch_dtype="auto", device_map="auto", trust_remote_code=True)
-    elif "Qwen2.5" in backend_name:
-        tokenizer = AutoTokenizer.from_pretrained("Qwen/Qwen2.5-0.5B-Instruct", trust_remote_code=True)
-        model = AutoModelForCausalLM.from_pretrained("Qwen/Qwen2.5-0.5B-Instruct", torch_dtype="auto", device_map="auto", trust_remote_code=True)
-    else:
-        return None, None, "Unknown Backend"
-    
-    model.eval()
-    return tokenizer, model, backend_name
+    def _laplacian_torch(self, c: torch.Tensor, X: torch.Tensor, Y: torch.Tensor) -> torch.Tensor:
+        """Compute Laplacian using PyTorch autograd."""
+        # First derivatives
+        dc_dx = torch.autograd.grad(
+            c.sum(), X, create_graph=True, retain_graph=True
+        )[0]
+        dc_dy = torch.autograd.grad(
+            c.sum(), Y, create_graph=True, retain_graph=True
+        )[0]
+        
+        # Second derivatives
+        d2c_dx2 = torch.autograd.grad(
+            dc_dx.sum(), X, create_graph=True, retain_graph=True
+        )[0]
+        d2c_dy2 = torch.autograd.grad(
+            dc_dy.sum(), Y, create_graph=True, retain_graph=True
+        )[0]
+        
+        return d2c_dx2 + d2c_dy2
 
 
 # =============================================
-# ORIGINAL SOLUTION LOADING (UNCHANGED)
-# =============================================
-@st.cache_data
-def load_solutions(solution_dir):
-    solutions = []
-    params_list = []
-    load_logs = []
-    lys = []
-    c_cus = []
-    c_nis = []
-    for fname in os.listdir(solution_dir):
-        if fname.endswith(".pkl"):
-            try:
-                with open(os.path.join(solution_dir, fname), "rb") as f:
-                    sol = pickle.load(f)
-                required_keys = ['params', 'X', 'Y', 'c1_preds', 'c2_preds', 'times']
-                if all(key in sol for key in required_keys):
-                    if (np.any(np.isnan(sol['c1_preds'])) or np.any(np.isnan(sol['c2_preds'])) or
-                            np.all(sol['c1_preds'] == 0) or np.all(sol['c2_preds'] == 0)):
-                        load_logs.append(f"{fname}: Skipped - Invalid data (NaNs or all zeros).")
-                        continue
-                    c1_min, c1_max = np.min(sol['c1_preds'][0]), np.max(sol['c1_preds'][0])
-                    c2_min, c2_max = np.min(sol['c2_preds'][0]), np.max(sol['c2_preds'][0])
-                    solutions.append(sol)
-                    param_tuple = (sol['params']['Ly'], sol['params']['C_Cu'], sol['params']['C_Ni'])
-                    params_list.append(param_tuple)
-                    lys.append(sol['params']['Ly'])
-                    c_cus.append(sol['params']['C_Cu'])
-                    c_nis.append(sol['params']['C_Ni'])
-                    load_logs.append(
-                        f"{fname}: Loaded. Cu: {c1_min:.2e} to {c1_max:.2e}, Ni: {c2_min:.2e} to {c2_max:.2e}, "
-                        f"Ly={param_tuple[0]:.1f}, C_Cu={param_tuple[1]:.1e}, C_Ni={param_tuple[2]:.1e}"
-                    )
-                else:
-                    missing_keys = [key for key in required_keys if key not in sol]
-                    load_logs.append(f"{fname}: Skipped - Missing keys: {missing_keys}")
-            except Exception as e:
-                load_logs.append(f"{fname}: Skipped - Failed to load: {str(e)}")
-    if len(solutions) < 1:
-        load_logs.append("Error: No valid solutions loaded. Interpolation will fail.")
-    else:
-        load_logs.append(f"Loaded {len(solutions)} solutions. Expected 32.")
-    return solutions, params_list, lys, c_cus, c_nis, load_logs
-
-
-# =============================================
-# ORIGINAL ATTENTION INTERPOLATOR (UNCHANGED)
-# =============================================
-class MultiParamAttentionInterpolator(nn.Module):
-    def __init__(self, sigma=0.2, num_heads=4, d_head=8):
-        super().__init__()
-        self.sigma = sigma
-        self.num_heads = num_heads
-        self.d_head = d_head
-        self.W_q = nn.Linear(3, self.num_heads * self.d_head)
-        self.W_k = nn.Linear(3, self.num_heads * self.d_head)
-
-    def forward(self, solutions, params_list, ly_target, c_cu_target, c_ni_target):
-        if not solutions or not params_list:
-            raise ValueError("No solutions or parameters available for interpolation.")
-
-        lys = np.array([p[0] for p in params_list])
-        c_cus = np.array([p[1] for p in params_list])
-        c_nis = np.array([p[2] for p in params_list])
-        if not (lys.shape == c_cus.shape == c_nis.shape):
-            raise ValueError(f"Parameter array shapes mismatch: lys={lys.shape}, c_cus={c_cus.shape}, c_nis={c_nis.shape}")
-
-        ly_norm = (lys - 30.0) / (120.0 - 30.0)
-        c_cu_norm = (c_cus - 0.0) / (2.9e-3 - 0.0)
-        c_ni_norm = (c_nis - 0.0) / (1.8e-3 - 0.0)
-        target_ly_norm = (ly_target - 30.0) / (120.0 - 30.0)
-        target_c_cu_norm = (c_cu_target - 0.0) / (2.9e-3 - 0.0)
-        target_c_ni_norm = (c_ni_target - 0.0) / (1.8e-3 - 0.0)
-
-        params_tensor = torch.tensor(np.stack([ly_norm, c_cu_norm, c_ni_norm], axis=1), dtype=torch.float32)
-        target_params_tensor = torch.tensor([[target_ly_norm, target_c_cu_norm, target_c_ni_norm]], dtype=torch.float32)
-
-        queries = self.W_q(target_params_tensor)
-        keys = self.W_k(params_tensor)
-
-        queries = queries.view(1, self.num_heads, self.d_head)
-        keys = keys.view(len(params_list), self.num_heads, self.d_head)
-
-        attn_logits = torch.einsum('nhd,mhd->nmh', keys, queries) / np.sqrt(self.d_head)
-        attn_weights = torch.softmax(attn_logits, dim=0)
-        attn_weights = attn_weights.mean(dim=2).squeeze(1)
-
-        scaled_distances = torch.sqrt(
-            ((torch.tensor(ly_norm) - target_ly_norm) / self.sigma)**2 +
-            ((torch.tensor(c_cu_norm) - target_c_cu_norm) / self.sigma)**2 +
-            ((torch.tensor(c_ni_norm) - target_c_ni_norm) / self.sigma)**2
-        )
-        spatial_weights = torch.exp(-scaled_distances**2 / 2)
-        spatial_weights /= spatial_weights.sum()
-
-        combined_weights = attn_weights * spatial_weights
-        combined_weights /= combined_weights.sum()
-
-        return self._physics_aware_interpolation(solutions, combined_weights.detach().numpy(), ly_target, c_cu_target, c_ni_target)
-
-    def _physics_aware_interpolation(self, solutions, weights, ly_target, c_cu_target, c_ni_target):
-        Lx = solutions[0]['params']['Lx']
-        t_max = solutions[0]['params']['t_max']
-        x_coords = np.linspace(0, Lx, 50)
-        y_coords = np.linspace(0, ly_target, 50)
-        times = np.linspace(0, t_max, 50)
-        X, Y = np.meshgrid(x_coords, y_coords, indexing='ij')
-        c1_interp = np.zeros((len(times), 50, 50))
-        c2_interp = np.zeros((len(times), 50, 50))
-
-        for t_idx in range(len(times)):
-            for sol, weight in zip(solutions, weights):
-                scale_factor = ly_target / sol['params']['Ly']
-                Y_scaled = sol['Y'][0, :] * scale_factor
-                interp_c1 = RegularGridInterpolator(
-                    (sol['X'][:, 0], Y_scaled), sol['c1_preds'][t_idx],
-                    method='linear', bounds_error=False, fill_value=0
-                )
-                interp_c2 = RegularGridInterpolator(
-                    (sol['X'][:, 0], Y_scaled), sol['c2_preds'][t_idx],
-                    method='linear', bounds_error=False, fill_value=0
-                )
-                points = np.stack([X.flatten(), Y.flatten()], axis=1)
-                c1_interp[t_idx] += weight * interp_c1(points).reshape(50, 50)
-                c2_interp[t_idx] += weight * interp_c2(points).reshape(50, 50)
-
-        c1_interp[:, :, 0] = c_cu_target
-        c2_interp[:, :, -1] = c_ni_target
-
-        param_set = solutions[0]['params'].copy()
-        param_set['Ly'] = ly_target
-        param_set['C_Cu'] = c_cu_target
-        param_set['C_Ni'] = c_ni_target
-
-        return {
-            'params': param_set,
-            'X': X,
-            'Y': Y,
-            'c1_preds': list(c1_interp),
-            'c2_preds': list(c2_interp),
-            'times': times,
-            'interpolated': True,
-            'attention_weights': weights.tolist()
-        }
-
-
-# =============================================
-# ORIGINAL INTERPOLATION WRAPPER (UNCHANGED)
-# =============================================
-@st.cache_data
-def load_and_interpolate_solution(solutions, params_list, ly_target, c_cu_target, c_ni_target, tolerance_ly=0.1, tolerance_c=1e-5):
-    for sol, params in zip(solutions, params_list):
-        ly, c_cu, c_ni = params
-        if (abs(ly - ly_target) < tolerance_ly and
-                abs(c_cu - c_cu_target) < tolerance_c and
-                abs(c_ni - c_ni_target) < tolerance_c):
-            sol['interpolated'] = False
-            return sol
-    if not solutions:
-        raise ValueError("No solutions available for interpolation.")
-    interpolator = MultiParamAttentionInterpolator(sigma=0.2)
-    return interpolator(solutions, params_list, ly_target, c_cu_target, c_ni_target)
-
-
-# =============================================
-# NEW: EXTRACTABLE CONCENTRATION FEATURES
-# =============================================
-def compute_concentration_features(solution, time_index: int, y_positions: Optional[List[float]] = None):
-    """
-    Extract quantitative concentration features from a solution at a given time index.
-    
-    Features:
-    - Centerline (x = Lx/2) concentration profiles vs y for Cu and Ni.
-    - Concentration at specified y-positions (default: 0, Ly/4, Ly/2, 3Ly/4, Ly).
-    - Integrated concentration (total moles per unit x-length) for Cu and Ni.
-    - Maximum concentration gradient (dC/dy) and its y-location for Cu and Ni.
-    
-    Returns a dictionary with pandas DataFrames and scalars.
-    """
-    if time_index < 0 or time_index >= len(solution['times']):
-        raise ValueError(f"time_index {time_index} out of range (0-{len(solution['times'])-1})")
-    
-    X = solution['X']
-    Y = solution['Y']
-    Lx = solution['params']['Lx']
-    Ly = solution['params']['Ly']
-    c1 = solution['c1_preds'][time_index]   # shape (nx, ny)
-    c2 = solution['c2_preds'][time_index]
-    
-    # Centerline index (x = Lx/2)
-    center_idx = np.argmin(np.abs(X[:, 0] - Lx/2))
-    y_coords = Y[0, :]
-    
-    # 1. Centerline profiles
-    centerline_cu = c1[center_idx, :]
-    centerline_ni = c2[center_idx, :]
-    
-    # 2. Concentrations at specific y positions
-    if y_positions is None:
-        y_positions = [0.0, Ly/4, Ly/2, 3*Ly/4, Ly]
-    y_indices = [np.argmin(np.abs(y_coords - y)) for y in y_positions]
-    conc_at_y = {
-        'y (μm)': y_positions,
-        'Cu (mol/cc)': [c1[center_idx, idx] for idx in y_indices],
-        'Ni (mol/cc)': [c2[center_idx, idx] for idx in y_indices]
-    }
-    df_conc_at_y = pd.DataFrame(conc_at_y)
-    
-    # 3. Integrated concentration (trapezoidal rule over y, assuming unit x-length)
-    dy = y_coords[1] - y_coords[0]
-    integrated_cu = np.trapz(centerline_cu, dx=dy)   # mol/cc * μm -> mol/μm per unit x
-    integrated_ni = np.trapz(centerline_ni, dx=dy)
-    
-    # 4. Concentration gradients (dC/dy) along centerline
-    grad_cu = np.gradient(centerline_cu, dy)
-    grad_ni = np.gradient(centerline_ni, dy)
-    max_grad_cu_idx = np.argmax(np.abs(grad_cu))
-    max_grad_ni_idx = np.argmax(np.abs(grad_ni))
-    max_grad_cu = grad_cu[max_grad_cu_idx]
-    max_grad_ni = grad_ni[max_grad_ni_idx]
-    y_max_grad_cu = y_coords[max_grad_cu_idx]
-    y_max_grad_ni = y_coords[max_grad_ni_idx]
-    
-    features = {
-        'time': solution['times'][time_index],
-        'Ly': Ly,
-        'centerline_y': y_coords,
-        'centerline_cu': centerline_cu,
-        'centerline_ni': centerline_ni,
-        'conc_at_y_table': df_conc_at_y,
-        'integrated_cu': integrated_cu,
-        'integrated_ni': integrated_ni,
-        'max_grad_cu': max_grad_cu,
-        'max_grad_ni': max_grad_ni,
-        'y_max_grad_cu': y_max_grad_cu,
-        'y_max_grad_ni': y_max_grad_ni,
-        'gradient_cu': grad_cu,
-        'gradient_ni': grad_ni,
-    }
-    return features
-
-
-def format_features_for_download(features: dict) -> pd.DataFrame:
-    """Create a DataFrame from the scalar features for easy CSV export."""
-    data = {
-        'Feature': [
-            'Time (s)', 'Ly (μm)', 'Integrated Cu (mol/μm per x-unit)', 'Integrated Ni (mol/μm per x-unit)',
-            'Max |dCu/dy| (mol/cc/μm)', 'y of max |dCu/dy| (μm)', 'Max |dNi/dy| (mol/cc/μm)', 'y of max |dNi/dy| (μm)'
-        ],
-        'Value': [
-            features['time'], features['Ly'], features['integrated_cu'], features['integrated_ni'],
-            features['max_grad_cu'], features['y_max_grad_cu'], features['max_grad_ni'], features['y_max_grad_ni']
-        ]
-    }
-    return pd.DataFrame(data)
-
-
-# =============================================
-# ORIGINAL PLOTTING FUNCTIONS (UNCHANGED)
-# =============================================
-def plot_2d_concentration(solution, time_index, output_dir="figures", cmap_cu='viridis', cmap_ni='magma', vmin_cu=None, vmax_cu=None, vmin_ni=None, vmax_ni=None):
-    x_coords = solution['X'][:, 0]
-    y_coords = solution['Y'][0, :]
-    t_val = solution['times'][time_index]
-    Lx = solution['params']['Lx']
-    Ly = solution['params']['Ly']
-    c1 = solution['c1_preds'][time_index]
-    c2 = solution['c2_preds'][time_index]
-
-    cu_min = vmin_cu if vmin_cu is not None else 0
-    cu_max = vmax_cu if vmax_cu is not None else np.max(c1)
-    ni_min = vmin_ni if vmin_ni is not None else 0
-    ni_max = vmax_ni if vmax_ni is not None else np.max(c2)
-
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(10, 4), constrained_layout=True)
-
-    im1 = ax1.imshow(
-        c1,
-        origin='lower',
-        extent=[0, Lx, 0, Ly],
-        cmap=cmap_cu,
-        vmin=cu_min,
-        vmax=cu_max
-    )
-    ax1.set_xlabel('x (μm)')
-    ax1.set_ylabel('y (μm)')
-    ax1.set_title(f'Cu Concentration, t = {t_val:.1f} s')
-    ax1.grid(True)
-    cb1 = fig.colorbar(im1, ax=ax1, label='Cu Conc. (mol/cc)', format='%.1e')
-    cb1.ax.tick_params(labelsize=10)
-
-    im2 = ax2.imshow(
-        c2,
-        origin='lower',
-        extent=[0, Lx, 0, Ly],
-        cmap=cmap_ni,
-        vmin=ni_min,
-        vmax=ni_max
-    )
-    ax2.set_xlabel('x (μm)')
-    ax2.set_ylabel('y (μm)')
-    ax2.set_title(f'Ni Concentration, t = {t_val:.1f} s')
-    ax2.grid(True)
-    cb2 = fig.colorbar(im2, ax=ax2, label='Ni Conc. (mol/cc)', format='%.1e')
-    cb2.ax.tick_params(labelsize=10)
-
-    param_text = f"$L_y$ = {Ly:.1f} μm, $C_{{Cu}}$ = {solution['params']['C_Cu']:.1e}, $C_{{Ni}}$ = {solution['params']['C_Ni']:.1e}"
-    if solution.get('interpolated', False):
-        param_text += " (Interpolated)"
-    fig.suptitle(f'Concentration Profiles\n{param_text}', fontsize=14)
-
-    os.makedirs(output_dir, exist_ok=True)
-    base_filename = f"conc_2d_t_{t_val:.1f}_ly_{Ly:.1f}_ccu_{solution['params']['C_Cu']:.1e}_cni_{solution['params']['C_Ni']:.1e}"
-    plt.savefig(os.path.join(output_dir, f"{base_filename}.png"), dpi=300, bbox_inches='tight')
-    plt.savefig(os.path.join(output_dir, f"{base_filename}.pdf"), bbox_inches='tight')
-    plt.close()
-    return fig, base_filename
-
-
-def plot_centerline_curves(
-        solution, time_indices, sidebar_metric='mean_cu', output_dir="figures",
-        label_size=12, title_size=14, tick_label_size=10, legend_loc='upper right',
-        curve_colormap='viridis', axis_linewidth=1.5, tick_major_width=1.5,
-        tick_major_length=4.0, fig_width=8.0, fig_height=6.0, curve_linewidth=1.0,
-        grid_alpha=0.3, grid_linestyle='--', legend_frameon=True, legend_framealpha=0.8
-):
-    x_coords = solution['X'][:, 0]
-    y_coords = solution['Y'][0, :]
-    Lx = solution['params']['Lx']
-    Ly = solution['params']['Ly']
-    center_idx = 25
-    times = solution['times']
-
-    if sidebar_metric == 'loss' and 'loss' in solution:
-        sidebar_data = solution['loss'][:len(times)]
-        sidebar_label = 'Loss'
-    elif sidebar_metric == 'mean_cu':
-        sidebar_data = [np.mean(c1) for c1 in solution['c1_preds']]
-        sidebar_label = 'Mean Cu Conc. (mol/cc)'
-    else:
-        sidebar_data = [np.mean(c2) for c2 in solution['c2_preds']]
-        sidebar_label = 'Mean Ni Conc. (mol/cc)'
-
-    fig = plt.figure(figsize=(fig_width, fig_height), constrained_layout=True)
-    gs = fig.add_gridspec(1, 4, width_ratios=[1, 1, 0.05, 0.5])
-    ax1 = fig.add_subplot(gs[0])
-    ax2 = fig.add_subplot(gs[1])
-    ax3 = fig.add_subplot(gs[3])
-
-    colors = cm.get_cmap(curve_colormap)(np.linspace(0, 1, len(time_indices)))
-    for idx, t_idx in enumerate(time_indices):
-        t_val = times[t_idx]
-        c1 = solution['c1_preds'][t_idx][:, center_idx]
-        c2 = solution['c2_preds'][t_idx][:, center_idx]
-        ax1.plot(y_coords, c1, label=f't = {t_val:.1f} s', color=colors[idx], linewidth=curve_linewidth)
-        ax2.plot(y_coords, c2, label=f't = {t_val:.1f} s', color=colors[idx], linewidth=curve_linewidth)
-
-    for ax in [ax1, ax2, ax3]:
-        for spine in ax.spines.values():
-            spine.set_linewidth(axis_linewidth)
-        ax.tick_params(
-            axis='both',
-            which='major',
-            width=tick_major_width,
-            length=tick_major_length,
-            labelsize=tick_label_size
-        )
-        ax.grid(True, linestyle=grid_linestyle, alpha=grid_alpha)
-
-    legend_positions = {
-        'upper right': {'loc': 'upper right', 'bbox': None},
-        'upper left': {'loc': 'upper left', 'bbox': None},
-        'lower right': {'loc': 'lower right', 'bbox': None},
-        'lower left': {'loc': 'lower left', 'bbox': None},
-        'center': {'loc': 'center', 'bbox': None},
-        'best': {'loc': 'best', 'bbox': None},
-        'right': {'loc': 'center left', 'bbox': (1.05, 0.5)},
-        'left': {'loc': 'center right', 'bbox': (-0.05, 0.5)},
-        'above': {'loc': 'lower center', 'bbox': (0.5, 1.05)},
-        'below': {'loc': 'upper center', 'bbox': (0.5, -0.05)}
-    }
-    legend_params = legend_positions.get(legend_loc, {'loc': 'upper right', 'bbox': None})
-
-    ax1.set_xlabel('y (μm)', fontsize=label_size)
-    ax1.set_ylabel('Cu Conc. (mol/cc)', fontsize=label_size)
-    ax1.set_title(f'Cu at x = {Lx/2:.1f} μm', fontsize=title_size)
-    ax1.legend(fontsize=8, loc=legend_params['loc'], bbox_to_anchor=legend_params['bbox'],
-               frameon=legend_frameon, framealpha=legend_framealpha)
-    ax1.ticklabel_format(style='sci', axis='y', scilimits=(0, 0))
-
-    ax2.set_xlabel('y (μm)', fontsize=label_size)
-    ax2.set_ylabel('Ni Conc. (mol/cc)', fontsize=label_size)
-    ax2.set_title(f'Ni at x = {Lx/2:.1f} μm', fontsize=title_size)
-    ax2.legend(fontsize=8, loc=legend_params['loc'], bbox_to_anchor=legend_params['bbox'],
-               frameon=legend_frameon, framealpha=legend_framealpha)
-    ax2.ticklabel_format(style='sci', axis='y', scilimits=(0, 0))
-
-    ax3.plot(sidebar_data, times, 'k-', linewidth=curve_linewidth)
-    ax3.set_xlabel(sidebar_label, fontsize=label_size)
-    ax3.set_ylabel('Time (s)', fontsize=label_size)
-    ax3.set_title('Metric vs. Time', fontsize=title_size)
-    ax3.ticklabel_format(style='sci', axis='x', scilimits=(0, 0))
-
-    param_text = f"$L_y$ = {Ly:.1f} μm, $C_{{Cu}}$ = {solution['params']['C_Cu']:.1e}, $C_{{Ni}}$ = {solution['params']['C_Ni']:.1e}"
-    if solution.get('interpolated', False):
-        param_text += " (Interpolated)"
-    fig.suptitle(f'Centerline Concentration Profiles\n{param_text}', fontsize=title_size)
-
-    os.makedirs(output_dir, exist_ok=True)
-    base_filename = f"conc_centerline_ly_{Ly:.1f}_ccu_{solution['params']['C_Cu']:.1e}_cni_{solution['params']['C_Ni']:.1e}"
-    plt.savefig(os.path.join(output_dir, f"{base_filename}.png"), dpi=300, bbox_inches='tight')
-    plt.savefig(os.path.join(output_dir, f"{base_filename}.pdf"), bbox_inches='tight')
-    plt.close()
-    return fig, base_filename
-
-
-def plot_parameter_sweep(
-        solutions, params_list, selected_params, time_index, sidebar_metric='mean_cu', output_dir="figures",
-        label_size=12, title_size=14, tick_label_size=10, legend_loc='upper right',
-        curve_colormap='tab10', axis_linewidth=1.5, tick_major_width=1.5,
-        tick_major_length=4.0, fig_width=8.0, fig_height=6.0, curve_linewidth=1.0,
-        grid_alpha=0.3, grid_linestyle='--', legend_frameon=True, legend_framealpha=0.8
-):
-    Lx = solutions[0]['params']['Lx']
-    center_idx = 25
-    t_val = solutions[0]['times'][time_index]
-
-    sidebar_data = []
-    sidebar_labels = []
-    for sol, params in zip(solutions, params_list):
-        if params in selected_params:
-            if sidebar_metric == 'loss' and 'loss' in sol:
-                sidebar_data.append(sol['loss'][time_index])
-            elif sidebar_metric == 'mean_cu':
-                sidebar_data.append(np.mean(sol['c1_preds'][time_index]))
-            else:
-                sidebar_data.append(np.mean(sol['c2_preds'][time_index]))
-            ly, c_cu, c_ni = params
-            label = f'$L_y$={ly:.1f}, $C_{{Cu}}$={c_cu:.1e}, $C_{{Ni}}$={c_ni:.1e}'
-            if sol.get('interpolated', False):
-                label += " (Interpolated)"
-            sidebar_labels.append(label)
-
-    fig = plt.figure(figsize=(fig_width, fig_height), constrained_layout=True)
-    gs = fig.add_gridspec(1, 4, width_ratios=[1, 1, 0.05, 0.5])
-    ax1 = fig.add_subplot(gs[0])
-    ax2 = fig.add_subplot(gs[1])
-    ax3 = fig.add_subplot(gs[3])
-
-    colors = cm.get_cmap(curve_colormap)(np.linspace(0, 1, len(selected_params)))
-    for idx, (sol, params) in enumerate(zip(solutions, params_list)):
-        ly, c_cu, c_ni = params
-        if params in selected_params:
-            y_coords = sol['Y'][0, :]
-            c1 = sol['c1_preds'][time_index][:, center_idx]
-            c2 = sol['c2_preds'][time_index][:, center_idx]
-            label = f'$L_y$={ly:.1f}, $C_{{Cu}}$={c_cu:.1e}, $C_{{Ni}}$={c_ni:.1e}'
-            if sol.get('interpolated', False):
-                label += " (Interpolated)"
-            ax1.plot(y_coords, c1, label=label, color=colors[idx], linewidth=curve_linewidth)
-            ax2.plot(y_coords, c2, label=label, color=colors[idx], linewidth=curve_linewidth)
-
-    for ax in [ax1, ax2, ax3]:
-        for spine in ax.spines.values():
-            spine.set_linewidth(axis_linewidth)
-        ax.tick_params(
-            axis='both',
-            which='major',
-            width=tick_major_width,
-            length=tick_major_length,
-            labelsize=tick_label_size
-        )
-        ax.grid(True, linestyle=grid_linestyle, alpha=grid_alpha)
-
-    legend_positions = {
-        'upper right': {'loc': 'upper right', 'bbox': None},
-        'upper left': {'loc': 'upper left', 'bbox': None},
-        'lower right': {'loc': 'lower right', 'bbox': None},
-        'lower left': {'loc': 'lower left', 'bbox': None},
-        'center': {'loc': 'center', 'bbox': None},
-        'best': {'loc': 'best', 'bbox': None},
-        'right': {'loc': 'center left', 'bbox': (1.05, 0.5)},
-        'left': {'loc': 'center right', 'bbox': (-0.05, 0.5)},
-        'above': {'loc': 'lower center', 'bbox': (0.5, 1.05)},
-        'below': {'loc': 'upper center', 'bbox': (0.5, -0.05)}
-    }
-    legend_params = legend_positions.get(legend_loc, {'loc': 'upper right', 'bbox': None})
-
-    ax1.set_xlabel('y (μm)', fontsize=label_size)
-    ax1.set_ylabel('Cu Conc. (mol/cc)', fontsize=label_size)
-    ax1.set_title(f'Cu at x = {Lx/2:.1f} μm, t = {t_val:.1f} s', fontsize=title_size)
-    ax1.legend(fontsize=8, loc=legend_params['loc'], bbox_to_anchor=legend_params['bbox'],
-               frameon=legend_frameon, framealpha=legend_framealpha)
-    ax1.ticklabel_format(style='sci', axis='y', scilimits=(0, 0))
-
-    ax2.set_xlabel('y (μm)', fontsize=label_size)
-    ax2.set_ylabel('Ni Conc. (mol/cc)', fontsize=label_size)
-    ax2.set_title(f'Ni at x = {Lx/2:.1f} μm, t = {t_val:.1f} s', fontsize=title_size)
-    ax2.legend(fontsize=8, loc=legend_params['loc'], bbox_to_anchor=legend_params['bbox'],
-               frameon=legend_frameon, framealpha=legend_framealpha)
-    ax2.ticklabel_format(style='sci', axis='y', scilimits=(0, 0))
-
-    ax3.barh(range(len(sidebar_data)), sidebar_data, color='gray', edgecolor='black')
-    ax3.set_yticks(range(len(sidebar_data)))
-    ax3.set_yticklabels(sidebar_labels, fontsize=tick_label_size)
-    ax3.set_xlabel(
-        'Mean Cu Conc. (mol/cc)' if sidebar_metric == 'mean_cu' else 'Mean Ni Conc. (mol/cc)' if sidebar_metric == 'mean_ni' else 'Loss',
-        fontsize=label_size
-    )
-    ax3.set_title('Metric per Parameter', fontsize=title_size)
-    ax3.grid(True, axis='x', linestyle=grid_linestyle, alpha=grid_alpha)
-    ax3.ticklabel_format(style='sci', axis='x', scilimits=(0, 0))
-
-    fig.suptitle('Concentration Profiles for Parameter Sweep', fontsize=title_size)
-
-    os.makedirs(output_dir, exist_ok=True)
-    base_filename = f"conc_sweep_t_{t_val:.1f}"
-    plt.savefig(os.path.join(output_dir, f"{base_filename}.png"), dpi=300, bbox_inches='tight')
-    plt.savefig(os.path.join(output_dir, f"{base_filename}.pdf"), bbox_inches='tight')
-    plt.close()
-    return fig, base_filename
-
-
-# =============================================
-# SESSION STATE INITIALIZATION
+# STREAMLIT APP: VALIDATION & UNCERTAINTY DASHBOARD
 # =============================================
 def initialize_session_state():
+    """Initialize Streamlit session state for validation module."""
     defaults = {
-        'nl_parser': DiffusionNLParser(),
-        'llm_backend_loaded': 'GPT-2 (default)',
-        'llm_cache': OrderedDict(),
-        'parsed_params': None,
-        'nl_query': "",
-        'use_llm': True,
+        'solutions_loaded': False,
+        'solutions': [],
+        'held_out_indices': [],
+        'validation_results': {},
+        'uncertainty_results': {},
+        'current_target_params': None,
+        'interpolator': None,
+        'physics_interpolator': None
     }
     for key, value in defaults.items():
         if key not in st.session_state:
             st.session_state[key] = value
 
 
-# =============================================
-# MAIN APP WITH LLM INTEGRATION AND FEATURE EXTRACTION
-# =============================================
-def main():
-    st.set_page_config(
-        page_title="LLM-Enhanced Cu-Ni Diffusion Visualizer",
-        layout="wide",
-        page_icon="🔬"
-    )
+def load_solutions_for_validation(solution_dir: str = "pinn_solutions") -> List[Dict]:
+    """Load precomputed PINN solutions for validation."""
+    solutions = []
+    if not os.path.exists(solution_dir):
+        st.warning(f"Solution directory {solution_dir} not found.")
+        return solutions
     
-    st.title("🔬 Attention-Based Cu-Ni Interdiffusion with Natural Language Interface")
+    for fname in os.listdir(solution_dir):
+        if fname.endswith('.pkl'):
+            try:
+                with open(os.path.join(solution_dir, fname), 'rb') as f:
+                    sol = pickle.load(f)
+                # Validate required keys
+                required = ['params', 'X', 'Y', 'c1_preds', 'c2_preds', 'times']
+                if all(k in sol for k in required):
+                    solutions.append(sol)
+            except Exception as e:
+                st.warning(f"Failed to load {fname}: {e}")
+    
+    return solutions
+
+
+def select_held_out_set(solutions: List[Dict], held_out_fraction: float = 0.2) -> List[int]:
+    """Randomly select held-out solutions for validation."""
+    np.random.seed(42)  # Reproducibility
+    n_held_out = max(1, int(len(solutions) * held_out_fraction))
+    return np.random.choice(len(solutions), size=n_held_out, replace=False).tolist()
+
+
+def run_validation_pipeline(solutions: List[Dict], held_out_indices: List[int],
+                           target_params: Dict, interpolator, 
+                           physics_aware: bool = True) -> Dict[str, ValidationMetrics]:
+    """
+    Run validation pipeline: interpolate held-out targets, compute metrics.
+    """
+    results = {}
+    
+    for idx in held_out_indices:
+        gt_sol = solutions[idx]
+        gt_params = gt_sol['params']
+        
+        # Use ground truth params as target for validation
+        target = {
+            'Ly': gt_params.get('Ly', 60),
+            'c_cu': gt_params.get('C_Cu', 1.5e-3),
+            'c_ni': gt_params.get('C_Ni', 4e-4),
+            'Lx': gt_params.get('Lx', 60),
+            't_max': gt_params.get('t_max', 200),
+            'c_cu_top': gt_params.get('C_Cu', 1.59e-3),
+            'c_cu_bottom': 0.0,
+            'c_ni_top': 0.0,
+            'c_ni_bottom': gt_params.get('C_Ni', 4e-4),
+            'c_cu_initial': 1.5e-3,
+            'c_ni_initial': 4e-4,
+            'D11': PHYSICS_CONSTANTS['D11'],
+            'D12': PHYSICS_CONSTANTS['D12'],
+            'D21': PHYSICS_CONSTANTS['D21'],
+            'D22': PHYSICS_CONSTANTS['D22'],
+            'target_params': target_params,
+            'source_params': [s['params'] for s in solutions if s != gt_sol]
+        }
+        
+        # Interpolate
+        if physics_aware and st.session_state.physics_interpolator:
+            interp_result = st.session_state.physics_interpolator.interpolate_with_physics(
+                solutions, [s['params'] for s in solutions], target,
+                target_shape=(50, 50), time_norm=1.0, optimize=True
+            )
+        else:
+            interp_result = interpolator(solutions, [s['params'] for s in solutions],
+                                       target['Ly'], target['c_cu'], target['c_ni'])
+        
+        if not interp_result or 'fields' not in interp_result:
+            continue
+        
+        # Extract fields at final time
+        interp_c1 = interp_result['fields']['c1_preds'][-1]
+        interp_c2 = interp_result['fields']['c2_preds'][-1]
+        gt_c1 = gt_sol['c2_preds'][-1] if len(gt_sol['c2_preds']) > 0 else np.zeros_like(interp_c1)
+        gt_c2 = gt_sol['c2_preds'][-1] if len(gt_sol['c2_preds']) > 0 else np.zeros_like(interp_c2)
+        
+        x = gt_sol['X'][:, 0] if 'X' in gt_sol else np.linspace(0, target['Lx'], 50)
+        y = gt_sol['Y'][0, :] if 'Y' in gt_sol else np.linspace(0, target['Ly'], 50)
+        
+        # Compute metrics
+        metrics = compute_validation_metrics(
+            interp_c1, interp_c2, gt_c1, gt_c2, x, y, target['t_max'],
+            target, 
+            weights=interp_result.get('weights', {}).get('combined', None),
+            ensemble_fields=None  # Could add ensemble here
+        )
+        
+        results[idx] = {
+            'metrics': metrics,
+            'interp_c1': interp_c1,
+            'interp_c2': interp_c2,
+            'gt_c1': gt_c1,
+            'gt_c2': gt_c2,
+            'x': x,
+            'y': y,
+            'params': target
+        }
+    
+    return results
+
+
+def render_validation_dashboard():
+    """Main Streamlit dashboard for validation and uncertainty quantification."""
+    st.set_page_config(page_title="Physics-Informed Validation Dashboard", layout="wide")
+    st.title("🔬 Physics-Informed Validation & Uncertainty Quantification")
     
     initialize_session_state()
     
-    # =========================================
-    # SIDEBAR: LLM CONFIGURATION
-    # =========================================
+    # Sidebar: Configuration
     with st.sidebar:
-        st.header("🤖 LLM Configuration")
-        if TRANSFORMERS_AVAILABLE:
-            backend_choice = st.selectbox(
-                "LLM Backend",
-                ["GPT-2 (default)", "Qwen2-0.5B-Instruct", "Qwen2.5-0.5B-Instruct"],
-                index=0
-            )
-            if backend_choice != st.session_state.llm_backend_loaded:
-                st.session_state.llm_backend_loaded = backend_choice
-                st.session_state.llm_cache.clear()
-                st.rerun()
-            
-            tokenizer, model, active_backend = load_llm(backend_choice)
-            st.session_state.llm_tokenizer = tokenizer
-            st.session_state.llm_model = model
-            st.session_state.use_llm = st.checkbox("Enable LLM Parsing", value=True)
-            st.caption(f"Active: **{active_backend}**")
-        else:
-            st.error("Install `transformers` to enable LLM features.")
-            st.session_state.use_llm = False
-            st.session_state.llm_backend_loaded = "Regex Fallback Only"
+        st.header("⚙️ Configuration")
         
-        st.header("⚙️ Interpolation Hyperparameters")
-        sigma = st.slider("Locality σ", 0.05, 0.50, 0.20, 0.01)
-        num_heads = st.slider("Attention Heads", 1, 8, 4)
-        d_head = st.slider("Dim/Head", 4, 16, 8)
-        seed = st.number_input("Random Seed", 0, 9999, 42)
-        torch.manual_seed(seed)
-        np.random.seed(seed)
+        solution_dir = st.text_input("Solution Directory", value="pinn_solutions")
+        held_out_fraction = st.slider("Held-out Fraction", 0.1, 0.5, 0.2, 0.05)
+        physics_aware = st.checkbox("Enable Physics-Aware Interpolation", value=True)
+        optimize_fields = st.checkbox("Optimize Fields (PDE Refinement)", value=True, disabled=not physics_aware)
+        
+        if st.button("🔄 Load Solutions & Run Validation"):
+            with st.spinner("Loading solutions..."):
+                solutions = load_solutions_for_validation(solution_dir)
+                if not solutions:
+                    st.error("No valid solutions found.")
+                    return
+                st.session_state.solutions = solutions
+                st.session_state.solutions_loaded = True
+                st.session_state.held_out_indices = select_held_out_set(solutions, held_out_fraction)
+                
+            with st.spinner("Running validation pipeline..."):
+                # Initialize interpolators
+                if st.session_state.interpolator is None:
+                    from your_attention_module import MultiParamAttentionInterpolator  # Import your base interpolator
+                    st.session_state.interpolator = MultiParamAttentionInterpolator()
+                
+                if physics_aware and st.session_state.physics_interpolator is None:
+                    st.session_state.physics_interpolator = PhysicsAwareInterpolator(
+                        st.session_state.interpolator
+                    )
+                
+                target_params = {
+                    'Ly': 60, 'c_cu': 1.5e-3, 'c_ni': 4e-4,
+                    'Lx': 60, 't_max': 200
+                }
+                st.session_state.current_target_params = target_params
+                
+                results = run_validation_pipeline(
+                    solutions, st.session_state.held_out_indices,
+                    target_params, st.session_state.interpolator,
+                    physics_aware=physics_aware and optimize_fields
+                )
+                st.session_state.validation_results = results
+                st.success(f"Validation complete: {len(results)} held-out cases evaluated.")
     
-    # =========================================
-    # MAIN: NATURAL LANGUAGE INPUT
-    # =========================================
-    st.subheader("📝 Describe Your Solder Joint Configuration")
-    
-    templates = {
-        "Thin Asymmetric Joint": "Analyze a 40 μm asymmetric Cu-Ni joint with top Cu concentration 1.8e-3 and bottom Ni 0.4e-3.",
-        "Thick Symmetric Cu": "Simulate a 100 μm symmetric Cu/Sn2.5Ag/Cu joint. Use c_Cu=2.0e-3.",
-        "Ni-Rich Diffusion": "Domain length 60 μm, C_Cu=1.0e-3, C_Ni=1.5e-3. Asymmetric configuration.",
-        "Self-Diffusion Baseline": "Ly=75 μm, C_Cu=0, C_Ni=0 for self-diffusion reference.",
-    }
-    
-    col1, col2 = st.columns([3, 1])
-    with col1:
-        nl_query = st.text_area(
-            "Enter natural language query:",
-            height=100,
-            placeholder="e.g., Analyze a 50 μm joint with Cu=1.5e-3, Ni=0.6e-3, asymmetric configuration...",
-            key="nl_query"
-        )
-    with col2:
-        st.markdown("**Quick Templates:**")
-        for name, text in templates.items():
-            if st.button(name, use_container_width=True):
-                st.session_state.nl_query = text
-                st.rerun()
-    
-    parser = st.session_state.nl_parser
-    use_llm = st.session_state.get('use_llm', False)
-    tokenizer = st.session_state.get('llm_tokenizer', None)
-    model = st.session_state.get('llm_model', None)
-    
-    if nl_query:
-        parsed = parser.hybrid_parse(nl_query, tokenizer, model, use_llm=use_llm)
-        st.session_state.parsed_params = parsed
-        st.markdown(parser.get_explanation(parsed, nl_query))
-    else:
-        parsed = parser.defaults.copy()
-        st.session_state.parsed_params = parsed
-    
-    # =========================================
-    # PARAMETER SELECTION (Pre-filled by Parser)
-    # =========================================
-    st.subheader("🎯 Target Parameters (Override if Needed)")
-    
-    solutions, params_list, lys, c_cus, c_nis, load_logs = load_solutions(SOLUTION_DIR)
-    
-    if load_logs:
-        with st.expander("📋 Load Log"):
-            for log in load_logs:
-                st.write(log)
-    
-    if not solutions:
-        st.error("No valid solution files found in pinn_solutions directory.")
+    # Main content
+    if not st.session_state.solutions_loaded:
+        st.info("👈 Use the sidebar to load solutions and run validation.")
         return
     
-    lys = sorted(set(lys))
-    c_cus = sorted(set(c_cus))
-    c_nis = sorted(set(c_nis))
-    
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        ly_choice = st.selectbox(
-            "Domain Height (Ly, μm)",
-            options=lys,
-            format_func=lambda x: f"{x:.1f}",
-            index=min(lys.index(parsed['ly_target']), len(lys)-1) if parsed['ly_target'] in lys else 0
-        )
-    with col2:
-        c_cu_choice = st.selectbox(
-            "Cu Boundary Concentration (mol/cc)",
-            options=c_cus,
-            format_func=lambda x: f"{x:.1e}",
-            index=min(c_cus.index(parsed['c_cu_target']), len(c_cus)-1) if parsed['c_cu_target'] in c_cus else 0
-        )
-    with col3:
-        c_ni_choice = st.selectbox(
-            "Ni Boundary Concentration (mol/cc)",
-            options=c_nis,
-            format_func=lambda x: f"{x:.1e}",
-            index=min(c_nis.index(parsed['c_ni_target']), len(c_nis)-1) if parsed['c_ni_target'] in c_nis else 0
-        )
-    
-    use_custom_params = st.checkbox("Use Custom Parameters for Interpolation", value=False)
-    if use_custom_params:
-        ly_target = st.number_input(
-            "Custom Ly (μm)",
-            min_value=30.0,
-            max_value=120.0,
-            value=parsed['ly_target'],
-            step=0.1,
-            format="%.1f"
-        )
-        c_cu_target = st.number_input(
-            "Custom C_Cu (mol/cc)",
-            min_value=0.0,
-            max_value=2.9e-3,
-            value=parsed['c_cu_target'],
-            step=0.1e-3,
-            format="%.1e"
-        )
-        c_ni_target = st.number_input(
-            "Custom C_Ni (mol/cc)",
-            min_value=0.0,
-            max_value=1.8e-3,
-            value=parsed['c_ni_target'],
-            step=0.1e-4,
-            format="%.1e"
-        )
-    else:
-        ly_target, c_cu_target, c_ni_target = ly_choice, c_cu_choice, c_ni_choice
-    
-    # =========================================
-    # VISUALIZATION SETTINGS
-    # =========================================
-    st.subheader("🎨 Visualization Settings")
-    cmap_cu = st.selectbox("Cu Heatmap Colormap", options=COLORMAPS, index=COLORMAPS.index('viridis'))
-    cmap_ni = st.selectbox("Ni Heatmap Colormap", options=COLORMAPS, index=COLORMAPS.index('magma'))
-    sidebar_metric = st.selectbox("Sidebar Metric for Curves", options=['mean_cu', 'mean_ni', 'loss'], index=0)
-    
-    st.subheader("🎯 Color Scale Limits")
-    use_custom_scale = st.checkbox("Use custom color scale limits", value=False)
-    custom_cu_min, custom_cu_max, custom_ni_min, custom_ni_max = None, None, None, None
-    if use_custom_scale:
-        col1, col2 = st.columns(2)
-        with col1:
-            st.write("**Cu Concentration Limits**")
-            custom_cu_min = st.number_input("Cu Min", value=0.0, format="%.2e", key="cu_min")
-            custom_cu_max = st.number_input("Cu Max", value=float(np.max([np.max(sol['c1_preds']) for sol in solutions])), format="%.2e", key="cu_max")
-        with col2:
-            st.write("**Ni Concentration Limits**")
-            custom_ni_min = st.number_input("Ni Min", value=0.0, format="%.2e", key="ni_min")
-            custom_ni_max = st.number_input("Ni Max", value=float(np.max([np.max(sol['c2_preds']) for sol in solutions])), format="%.2e", key="ni_max")
-    
-    if custom_cu_min is not None and custom_cu_max is not None and custom_cu_min >= custom_cu_max:
-        st.error("Cu minimum concentration must be less than maximum concentration.")
-        return
-    if custom_ni_min is not None and custom_ni_max is not None and custom_ni_min >= custom_ni_max:
-        st.error("Ni minimum concentration must be less than maximum concentration.")
+    if not st.session_state.validation_results:
+        st.warning("No validation results available. Click 'Load Solutions & Run Validation'.")
         return
     
-    with st.expander("🔧 Figure Customization"):
-        label_size = st.slider("Axis Label Size", min_value=8, max_value=20, value=12, step=1)
-        title_size = st.slider("Title Size", min_value=10, max_value=24, value=14, step=1)
-        tick_label_size = st.slider("Tick Label Size", min_value=6, max_value=16, value=10, step=1)
-        legend_loc = st.selectbox(
-            "Legend Location",
-            options=['upper right', 'upper left', 'lower right', 'lower left', 'center', 'best',
-                     'right', 'left', 'above', 'below'],
-            index=0
-        )
-        curve_colormap = st.selectbox(
-            "Curve Colormap",
-            options=['viridis', 'plasma', 'inferno', 'magma', 'tab10', 'Set1', 'Set2'],
-            index=4
-        )
-        axis_linewidth = st.slider("Axis Line Width", min_value=0.5, max_value=3.0, value=1.5, step=0.1)
-        tick_major_width = st.slider("Tick Major Width", min_value=0.5, max_value=3.0, value=1.5, step=0.1)
-        tick_major_length = st.slider("Tick Major Length", min_value=2.0, max_value=10.0, value=4.0, step=0.5)
-        fig_width = st.slider("Figure Width (inches)", min_value=4.0, max_value=12.0, value=8.0, step=0.5)
-        fig_height = st.slider("Figure Height (inches)", min_value=3.0, max_value=8.0, value=6.0, step=0.5)
-        curve_linewidth = st.slider("Curve Line Width", min_value=0.5, max_value=3.0, value=1.0, step=0.1)
-        grid_alpha = st.slider("Grid Opacity", min_value=0.0, max_value=1.0, value=0.3, step=0.1)
-        grid_linestyle = st.selectbox("Grid Line Style", options=['--', '-', ':', '-.'], index=0)
-        legend_frameon = st.checkbox("Show Legend Frame", value=True)
-        legend_framealpha = st.slider("Legend Frame Opacity", min_value=0.0, max_value=1.0, value=0.8, step=0.1)
+    results = st.session_state.validation_results
     
-    # =========================================
-    # LOAD OR INTERPOLATE SOLUTION
-    # =========================================
-    try:
-        solution = load_and_interpolate_solution(solutions, params_list, ly_target, c_cu_target, c_ni_target)
-    except Exception as e:
-        st.error(f"Failed to load or interpolate solution: {str(e)}")
-        return
-    
-    # Display solution details
-    st.subheader("📊 Solution Details")
-    st.write(f"$L_y$ = {solution['params']['Ly']:.1f} μm")
-    st.write(f"$C_{{Cu}}$ = {solution['params']['C_Cu']:.1e} mol/cc")
-    st.write(f"$C_{{Ni}}$ = {solution['params']['C_Ni']:.1e} mol/cc")
-    if solution.get('interpolated', False):
-        st.write("**Status**: ⚡ Interpolated via attention mechanism")
-        weights = solution.get('attention_weights', [])
-        if weights:
-            st.write("**Source Weights:**")
-            weight_df = pd.DataFrame({
-                'Source': [f"S{i+1}" for i in range(len(weights))],
-                'Weight': weights   # keep numeric
-            })
-            st.dataframe(
-                weight_df.style.format({'Weight': '{:.4f}'}).bar(subset=['Weight'], color='#5fba7d'),
-                use_container_width=True
-            )
-    else:
-        st.write("**Status**: ✅ Exact precomputed solution")
-    
-    # =========================================
-    # 2D CONCENTRATION HEATMAPS
-    # =========================================
-    st.subheader("🗺️ 2D Concentration Heatmaps")
-    time_index = st.slider("Select Time Index for Heatmaps", 0, len(solution['times'])-1, len(solution['times'])-1)
-    fig_2d, filename_2d = plot_2d_concentration(
-        solution, time_index, cmap_cu=cmap_cu, cmap_ni=cmap_ni,
-        vmin_cu=custom_cu_min if use_custom_scale else None,
-        vmax_cu=custom_cu_max if use_custom_scale else None,
-        vmin_ni=custom_ni_min if use_custom_scale else None,
-        vmax_ni=custom_ni_max if use_custom_scale else None
-    )
-    st.pyplot(fig_2d)
-    st.download_button(
-        label="⬇️ Download 2D Plot as PNG",
-        data=open(os.path.join("figures", f"{filename_2d}.png"), "rb").read(),
-        file_name=f"{filename_2d}.png",
-        mime="image/png"
-    )
-    st.download_button(
-        label="⬇️ Download 2D Plot as PDF",
-        data=open(os.path.join("figures", f"{filename_2d}.pdf"), "rb").read(),
-        file_name=f"{filename_2d}.pdf",
-        mime="application/pdf"
-    )
-    
-    # =========================================
-    # EXTRACTABLE CONCENTRATION FEATURES
-    # =========================================
-    st.subheader("📊 Extractable Concentration Features")
-    # Use the same time index as heatmaps (or allow separate selection)
-    feature_time_idx = st.number_input(
-        "Time index for feature extraction",
-        min_value=0, max_value=len(solution['times'])-1,
-        value=time_index, step=1, key="feature_time_idx"
-    )
-    try:
-        features = compute_concentration_features(solution, feature_time_idx)
-        # Display key features
-        col1, col2 = st.columns(2)
-        with col1:
-            st.metric("Integrated Cu (mol/μm per x-unit)", f"{features['integrated_cu']:.3e}")
-            st.metric("Max |dCu/dy| (mol/cc/μm)", f"{features['max_grad_cu']:.3e} at y={features['y_max_grad_cu']:.1f} μm")
-        with col2:
-            st.metric("Integrated Ni (mol/μm per x-unit)", f"{features['integrated_ni']:.3e}")
-            st.metric("Max |dNi/dy| (mol/cc/μm)", f"{features['max_grad_ni']:.3e} at y={features['y_max_grad_ni']:.1f} μm")
-        
-        # Show concentration at key y positions
-        st.write("**Concentrations at Selected y‑positions (centerline):**")
-        st.dataframe(features['conc_at_y_table'], use_container_width=True)
-        
-        # Download buttons for feature data
-        df_scalar = format_features_for_download(features)
-        csv_scalar = df_scalar.to_csv(index=False)
-        st.download_button(
-            label="⬇️ Download Scalar Features as CSV",
-            data=csv_scalar,
-            file_name=f"concentration_features_scalar_t{features['time']:.1f}.csv",
-            mime="text/csv"
-        )
-        
-        # Also allow download of full centerline profiles
-        df_centerline = pd.DataFrame({
-            'y (μm)': features['centerline_y'],
-            'Cu (mol/cc)': features['centerline_cu'],
-            'Ni (mol/cc)': features['centerline_ni']
+    # Summary metrics table
+    st.subheader("📊 Validation Summary")
+    summary_data = []
+    for idx, res in results.items():
+        m = res['metrics']
+        summary_data.append({
+            'Case': f"#{idx}",
+            'Overall Score': f"{m.overall_score:.3f}",
+            'MSE (Cu)': f"{m.mse_c1:.2e}",
+            'MSE (Ni)': f"{m.mse_c2:.2e}",
+            'PDE Residual': f"{m.pde_residual_mean:.2e}",
+            'Mass Error': f"{m.mass_error:.2%}",
+            'Weight Entropy': f"{m.weight_entropy:.3f}",
+            'Param Distance': f"{m.param_distance:.3f}"
         })
-        csv_centerline = df_centerline.to_csv(index=False)
-        st.download_button(
-            label="⬇️ Download Centerline Profiles as CSV",
-            data=csv_centerline,
-            file_name=f"centerline_profiles_t{features['time']:.1f}.csv",
-            mime="text/csv"
-        )
-    except Exception as e:
-        st.warning(f"Feature extraction failed: {e}")
     
-    # =========================================
-    # CENTERLINE CONCENTRATION CURVES
-    # =========================================
-    st.subheader("📈 Centerline Concentration Curves")
-    time_indices = st.multiselect(
-        "Select Time Indices for Curves",
-        options=list(range(len(solution['times']))),
-        default=[0, len(solution['times'])//4, len(solution['times'])//2, 3*len(solution['times'])//4, len(solution['times'])-1],
-        format_func=lambda x: f"t = {solution['times'][x]:.1f} s"
-    )
-    if time_indices:
-        fig_curves, filename_curves = plot_centerline_curves(
-            solution, time_indices, sidebar_metric=sidebar_metric,
-            label_size=label_size, title_size=title_size, tick_label_size=tick_label_size,
-            legend_loc=legend_loc, curve_colormap=curve_colormap,
-            axis_linewidth=axis_linewidth, tick_major_width=tick_major_width,
-            tick_major_length=tick_major_length, fig_width=fig_width, fig_height=fig_height,
-            curve_linewidth=curve_linewidth, grid_alpha=grid_alpha, grid_linestyle=grid_linestyle,
-            legend_frameon=legend_frameon, legend_framealpha=legend_framealpha
-        )
-        st.pyplot(fig_curves)
-        st.download_button(
-            label="⬇️ Download Centerline Plot as PNG",
-            data=open(os.path.join("figures", f"{filename_curves}.png"), "rb").read(),
-            file_name=f"{filename_curves}.png",
-            mime="image/png"
-        )
-        st.download_button(
-            label="⬇️ Download Centerline Plot as PDF",
-            data=open(os.path.join("figures", f"{filename_curves}.pdf"), "rb").read(),
-            file_name=f"{filename_curves}.pdf",
-            mime="application/pdf"
-        )
+    summary_df = pd.DataFrame(summary_data)
+    st.dataframe(summary_df.style.format({
+        'Overall Score': '{:.3f}',
+        'MSE (Cu)': '{:.2e}',
+        'MSE (Ni)': '{:.2e}',
+        'PDE Residual': '{:.2e}',
+        'Mass Error': '{:.2%}'
+    }).background_gradient(subset=['Overall Score'], cmap='Greens'), use_container_width=True)
     
-    # =========================================
-    # PARAMETER SWEEP CURVES
-    # =========================================
-    st.subheader("🔄 Parameter Sweep Curves")
-    with st.expander("➕ Add Custom Parameter Combinations for Sweep"):
-        num_custom_params = st.number_input("Number of Custom Parameter Sets", min_value=0, max_value=5, value=0, step=1)
-        custom_params = []
-        for i in range(num_custom_params):
-            st.write(f"Custom Parameter Set {i+1}")
-            ly_custom = st.number_input(
-                f"Custom Ly (μm) {i+1}",
-                min_value=30.0,
-                max_value=120.0,
-                value=ly_choice,
-                step=0.1,
-                format="%.1f",
-                key=f"ly_custom_{i}"
-            )
-            c_cu_custom = st.number_input(
-                f"Custom C_Cu (mol/cc) {i+1}",
-                min_value=0.0,
-                max_value=2.9e-3,
-                value=max(c_cu_choice, 1.5e-3),
-                step=0.1e-3,
-                format="%.1e",
-                key=f"c_cu_custom_{i}"
-            )
-            c_ni_custom = st.number_input(
-                f"Custom C_Ni (mol/cc) {i+1}",
-                min_value=0.0,
-                max_value=1.8e-3,
-                value=max(c_ni_choice, 1.0e-4),
-                step=0.1e-4,
-                format="%.1e",
-                key=f"c_ni_custom_{i}"
-            )
-            custom_params.append((ly_custom, c_cu_custom, c_ni_custom))
+    # Interactive visualizations
+    tab1, tab2, tab3, tab4 = st.tabs(["📈 Metrics Charts", "🎯 Radar Analysis", "🔍 Field Comparison", "📉 Uncertainty Analysis"])
     
-    param_options = [(ly, c_cu, c_ni) for ly, c_cu, c_ni in params_list]
-    param_labels = [f"$L_y$={ly:.1f}, $C_{{Cu}}$={c_cu:.1e}, $C_{{Ni}}$={c_ni:.1e}" for ly, c_cu, c_ni in param_options]
-    default_params = param_options[:min(4, len(param_options))]
-    selected_labels = st.multiselect(
-        "Select Exact Parameter Combinations",
-        options=param_labels,
-        default=[param_labels[param_options.index(p)] for p in default_params],
-        format_func=lambda x: x
-    )
-    selected_params = [param_options[param_labels.index(label)] for label in selected_labels]
-    selected_params.extend(custom_params)
+    with tab1:
+        st.subheader("Validation Metrics by Category")
+        # Aggregate metrics across all cases
+        all_metrics_df = pd.concat([res['metrics'].to_dataframe() for res in results.values()])
+        avg_metrics = all_metrics_df.groupby('Metric')['Value'].mean().reset_index()
+        avg_metrics['Category'] = all_metrics_df.groupby('Metric')['Category'].first().values
+        
+        fig_bar = plot_metrics_bar_chart(avg_metrics)
+        st.plotly_chart(fig_bar, use_container_width=True)
     
-    sweep_solutions = []
-    sweep_params_list = []
-    for params in selected_params:
-        ly, c_cu, c_ni = params
-        try:
-            sol = load_and_interpolate_solution(solutions, params_list, ly, c_cu, c_ni)
-            sweep_solutions.append(sol)
-            sweep_params_list.append(params)
-        except Exception as e:
-            st.warning(f"Failed to load or interpolate solution for Ly={ly:.1f}, C_Cu={c_cu:.1e}, C_Ni={c_ni:.1e}: {str(e)}")
+    with tab2:
+        st.subheader("Radar Plot: Multi-Metric Validation")
+        # Plot radar for first case as example
+        first_metrics = list(results.values())[0]['metrics']
+        fig_radar = plot_radar_chart(first_metrics)
+        st.plotly_chart(fig_radar, use_container_width=True)
     
-    sweep_time_index = st.slider("Select Time Index for Sweep", 0, len(solution['times'])-1, len(solution['times'])-1)
-    if sweep_solutions and sweep_params_list:
-        fig_sweep, filename_sweep = plot_parameter_sweep(
-            sweep_solutions, sweep_params_list, sweep_params_list, sweep_time_index, sidebar_metric=sidebar_metric,
-            label_size=label_size, title_size=title_size, tick_label_size=tick_label_size,
-            legend_loc=legend_loc, curve_colormap=curve_colormap,
-            axis_linewidth=axis_linewidth, tick_major_width=tick_major_width,
-            tick_major_length=tick_major_length, fig_width=fig_width, fig_height=fig_height,
-            curve_linewidth=curve_linewidth, grid_alpha=grid_alpha, grid_linestyle=grid_linestyle,
-            legend_frameon=legend_frameon, legend_framealpha=legend_framealpha
+    with tab3:
+        st.subheader("Field Comparison: Interpolated vs Ground Truth")
+        case_idx = st.selectbox("Select Validation Case", list(results.keys()), format_func=lambda x: f"Case #{x}")
+        res = results[case_idx]
+        
+        fig_c1, fig_c2 = plot_comparison_heatmaps(
+            res['interp_c1'], res['gt_c1'],
+            res['interp_c2'], res['gt_c2'],
+            res['x'], res['y'],
+            title_prefix=f"Case #{case_idx}"
         )
-        st.pyplot(fig_sweep)
-        st.download_button(
-            label="⬇️ Download Sweep Plot as PNG",
-            data=open(os.path.join("figures", f"{filename_sweep}.png"), "rb").read(),
-            file_name=f"{filename_sweep}.png",
-            mime="image/png"
+        
+        col1, col2 = st.columns(2)
+        with col1:
+            st.plotly_chart(fig_c1, use_container_width=True)
+        with col2:
+            st.plotly_chart(fig_c2, use_container_width=True)
+        
+        # PDE residual heatmap
+        st.subheader("PDE Residual Field")
+        residual = compute_pde_residual(
+            res['interp_c1'], res['interp_c2'], res['x'], res['y'], 
+            res['params'].get('t_max', 200),
+            PHYSICS_CONSTANTS['D11'], PHYSICS_CONSTANTS['D12'],
+            PHYSICS_CONSTANTS['D21'], PHYSICS_CONSTANTS['D22'],
+            res['x'][1]-res['x'][0], res['y'][1]-res['y'][0]
         )
+        fig_residual = plot_residual_heatmap(residual, res['x'], res['y'])
+        st.plotly_chart(fig_residual, use_container_width=True)
+    
+    with tab4:
+        st.subheader("Uncertainty Quantification")
+        
+        # Scatter: uncertainty vs parameter distance
+        metrics_list = [res['metrics'] for res in results.values()]
+        fig_scatter = plot_uncertainty_scatter(metrics_list, ['Ly', 'c_cu', 'c_ni'])
+        st.plotly_chart(fig_scatter, use_container_width=True)
+        
+        # Key uncertainty insights
+        st.markdown("### 🔑 Key Insights")
+        avg_entropy = np.mean([m.weight_entropy for m in metrics_list])
+        avg_distance = np.mean([m.param_distance for m in metrics_list])
+        avg_score = np.mean([m.overall_score for m in metrics_list])
+        
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric("Avg. Weight Entropy", f"{avg_entropy:.3f}", 
+                     help="Higher = more uncertain source weighting")
+        with col2:
+            st.metric("Avg. Parameter Distance", f"{avg_distance:.3f}",
+                     help="Lower = target closer to training sources")
+        with col3:
+            st.metric("Avg. Validation Score", f"{avg_score:.3f} / 1.0",
+                     help="Higher = better agreement with held-out PINN")
+        
+        # Recommendations
+        st.markdown("### 💡 Recommendations")
+        if avg_distance > 0.3:
+            st.warning("⚠️ Target parameters are far from training data. Consider adding nearby simulations.")
+        if avg_entropy > 1.5:
+            st.warning("⚠️ High weight entropy indicates ambiguous source selection. Review parameter space coverage.")
+        if avg_score < 0.7:
+            st.error("❌ Low validation score. Enable physics-aware refinement or collect more training data.")
+        if all(m.mass_error < 0.01 for m in metrics_list):
+            st.success("✅ Mass conservation satisfied (<1% error) across all cases.")
+    
+    # Export results
+    with st.expander("💾 Export Validation Report"):
+        report_data = {
+            'timestamp': datetime.now().isoformat(),
+            'config': {
+                'held_out_fraction': held_out_fraction,
+                'physics_aware': physics_aware,
+                'optimize_fields': optimize_fields
+            },
+            'summary': summary_df.to_dict('records'),
+            'detailed_metrics': {idx: res['metrics'].to_dict() for idx, res in results.items()}
+        }
+        
+        json_str = json.dumps(report_data, indent=2, default=str)
         st.download_button(
-            label="⬇️ Download Sweep Plot as PDF",
-            data=open(os.path.join("figures", f"{filename_sweep}.pdf"), "rb").read(),
-            file_name=f"{filename_sweep}.pdf",
-            mime="application/pdf"
+            "📥 Download JSON Report",
+            json_str,
+            f"validation_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json",
+            "application/json"
+        )
+        
+        # CSV export of metrics
+        csv_str = pd.concat([res['metrics'].to_dataframe() for res in results.values()]).to_csv(index=False)
+        st.download_button(
+            "📥 Download Metrics CSV",
+            csv_str,
+            f"validation_metrics_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+            "text/csv"
         )
 
 
 if __name__ == "__main__":
-    main()
+    render_validation_dashboard()
