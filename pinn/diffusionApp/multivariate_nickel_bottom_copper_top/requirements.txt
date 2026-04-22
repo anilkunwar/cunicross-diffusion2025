@@ -14,3 +14,4 @@ openai
 openllm
 torch
 torchvision
+scikit-learn
