@@ -5,6 +5,7 @@ UNIFIED CU-NI INTERDIFFUSION VISUALIZER WITH VALIDATION & UNCERTAINTY
 =====================================================================
 ENHANCED VERSION: Bar & Radar chart customization (labels, font size, line width,
 figure size, tics, ability to uncomment / toggle labels)
+FIXED: Streamlit color_picker hex color validation error
 """
 import os
 import re
@@ -33,11 +34,170 @@ from typing import Dict, Any, Optional, List, Tuple, Union
 from dataclasses import dataclass, field
 from datetime import datetime
 import logging
+import colorsys
 
 # Suppress warnings for cleaner output
 warnings.filterwarnings('ignore')
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
+
+# =============================================
+# COLOR UTILITIES - FIX FOR STREAMLIT COLOR_PICKER
+# =============================================
+
+# CSS color name to hex mapping (comprehensive list)
+CSS_COLOR_TO_HEX = {
+    # Basic colors
+    'black': '#000000', 'white': '#FFFFFF', 'red': '#FF0000', 'green': '#008000',
+    'blue': '#0000FF', 'yellow': '#FFFF00', 'cyan': '#00FFFF', 'magenta': '#FF00FF',
+    'gray': '#808080', 'grey': '#808080', 'silver': '#C0C0C0', 'maroon': '#800000',
+    'olive': '#808000', 'lime': '#00FF00', 'aqua': '#00FFFF', 'teal': '#008080',
+    'navy': '#000080', 'fuchsia': '#FF00FF', 'purple': '#800080', 'orange': '#FFA500',
+    # Extended web colors
+    'aliceblue': '#F0F8FF', 'antiquewhite': '#FAEBD7', 'aquamarine': '#7FFFD4',
+    'azure': '#F0FFFF', 'beige': '#F5F5DC', 'bisque': '#FFE4C4', 'blanchedalmond': '#FFEBCD',
+    'blueviolet': '#8A2BE2', 'brown': '#A52A2A', 'burlywood': '#DEB887', 'cadetblue': '#5F9EA0',
+    'chartreuse': '#7FFF00', 'chocolate': '#D2691E', 'coral': '#FF7F50', 'cornflowerblue': '#6495ED',
+    'cornsilk': '#FFF8DC', 'crimson': '#DC143C', 'darkblue': '#00008B', 'darkcyan': '#008B8B',
+    'darkgoldenrod': '#B8860B', 'darkgray': '#A9A9A9', 'darkgrey': '#A9A9A9', 'darkgreen': '#006400',
+    'darkkhaki': '#BDB76B', 'darkmagenta': '#8B008B', 'darkolivegreen': '#556B2F',
+    'darkorange': '#FF8C00', 'darkorchid': '#9932CC', 'darkred': '#8B0000', 'darksalmon': '#E9967A',
+    'darkseagreen': '#8FBC8F', 'darkslateblue': '#483D8B', 'darkslategray': '#2F4F4F',
+    'darkslategrey': '#2F4F4F', 'darkturquoise': '#00CED1', 'darkviolet': '#9400D3',
+    'deeppink': '#FF1493', 'deepskyblue': '#00BFFF', 'dimgray': '#696969', 'dimgrey': '#696969',
+    'dodgerblue': '#1E90FF', 'firebrick': '#B22222', 'floralwhite': '#FFFAF0',
+    'forestgreen': '#228B22', 'gainsboro': '#DCDCDC', 'ghostwhite': '#F8F8FF',
+    'gold': '#FFD700', 'goldenrod': '#DAA520', 'greenyellow': '#ADFF2F', 'honeydew': '#F0FFF0',
+    'hotpink': '#FF69B4', 'indianred': '#CD5C5C', 'indigo': '#4B0082', 'ivory': '#FFFFF0',
+    'khaki': '#F0E68C', 'lavender': '#E6E6FA', 'lavenderblush': '#FFF0F5', 'lawngreen': '#7CFC00',
+    'lemonchiffon': '#FFFACD', 'lightblue': '#ADD8E6', 'lightcoral': '#F08080',
+    'lightcyan': '#E0FFFF', 'lightgoldenrodyellow': '#FAFAD2', 'lightgray': '#D3D3D3',
+    'lightgrey': '#D3D3D3', 'lightgreen': '#90EE90', 'lightpink': '#FFB6C1',
+    'lightsalmon': '#FFA07A', 'lightseagreen': '#20B2AA', 'lightskyblue': '#87CEFA',
+    'lightslategray': '#778899', 'lightslategrey': '#778899', 'lightsteelblue': '#B0C4DE',
+    'lightyellow': '#FFFFE0', 'limegreen': '#32CD32', 'linen': '#FAF0E6',
+    'mediumaquamarine': '#66CDAA', 'mediumblue': '#0000CD', 'mediumorchid': '#BA55D3',
+    'mediumpurple': '#9370DB', 'mediumseagreen': '#3CB371', 'mediumslateblue': '#7B68EE',
+    'mediumspringgreen': '#00FA9A', 'mediumturquoise': '#48D1CC', 'mediumvioletred': '#C71585',
+    'midnightblue': '#191970', 'mintcream': '#F5FFFA', 'mistyrose': '#FFE4E1',
+    'moccasin': '#FFE4B5', 'navajowhite': '#FFDEAD', 'oldlace': '#FDF5E6',
+    'olivedrab': '#6B8E23', 'orangered': '#FF4500', 'orchid': '#DA70D6',
+    'palegoldenrod': '#EEE8AA', 'palegreen': '#98FB98', 'paleturquoise': '#AFEEEE',
+    'palevioletred': '#DB7093', 'papayawhip': '#FFEFD5', 'peachpuff': '#FFDAB9',
+    'peru': '#CD853F', 'pink': '#FFC0CB', 'plum': '#DDA0DD', 'powderblue': '#B0E0E6',
+    'rosybrown': '#BC8F8F', 'royalblue': '#4169E1', 'saddlebrown': '#8B4513',
+    'salmon': '#FA8072', 'sandybrown': '#F4A460', 'seagreen': '#2E8B57',
+    'seashell': '#FFF5EE', 'sienna': '#A0522D', 'skyblue': '#87CEEB', 'slateblue': '#6A5ACD',
+    'slategray': '#708090', 'slategrey': '#708090', 'snow': '#FFFAFA', 'springgreen': '#00FF7F',
+    'steelblue': '#4682B4', 'tan': '#D2B48C', 'thistle': '#D8BFD8', 'tomato': '#FF6347',
+    'turquoise': '#40E0D0', 'violet': '#EE82EE', 'wheat': '#F5DEB3', 'whitesmoke': '#F5F5F5',
+    'yellowgreen': '#9ACD32', 'rebeccapurple': '#663399'
+}
+
+
+def validate_hex_color(color_value: str, default: str = '#D3D3D3') -> str:
+    """
+    Validate and convert color value to proper hex format for Streamlit color_picker.
+    
+    Args:
+        color_value: Color value that may be CSS name or hex code
+        default: Fallback hex color if conversion fails
+    
+    Returns:
+        Validated hex color string in #RRGGBB or #RRGGBBAA format
+    """
+    if not isinstance(color_value, str):
+        logger.warning(f"Color value is not a string: {color_value}, using default {default}")
+        return default
+    
+    # Strip whitespace
+    color_value = color_value.strip()
+    
+    # Already valid hex format
+    if re.match(r'^#([A-Fa-f0-9]{6}|[A-Fa-f0-9]{8})$', color_value):
+        return color_value.upper()
+    
+    # Try CSS color name lookup (case-insensitive)
+    color_lower = color_value.lower()
+    if color_lower in CSS_COLOR_TO_HEX:
+        hex_color = CSS_COLOR_TO_HEX[color_lower]
+        logger.info(f"Converted CSS color '{color_value}' to hex '{hex_color}'")
+        return hex_color
+    
+    # Try matplotlib named colors
+    try:
+        import matplotlib.colors as mcolors
+        if color_lower in mcolors.CSS4_COLORS:
+            hex_color = mcolors.CSS4_COLORS[color_lower]
+            # Ensure proper format
+            if not hex_color.startswith('#'):
+                hex_color = '#' + hex_color
+            if len(hex_color) == 4:  # #RGB -> #RRGGBB
+                hex_color = '#' + ''.join([c*2 for c in hex_color[1:]])
+            logger.info(f"Converted matplotlib color '{color_value}' to hex '{hex_color}'")
+            return hex_color.upper()
+    except ImportError:
+        pass
+    
+    # Last resort: try to parse as RGB tuple string
+    try:
+        # Handle "rgb(r,g,b)" or "rgba(r,g,b,a)" format
+        rgb_match = re.match(r'rgba?\s*\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)(?:\s*,\s*[\d.]+)?\s*\)', color_value.lower())
+        if rgb_match:
+            r, g, b = [int(x) for x in rgb_match.groups()[:3]]
+            hex_color = '#{:02X}{:02X}{:02X}'.format(min(255, max(0, r)), 
+                                                      min(255, max(0, g)), 
+                                                      min(255, max(0, b)))
+            logger.info(f"Converted RGB string '{color_value}' to hex '{hex_color}'")
+            return hex_color
+    except Exception as e:
+        logger.warning(f"Failed to parse RGB string '{color_value}': {e}")
+    
+    # If all conversions fail, log warning and return default
+    logger.warning(f"Could not convert color '{color_value}' to hex format, using default '{default}'")
+    return default
+
+
+def safe_color_picker(label: str, key: Optional[str] = None, 
+                     default: str = '#D3D3D3', help: Optional[str] = None) -> str:
+    """
+    Safe wrapper for st.color_picker with automatic hex validation.
+    
+    Args:
+        label: Widget label
+        key: Streamlit widget key
+        default: Default color value (accepts CSS names or hex)
+        help: Tooltip text
+    
+    Returns:
+        Valid hex color string from user selection
+    """
+    # Validate default value
+    validated_default = validate_hex_color(default)
+    
+    # Get current value from session state if using key
+    current_value = None
+    if key and key in st.session_state:
+        current_value = st.session_state[key]
+        if current_value:
+            current_value = validate_hex_color(current_value, validated_default)
+    
+    try:
+        # Create color picker with validated default
+        result = st.color_picker(
+            label=label,
+            value=current_value if current_value else validated_default,
+            key=key,
+            help=help
+        )
+        # Ensure result is always valid hex
+        return validate_hex_color(result, validated_default)
+    except Exception as e:
+        logger.error(f"Error in color_picker '{label}': {e}")
+        # Fallback: return validated default and show warning
+        st.warning(f"⚠️ Color picker error: {str(e)[:100]}... Using default color.")
+        return validated_default
+
 
 # =============================================
 # 1. GLOBAL CONFIGURATION & MATPLOTLIB SETUP
@@ -976,7 +1136,7 @@ def apply_plot_customization(fig: go.Figure, cust: Dict, chart_type: str = 'bar'
         tickfont=dict(size=cust.get('tick_font_size', cust.get('font_size', 12) - 1)),
         linewidth=cust.get('axis_line_width', 1.5),
         gridwidth=cust.get('grid_line_width', 1.0),
-        gridcolor=cust.get('grid_color', 'lightgray'),
+        gridcolor=cust.get('grid_color', '#D3D3D3'),  # Fixed: use hex instead of 'lightgray'
         showgrid=cust.get('show_grid', True)
     )
     
@@ -994,14 +1154,14 @@ def apply_plot_customization(fig: go.Figure, cust: Dict, chart_type: str = 'bar'
                 tickfont=dict(size=cust.get('tick_font_size', cust.get('font_size', 12) - 1)),
                 linewidth=cust.get('axis_line_width', 1.5),
                 gridwidth=cust.get('grid_line_width', 1.0),
-                gridcolor=cust.get('grid_color', 'lightgray'),
+                gridcolor=cust.get('grid_color', '#D3D3D3'),  # Fixed: use hex
                 showgrid=cust.get('show_grid', True)
             ),
             angularaxis=dict(
                 tickfont=dict(size=cust.get('tick_font_size', cust.get('font_size', 12) - 1)),
                 linewidth=cust.get('axis_line_width', 1.5),
                 gridwidth=cust.get('grid_line_width', 1.0),
-                gridcolor=cust.get('grid_color', 'lightgray'),
+                gridcolor=cust.get('grid_color', '#D3D3D3'),  # Fixed: use hex
                 showgrid=cust.get('show_grid', True)
             )
         )
@@ -1443,7 +1603,7 @@ def initialize_session_state():
             'line_width': 2,
             'axis_line_width': 1.5,
             'grid_line_width': 1.0,
-            'grid_color': 'lightgray',
+            'grid_color': '#D3D3D3',  # FIXED: hex code instead of 'lightgray'
             'show_grid': True,
             'show_bar_labels': True,
             'bar_label_position': 'auto',
@@ -1555,7 +1715,14 @@ def main():
             st.subheader("Line & Grid")
             st.session_state.plot_customization['axis_line_width'] = st.slider("Axis line width", 0.5, 5.0, st.session_state.plot_customization.get('axis_line_width', 1.5), 0.5)
             st.session_state.plot_customization['grid_line_width'] = st.slider("Grid line width", 0.5, 3.0, st.session_state.plot_customization.get('grid_line_width', 1.0), 0.1)
-            st.session_state.plot_customization['grid_color'] = st.color_picker("Grid color", st.session_state.plot_customization.get('grid_color', 'lightgray'))
+            
+            # FIXED: Use safe_color_picker with hex default instead of CSS name
+            st.session_state.plot_customization['grid_color'] = safe_color_picker(
+                "Grid color", 
+                key='grid_color_picker',
+                default=st.session_state.plot_customization.get('grid_color', '#D3D3D3'),
+                help="Select grid line color (hex format required)"
+            )
             st.session_state.plot_customization['show_grid'] = st.checkbox("Show grid", st.session_state.plot_customization.get('show_grid', True))
             
             st.subheader("Bar Chart Specific")
@@ -1566,8 +1733,18 @@ def main():
             st.session_state.plot_customization['y_title'] = st.text_input("Y-axis title", st.session_state.plot_customization.get('y_title', 'Normalized Score (0-1, higher=better)'))
             
             st.subheader("Radar Chart Specific")
-            st.session_state.plot_customization['radar_line_color'] = st.color_picker("Radar line color", st.session_state.plot_customization.get('radar_line_color', '#2E86AB'))
-            st.session_state.plot_customization['radar_fill_color'] = st.text_input("Radar fill color (rgba)", st.session_state.plot_customization.get('radar_fill_color', 'rgba(46, 134, 171, 0.3)'))
+            # FIXED: Use safe_color_picker for radar colors
+            st.session_state.plot_customization['radar_line_color'] = safe_color_picker(
+                "Radar line color",
+                key='radar_line_color_picker',
+                default=st.session_state.plot_customization.get('radar_line_color', '#2E86AB'),
+                help="Select radar chart line color"
+            )
+            st.session_state.plot_customization['radar_fill_color'] = st.text_input(
+                "Radar fill color (rgba)", 
+                st.session_state.plot_customization.get('radar_fill_color', 'rgba(46, 134, 171, 0.3)'),
+                help="Use rgba(r,g,b,a) format, e.g., rgba(46,134,171,0.3)"
+            )
             st.session_state.plot_customization['line_width'] = st.slider("Radar line width", 1, 5, st.session_state.plot_customization.get('line_width', 2))
         
         # Run validation button
