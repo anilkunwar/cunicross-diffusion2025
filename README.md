@@ -9,7 +9,12 @@ Basic Model with the Concentration Field Visualization (Includes the variation i
 
 # GPT and Validation
 
-  [![crossdiffusiongpt](https://img.shields.io/badge/crossdiffgpt-v1.0-yellow)](https://cunicrossdiffusion-gpt1.streamlit.app/) (The gpt interface to performing NAIF of PINNs solutions)
+Stable version
+  [![crossdiffusiongpt](https://img.shields.io/badge/crossdiffgpt-v0.0-yellow)](https://cuni-crossdiffusiongpt.streamlit.app/) 
+  
+Development Versions
+
+  [![crossdiffusiongpt](https://img.shields.io/badge/crossdiffgpt-v1.0-yellow)](https://cunicrossdiffusion-gpt1.streamlit.app/) (The gpt interface to performing NAIF of PINNs solutions, Mapping yet to be improved)
 
   [![crossdiffusioninterpolationvalidation](https://img.shields.io/badge/crossdiffvalidation-v1.0-yellow)](https://cunicrossdiffusion-interpolation-validation1.streamlit.app/) (Validation of the interpolation output with the original PINNs solutions, Not yet completed)
 
