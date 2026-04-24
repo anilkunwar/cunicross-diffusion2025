@@ -975,7 +975,7 @@ class SavedValidationRun:
         }
     
     @classmethod
-    def from_dict(cls,  Dict) -> 'SavedValidationRun':
+    def from_dict(cls, data: dict) -> 'SavedValidationRun':
         return cls(
             run_id=data['run_id'],
             timestamp=data['timestamp'],
@@ -1017,7 +1017,6 @@ class SavedValidationRun:
             c_ni = target_params.get('C_Ni', target_params.get('c_ni_target', target_params.get('c_ni', 0.5e-3)))
             return f"Case #{case_idx} (Ly={ly:.1f}μm, Cu={c_cu:.1e}, Ni={c_ni:.1e})"
         return f"Case #{case_idx}"
-
 
 def generate_run_id() -> str:
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
