@@ -6,6 +6,7 @@ UNIFIED CU-NI INTERDIFFUSION VISUALIZER WITH VALIDATION & UNCERTAINTY
 ENHANCED VERSION: Bar & Radar chart customization (labels, font size, line width,
 figure size, tics, ability to uncomment / toggle labels)
 FIXED: Streamlit color_picker hex color validation error
+ADDED: Case dropdown selectors + normalization conversion legends on all charts
 """
 import os
 import re
@@ -1181,8 +1182,9 @@ def apply_plot_customization(fig: go.Figure, cust: Dict, chart_type: str = 'bar'
 def plot_metrics_bar_chart(metrics_df: pd.DataFrame, 
                           title: str = "Validation Metrics",
                           color_map: Optional[Dict] = None,
-                          customization: Optional[Dict] = None) -> go.Figure:
-    """Create interactive bar chart of validation metrics, grouped by category with full customization."""
+                          customization: Optional[Dict] = None,
+                          normalization_scales: Optional[Dict] = None) -> go.Figure:
+    """Create interactive bar chart of validation metrics, grouped by category with full customization and normalization legend."""
     if color_map is None:
         color_map = {
             'pointwise': '#2E86AB',
@@ -1192,21 +1194,52 @@ def plot_metrics_bar_chart(metrics_df: pd.DataFrame,
         }
     if customization is None:
         customization = {}
+    if normalization_scales is None:
+        normalization_scales = {
+            'mse': 1e-6,
+            'mae': 1e-4,
+            'max_error': 1e-4,
+            'pde_residual_mean': 1e-4,
+            'pde_residual_max': 1e-4,
+            'bc_error': 1e-4,
+            'mass_error': 1.0,
+            'param_distance': 0.3
+        }
     
     # Normalize error metrics for better visualization (invert and scale)
     df = metrics_df.copy()
     error_metrics = ['mse_c1', 'mse_c2', 'mae_c1', 'mae_c2', 'max_error_c1', 'max_error_c2',
                     'pde_residual_mean', 'pde_residual_max', 'bc_error_top_c1', 'bc_error_top_c2',
-                    'bc_error_bottom_c1', 'bc_error_bottom_c2', 'mass_error']
-    for col in error_metrics:
-        if col in df['Metric'].values:
-            idx = df[df['Metric'] == col].index[0]
-            val = df.loc[idx, 'Value']
-            # Map error to [0,1] where 0 error = 1.0 score
-            if val < 1e-8:
-                df.loc[idx, 'Value'] = 1.0
-            else:
-                df.loc[idx, 'Value'] = np.exp(-val / 1e-4)  # exponential decay
+                    'bc_error_bottom_c1', 'bc_error_bottom_c2', 'mass_error', 'param_distance']
+    
+    for idx, row in df.iterrows():
+        metric_name = row['Metric']
+        val = row['Value']
+        scale = None
+        
+        if metric_name in ['mse_c1', 'mse_c2']:
+            scale = normalization_scales.get('mse', 1e-6)
+        elif metric_name in ['mae_c1', 'mae_c2']:
+            scale = normalization_scales.get('mae', 1e-4)
+        elif metric_name in ['max_error_c1', 'max_error_c2']:
+            scale = normalization_scales.get('max_error', 1e-4)
+        elif metric_name in ['pde_residual_mean', 'pde_residual_max']:
+            scale = normalization_scales.get('pde_residual_mean', 1e-4)
+        elif metric_name.startswith('bc_error'):
+            scale = normalization_scales.get('bc_error', 1e-4)
+        elif metric_name == 'mass_error':
+            scale = normalization_scales.get('mass_error', 1.0)
+            # Mass error is already 0-1, just invert
+            df.at[idx, 'Value'] = max(0.0, min(1.0, 1.0 - val))
+            continue
+        elif metric_name == 'param_distance':
+            scale = normalization_scales.get('param_distance', 0.3)
+        else:
+            continue
+        
+        if scale is not None and scale > 0:
+            normalized_val = np.exp(-val / scale)
+            df.at[idx, 'Value'] = max(0.0, min(1.0, normalized_val))
     
     fig = go.Figure()
     
@@ -1235,15 +1268,50 @@ def plot_metrics_bar_chart(metrics_df: pd.DataFrame,
     
     # Apply global customizations
     fig = apply_plot_customization(fig, customization, chart_type='bar')
+    
+    # === ERROR-TO-SCORE CONVERSION LEGEND ===
+    scale_text = (
+        f"<b>Error → Score Conversion:</b><br>"
+        f"Score = exp(−error / scale)<br>"
+        f"MSE scale: {normalization_scales['mse']:.0e}<br>"
+        f"PDE/MAE scale: {normalization_scales['pde_residual_mean']:.0e}<br>"
+        f"Mass: 1 − error (0-1)<br>"
+        f"Param Dist scale: {normalization_scales['param_distance']}<br>"
+        f"R²/SSIM: Untransformed (0–1)<br>"
+        f"<i>Higher score = better agreement</i>"
+    )
+    
+    fig.add_annotation(
+        text=scale_text,
+        xref="paper", yref="paper",
+        x=1.01, y=0.5,
+        showarrow=False,
+        font=dict(size=10, family="Arial"),
+        align="left",
+        bgcolor="rgba(245,245,245,0.95)",
+        bordercolor="#888888",
+        borderwidth=1,
+        borderpad=4
+    )
+    fig.update_layout(margin=dict(r=240))
+    
     return fig
 
 
 def plot_radar_chart(metrics: ValidationMetrics, 
                     title: str = "Validation Radar Plot",
-                    customization: Optional[Dict] = None) -> go.Figure:
-    """Create radar chart showing key validation metrics with full customization."""
+                    customization: Optional[Dict] = None,
+                    normalization_scales: Optional[Dict] = None) -> go.Figure:
+    """Create radar chart showing key validation metrics with full customization and normalization legend."""
     if customization is None:
         customization = {}
+    if normalization_scales is None:
+        normalization_scales = {
+            'mse': 1e-6,
+            'pde_residual': 1e-4,
+            'mass_error': 1.0,
+            'param_distance': 0.3
+        }
     
     # Select representative metrics (normalized to 0-1, higher=better)
     categories = [
@@ -1251,17 +1319,17 @@ def plot_radar_chart(metrics: ValidationMetrics,
         'SSIM (Cu)', 'SSIM (Ni)', 'PDE Residual', 'Mass Cons.', 'Param. Distance'
     ]
     
-    # Normalize and invert error metrics
+    # Normalize and invert error metrics using consistent scales
     values = [
-        np.exp(-metrics.mse_c1 / 1e-6),
-        np.exp(-metrics.mse_c2 / 1e-6),
-        max(0, metrics.r2_c1),
-        max(0, metrics.r2_c2),
-        metrics.ssim_c1,
-        metrics.ssim_c2,
-        np.exp(-metrics.pde_residual_mean / 1e-4),
-        1 - metrics.mass_error,
-        np.exp(-metrics.param_distance / 0.3)
+        np.exp(-metrics.mse_c1 / normalization_scales['mse']),
+        np.exp(-metrics.mse_c2 / normalization_scales['mse']),
+        max(0.0, min(1.0, metrics.r2_c1)),
+        max(0.0, min(1.0, metrics.r2_c2)),
+        max(0.0, min(1.0, metrics.ssim_c1)),
+        max(0.0, min(1.0, metrics.ssim_c2)),
+        np.exp(-metrics.pde_residual_mean / normalization_scales['pde_residual']),
+        max(0.0, min(1.0, 1.0 - metrics.mass_error)),
+        np.exp(-metrics.param_distance / normalization_scales['param_distance'])
     ]
     
     # Close the polygon
@@ -1299,6 +1367,31 @@ def plot_radar_chart(metrics: ValidationMetrics,
         width=customization.get('figure_width', 600),
         font=dict(size=customization.get('font_size', 12))
     )
+    
+    # === NORMALIZATION CONVERSION LEGEND ===
+    scale_text = (
+        f"<b>Normalization Mapping:</b><br>"
+        f"MSE (Cu/Ni) → exp(−MSE / {normalization_scales['mse']:.0e})<br>"
+        f"PDE Residual → exp(−Res / {normalization_scales['pde_residual']:.0e})<br>"
+        f"Mass Cons. → 1 − error<br>"
+        f"Param. Distance → exp(−dist / {normalization_scales['param_distance']})<br>"
+        f"R² / SSIM → Raw value (0–1)<br>"
+        f"<i>Axis: 0 (worst) → 1 (perfect)</i>"
+    )
+    
+    fig.add_annotation(
+        text=scale_text,
+        xref="paper", yref="paper",
+        x=1.02, y=0.5,
+        showarrow=False,
+        font=dict(size=11, family="Arial"),
+        align="left",
+        bgcolor="rgba(245,245,245,0.95)",
+        bordercolor="#888888",
+        borderwidth=1,
+        borderpad=5
+    )
+    fig.update_layout(margin=dict(r=280))
     
     return fig
 
@@ -1865,20 +1958,66 @@ def main():
     
     with tab1:
         st.subheader("Validation Metrics by Category")
-        # Aggregate metrics across all cases
-        all_metrics_df = pd.concat([res['metrics'].to_dataframe() for res in results.values()])
-        avg_metrics = all_metrics_df.groupby('Metric')['Value'].mean().reset_index()
-        avg_metrics['Category'] = all_metrics_df.groupby('Metric')['Category'].first().values
         
-        # Use customized bar chart
-        fig_bar = plot_metrics_bar_chart(avg_metrics, customization=st.session_state.plot_customization)
+        # Dropdown selector for case selection
+        case_options = ["📊 Aggregate (All Cases)"] + [f"🔹 Case #{idx}" for idx in results.keys()]
+        selected_case = st.selectbox("Select Case to View", case_options, key="bar_case_selector")
+        
+        # Determine which metrics to display
+        if "Aggregate" in selected_case:
+            all_metrics_df = pd.concat([res['metrics'].to_dataframe() for res in results.values()])
+            avg_metrics = all_metrics_df.groupby('Metric')['Value'].mean().reset_index()
+            avg_metrics['Category'] = all_metrics_df.groupby('Metric')['Category'].first().values
+            chart_title = "Average Validation Metrics (All Cases)"
+        else:
+            case_idx = int(selected_case.split('#')[-1])
+            avg_metrics = results[case_idx]['metrics'].to_dataframe()
+            chart_title = f"Validation Metrics - Case #{case_idx}"
+        
+        # Unified normalization scales for consistency
+        norm_scales = {
+            'mse': 1e-6,
+            'mae': 1e-4,
+            'max_error': 1e-4,
+            'pde_residual_mean': 1e-4,
+            'pde_residual_max': 1e-4,
+            'bc_error': 1e-4,
+            'mass_error': 1.0,
+            'param_distance': 0.3
+        }
+        
+        fig_bar = plot_metrics_bar_chart(
+            avg_metrics, 
+            title=chart_title, 
+            customization=st.session_state.plot_customization,
+            normalization_scales=norm_scales
+        )
         st.plotly_chart(fig_bar, use_container_width=True)
     
     with tab2:
         st.subheader("Radar Plot: Multi-Metric Validation")
-        # Plot radar for first case as example
-        first_metrics = list(results.values())[0]['metrics']
-        fig_radar = plot_radar_chart(first_metrics, customization=st.session_state.plot_customization)
+        
+        # Dropdown selector for radar chart
+        case_options_radar = [f"🔹 Case #{idx}" for idx in results.keys()]
+        selected_case_radar = st.selectbox("Select Case for Radar Analysis", case_options_radar, key="radar_case_selector")
+        
+        case_idx_radar = int(selected_case_radar.split('#')[-1])
+        selected_metrics = results[case_idx_radar]['metrics']
+        
+        # Unified normalization scales
+        norm_scales_radar = {
+            'mse': 1e-6,
+            'pde_residual': 1e-4,
+            'mass_error': 1.0,
+            'param_distance': 0.3
+        }
+        
+        fig_radar = plot_radar_chart(
+            selected_metrics, 
+            title=f"Validation Radar - Case #{case_idx_radar}",
+            customization=st.session_state.plot_customization,
+            normalization_scales=norm_scales_radar
+        )
         st.plotly_chart(fig_radar, use_container_width=True)
     
     with tab3:
