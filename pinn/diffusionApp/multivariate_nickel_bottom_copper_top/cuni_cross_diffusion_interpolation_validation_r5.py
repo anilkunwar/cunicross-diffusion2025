@@ -4,9 +4,8 @@
 UNIFIED CU-NI INTERDIFFUSION VISUALIZER WITH VALIDATION & UNCERTAINTY
 =====================================================================
 FIXED VERSION: 
-- Resolved 'Metric' KeyError when loading saved runs
-- Added parameter info (Ly, c_Cu, c_Ni) to case labels in tables, selectors, and legends
-- Enhanced save/load structure with full parameter persistence
+1. RESOLVED KeyError: Case indices are now strictly cast to integers to match dictionary keys.
+2. RESOLVED Overlapping Legends: Figure margins and legend positions adjusted for readability.
 """
 import os
 import re
@@ -522,15 +521,15 @@ class EnhancedSolutionLoader:
                 if 'parameters' in data and isinstance(data['parameters'], dict):
                     standardized['params'].update(data['parameters'])
                 
-                if 'X' in data:
+                if 'X' in 
                     standardized['X'] = self._ensure_2d(data['X'])
-                if 'Y' in data:
+                if 'Y' in 
                     standardized['Y'] = self._ensure_2d(data['Y'])
                 if 'c1_preds' in data:
                     standardized['c1_preds'] = [self._ensure_2d(c) for c in data['c1_preds']]
-                if 'c2_preds' in data:
+                if 'c2_preds' in 
                     standardized['c2_preds'] = [self._ensure_2d(c) for c in data['c2_preds']]
-                if 'times' in data:
+                if 'times' in 
                     standardized['times'] = data['times']
                 
                 if not standardized['params']:
@@ -954,15 +953,15 @@ def compute_validation_metrics(interp_c1: np.ndarray, interp_c2: np.ndarray,
 
 
 # =============================================
-# 9. RESULT PERSISTENCE UTILITIES (FIXED)
+# 9. RESULT PERSISTENCE UTILITIES
 # =============================================
 @dataclass
 class SavedValidationRun:
     run_id: str
     timestamp: str
     config: Dict
-    case_results: Dict[str, Dict]  # case_idx -> {metrics_dict, target_params}
-    summary_metrics: List[Dict]  # list of dicts, not DataFrame
+    case_results: Dict[str, Dict]
+    summary_metrics: List[Dict]
     
     def to_dict(self) -> Dict:
         return {
@@ -970,17 +969,17 @@ class SavedValidationRun:
             'timestamp': self.timestamp,
             'config': self.config,
             'case_results': self.case_results,
-            'summary_metrics': self.summary_metrics  # Already list of dicts
+            'summary_metrics': self.summary_metrics
         }
     
     @classmethod
-    def from_dict(cls, data: Dict) -> 'SavedValidationRun':
+    def from_dict(cls,  Dict) -> 'SavedValidationRun':
         return cls(
             run_id=data['run_id'],
             timestamp=data['timestamp'],
             config=data['config'],
             case_results=data['case_results'],
-            summary_metrics=data['summary_metrics']  # Keep as list of dicts
+            summary_metrics=data['summary_metrics']
         )
     
     def save_to_disk(self, directory: str = SAVED_RESULTS_DIR):
@@ -1008,7 +1007,6 @@ class SavedValidationRun:
         return sorted(run_ids, reverse=True)
     
     def get_case_label(self, case_idx: str) -> str:
-        """Generate formatted case label with parameters: Case #27 (Ly=60.0μm, Cu=1.5e-3, Ni=0.5e-3)"""
         if case_idx in self.case_results:
             case_data = self.case_results[case_idx]
             target_params = case_data.get('target_params', {})
@@ -1026,7 +1024,6 @@ def generate_run_id() -> str:
 
 
 def format_case_label(case_idx: str, target_params: Dict) -> str:
-    """Format case label with parameters for display"""
     ly = target_params.get('Ly', target_params.get('ly_target', 60.0))
     c_cu = target_params.get('C_Cu', target_params.get('c_cu_target', target_params.get('c_cu', 1.5e-3)))
     c_ni = target_params.get('C_Ni', target_params.get('c_ni_target', target_params.get('c_ni', 0.5e-3)))
@@ -1046,8 +1043,10 @@ def apply_plot_customization(fig: go.Figure, cust: Dict, chart_type: str = 'bar'
         legend=dict(
             font=dict(size=cust.get('legend_font_size', cust.get('font_size', 12))),
             orientation=cust.get('legend_orientation', 'v'),
-            xanchor=cust.get('legend_xanchor', 'auto'),
-            yanchor=cust.get('legend_yanchor', 'auto')
+            x=1.02,
+            y=1.0,
+            xanchor='left',
+            yanchor='top'
         )
     )
     
@@ -1177,7 +1176,8 @@ def plot_metrics_bar_chart(metrics_df: pd.DataFrame,
         yaxis_title=customization.get('y_title', "Normalized Score (0-1, higher=better)"),
         barmode='group',
         legend_title="Category",
-        hovermode='x unified'
+        hovermode='x unified',
+        margin=dict(l=50, r=250, t=50, b=50)
     )
     
     fig = apply_plot_customization(fig, customization, chart_type='bar')
@@ -1205,7 +1205,6 @@ def plot_metrics_bar_chart(metrics_df: pd.DataFrame,
         borderwidth=1,
         borderpad=4
     )
-    fig.update_layout(margin=dict(r=240))
     
     return fig
 
@@ -1275,11 +1274,11 @@ def plot_multi_case_bar_chart(case_metrics_dict: Dict[str, pd.DataFrame],
         yaxis_title="Normalized Score (0-1)",
         barmode='group',
         legend_title="Category - Run",
-        hovermode='x unified'
+        hovermode='x unified',
+        margin=dict(l=50, r=250, t=50, b=50)
     )
     
     fig = apply_plot_customization(fig, customization, chart_type='bar')
-    fig.update_layout(margin=dict(r=50))
     
     return fig
 
@@ -1339,7 +1338,9 @@ def plot_radar_chart(metrics: ValidationMetrics,
         title=dict(text=title, x=0.5),
         showlegend=True,
         height=customization.get('figure_height', 500),
-        width=customization.get('figure_width', 600)
+        width=customization.get('figure_width', 600),
+        margin=dict(l=50, r=250, t=50, b=50),
+        legend=dict(x=1.02, y=1.0)
     )
     
     scale_text = (
@@ -1362,7 +1363,6 @@ def plot_radar_chart(metrics: ValidationMetrics,
         borderwidth=1,
         borderpad=5
     )
-    fig.update_layout(margin=dict(r=280))
     
     return fig
 
@@ -1420,10 +1420,9 @@ def plot_multi_case_radar_chart(case_metrics_dict: Dict[str, ValidationMetrics],
         showlegend=True,
         legend=dict(x=1.05, y=0.5),
         height=customization.get('figure_height', 600),
-        width=customization.get('figure_width', 700)
+        width=customization.get('figure_width', 700),
+        margin=dict(l=50, r=250, t=50, b=50)
     )
-    
-    fig.update_layout(margin=dict(r=50))
     
     return fig
 
@@ -1854,7 +1853,7 @@ def main():
                         'x': x, 
                         'y': y, 
                         'params': target,
-                        'target_params': target  # Store for labeling
+                        'target_params': target
                     }
                 
                 st.session_state.validation_results = results
@@ -1864,7 +1863,6 @@ def main():
         st.header("💾 Save/Load Results")
         if st.session_state.validation_results and st.session_state.current_run_id:
             if st.button("💾 Save Current Run", width='stretch'):
-                # Build summary with parameter info
                 summary_data = []
                 for idx, res in st.session_state.validation_results.items():
                     m = res['metrics']
@@ -1884,7 +1882,6 @@ def main():
                         'C_Ni': target_params.get('C_Ni', 0.5e-3)
                     })
                 
-                # Build case_results with metrics AND target_params
                 case_results = {}
                 for idx, res in st.session_state.validation_results.items():
                     target_params = res.get('target_params', {})
@@ -1906,7 +1903,7 @@ def main():
                         'optimize_fields': optimize_fields
                     },
                     case_results=case_results,
-                    summary_metrics=summary_data  # List of dicts, not DataFrame
+                    summary_metrics=summary_data
                 )
                 
                 filepath = saved_run.save_to_disk()
@@ -1935,7 +1932,7 @@ def main():
         m = res['metrics']
         target_params = res.get('target_params', {})
         summary_data.append({
-            'Case': format_case_label(idx, target_params),  # Formatted label with params
+            'Case': format_case_label(idx, target_params),
             'Overall Score': m.overall_score,
             'MSE (Cu)': m.mse_c1,
             'MSE (Ni)': m.mse_c2,
@@ -1964,7 +1961,6 @@ def main():
     with tab1:
         st.subheader("Single-Case Validation Metrics")
         
-        # Create formatted case options with parameters
         case_options = ["📊 Aggregate (All Cases)"] + [
             format_case_label(idx, results[idx].get('target_params', {})) 
             for idx in results.keys()
@@ -1977,10 +1973,9 @@ def main():
             avg_metrics['Category'] = all_metrics_df.groupby('Metric')['Category'].first().values
             chart_title = "Average Validation Metrics (All Cases)"
         else:
-            # Extract case index from label
             case_idx_match = re.search(r'Case #(\d+)', selected_case_label)
             if case_idx_match:
-                case_idx = case_idx_match.group(1)
+                case_idx = int(case_idx_match.group(1)) # FIXED: Explicit cast to int
                 avg_metrics = results[case_idx]['metrics'].to_dataframe()
                 chart_title = f"Validation Metrics - {selected_case_label}"
             else:
@@ -2005,7 +2000,6 @@ def main():
     with tab2:
         st.subheader("Multi-Case Comparison (Current Run)")
         
-        # Create formatted case options
         case_options = [format_case_label(idx, results[idx].get('target_params', {})) for idx in results.keys()]
         selected_case_labels = st.multiselect(
             "Select cases to compare",
@@ -2018,8 +2012,9 @@ def main():
             for label in selected_case_labels:
                 case_idx_match = re.search(r'Case #(\d+)', label)
                 if case_idx_match:
-                    case_idx = case_idx_match.group(1)
-                    case_metrics_dict[label] = results[case_idx]['metrics'].to_dataframe()
+                    case_idx = int(case_idx_match.group(1)) # FIXED: Explicit cast to int
+                    if case_idx in results: # FIXED: Safety check
+                        case_metrics_dict[label] = results[case_idx]['metrics'].to_dataframe()
             
             fig_multi_bar = plot_multi_case_bar_chart(
                 case_metrics_dict,
@@ -2032,8 +2027,9 @@ def main():
             for label in selected_case_labels:
                 case_idx_match = re.search(r'Case #(\d+)', label)
                 if case_idx_match:
-                    case_idx = case_idx_match.group(1)
-                    radar_metrics_dict[label] = results[case_idx]['metrics']
+                    case_idx = int(case_idx_match.group(1)) # FIXED: Explicit cast to int
+                    if case_idx in results: # FIXED: Safety check
+                        radar_metrics_dict[label] = results[case_idx]['metrics']
             
             fig_multi_radar = plot_multi_case_radar_chart(
                 radar_metrics_dict,
@@ -2045,38 +2041,38 @@ def main():
     with tab3:
         st.subheader("Field Comparison: Interpolated vs Ground Truth")
         
-        # Formatted case selector
         case_options = [format_case_label(idx, results[idx].get('target_params', {})) for idx in results.keys()]
         selected_case_label = st.selectbox("Select Validation Case", case_options, format_func=lambda x: x, key="field_case_selector")
         
         case_idx_match = re.search(r'Case #(\d+)', selected_case_label)
         if case_idx_match:
-            case_idx = case_idx_match.group(1)
-            res = results[case_idx]
-            
-            fig_c1, fig_c2 = plot_comparison_heatmaps(
-                res['interp_c1'], res['gt_c1'],
-                res['interp_c2'], res['gt_c2'],
-                res['x'], res['y'],
-                title_prefix=selected_case_label
-            )
-            
-            col1, col2 = st.columns(2)
-            with col1:
-                st.plotly_chart(fig_c1, use_container_width=True)
-            with col2:
-                st.plotly_chart(fig_c2, use_container_width=True)
-            
-            st.subheader("PDE Residual Field")
-            residual = compute_pde_residual(
-                res['interp_c1'], res['interp_c2'], res['x'], res['y'], 
-                res['params'].get('t_max', 200),
-                PHYSICS_CONSTANTS['D11'], PHYSICS_CONSTANTS['D12'],
-                PHYSICS_CONSTANTS['D21'], PHYSICS_CONSTANTS['D22'],
-                res['x'][1]-res['x'][0], res['y'][1]-res['y'][0]
-            )
-            fig_residual = plot_residual_heatmap(residual, res['x'], res['y'])
-            st.plotly_chart(fig_residual, use_container_width=True)
+            case_idx = int(case_idx_match.group(1)) # FIXED: Explicit cast to int
+            if case_idx in results:
+                res = results[case_idx]
+                
+                fig_c1, fig_c2 = plot_comparison_heatmaps(
+                    res['interp_c1'], res['gt_c1'],
+                    res['interp_c2'], res['gt_c2'],
+                    res['x'], res['y'],
+                    title_prefix=selected_case_label
+                )
+                
+                col1, col2 = st.columns(2)
+                with col1:
+                    st.plotly_chart(fig_c1, use_container_width=True)
+                with col2:
+                    st.plotly_chart(fig_c2, use_container_width=True)
+                
+                st.subheader("PDE Residual Field")
+                residual = compute_pde_residual(
+                    res['interp_c1'], res['interp_c2'], res['x'], res['y'], 
+                    res['params'].get('t_max', 200),
+                    PHYSICS_CONSTANTS['D11'], PHYSICS_CONSTANTS['D12'],
+                    PHYSICS_CONSTANTS['D21'], PHYSICS_CONSTANTS['D22'],
+                    res['x'][1]-res['x'][0], res['y'][1]-res['y'][0]
+                )
+                fig_residual = plot_residual_heatmap(residual, res['x'], res['y'])
+                st.plotly_chart(fig_residual, use_container_width=True)
     
     with tab4:
         st.subheader("Uncertainty Quantification")
@@ -2123,11 +2119,9 @@ def main():
                         saved_run = SavedValidationRun.load_from_disk(run_id)
                         st.session_state.saved_runs_loaded[run_id] = saved_run
                         
-                        # Build metrics dataframe from summary_metrics (list of dicts)
                         if saved_run.summary_metrics and isinstance(saved_run.summary_metrics, list):
                             summary_df = pd.DataFrame(saved_run.summary_metrics)
                             
-                            # Aggregate metrics for this run
                             if not summary_df.empty and 'Overall Score' in summary_df.columns:
                                 avg_metrics = pd.DataFrame({
                                     'Metric': ['overall_score', 'mse_c1', 'mse_c2', 'pde_residual_mean', 'mass_error'],
@@ -2142,13 +2136,10 @@ def main():
                                 })
                                 case_metrics_dict[f"Saved: {run_id[:16]}"] = avg_metrics
                         
-                        # Build radar metrics from case_results
                         if saved_run.case_results:
-                            # Get first case metrics for radar (or average if multiple)
                             first_case = list(saved_run.case_results.values())[0]
                             if 'metrics' in first_case:
                                 metrics_obj = ValidationMetrics(**first_case['metrics'])
-                                # Use run ID truncated for label
                                 radar_metrics_dict[f"Saved: {run_id[:16]}"] = metrics_obj
                         
                     except KeyError as e:
@@ -2184,7 +2175,6 @@ def main():
                             if saved_run.summary_metrics:
                                 st.write("**Summary Metrics:**")
                                 summary_display = pd.DataFrame(saved_run.summary_metrics)
-                                # Show Case_Label if available, otherwise Case
                                 if 'Case_Label' in summary_display.columns:
                                     st.dataframe(summary_display[['Case_Label', 'Overall Score', 'MSE (Cu)', 'MSE (Ni)', 'PDE Residual', 'Mass Error']])
                                 else:
