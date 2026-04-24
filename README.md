@@ -10,7 +10,7 @@ Basic Model with the Concentration Field Visualization (Includes the variation i
 # GPT and Validation
 
 Stable version
-GPT for the NAIF
+GPT for the NAIF (Numerically Attentive Interpolation Framework)
 
   [![crossdiffusiongpt](https://img.shields.io/badge/crossdiffgpt-v0.0-yellow)](https://cuni-crossdiffusiongpt.streamlit.app/) 
 
