@@ -4,8 +4,9 @@
 UNIFIED CU-NI INTERDIFFUSION VISUALIZER WITH VALIDATION & UNCERTAINTY
 =====================================================================
 FIXED VERSION: 
-1. RESOLVED KeyError: Case indices are now strictly cast to integers to match dictionary keys.
-2. RESOLVED Overlapping Legends: Figure margins and legend positions adjusted for readability.
+1. RESOLVED SyntaxError: Fixed incomplete 'if' statements in EnhancedSolutionLoader.
+2. RESOLVED KeyError: Case indices are now strictly cast to integers.
+3. RESOLVED Overlapping Legends: Figure margins and legend positions adjusted.
 """
 import os
 import re
@@ -521,15 +522,16 @@ class EnhancedSolutionLoader:
                 if 'parameters' in data and isinstance(data['parameters'], dict):
                     standardized['params'].update(data['parameters'])
                 
-                if 'X' in 
+                # FIXED: Added 'data:' to all if statements
+                if 'X' in data:
                     standardized['X'] = self._ensure_2d(data['X'])
-                if 'Y' in 
+                if 'Y' in data:
                     standardized['Y'] = self._ensure_2d(data['Y'])
                 if 'c1_preds' in data:
                     standardized['c1_preds'] = [self._ensure_2d(c) for c in data['c1_preds']]
-                if 'c2_preds' in 
+                if 'c2_preds' in data:
                     standardized['c2_preds'] = [self._ensure_2d(c) for c in data['c2_preds']]
-                if 'times' in 
+                if 'times' in data:
                     standardized['times'] = data['times']
                 
                 if not standardized['params']:
