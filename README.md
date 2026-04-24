@@ -26,7 +26,7 @@ Development Versions
 
    [![crossdiffusioninterpolationvalidation](https://img.shields.io/badge/crossdiffvalidation-v2.0-yellow)](https://cunicrossdiffusion-interpolation-validation2.streamlit.app/) (Validation of the interpolation output with the original PINNs solutions, Not yet completed)
 
-   [![crossdiffusioninterpolationvalidation](https://img.shields.io/badge/crossdiffvalidation-v3.0-yellow)](https://cunicrossdiffusion-interpolation-validation3.streamlit.app/) (Validation of the interpolation output with the original PINNs solutions, Improvement in the visualizations)
+   [![crossdiffusioninterpolationvalidation](https://img.shields.io/badge/crossdiffvalidation-v3.0-yellow)](https://cunicrossdiffusion-interpolation-validation3.streamlit.app/) (Validation of the interpolation output with the original PINNs solutions, Improvement in the visualizations, convrsion)
 
 # Size effect of the UBM on the diffusion mechanism
 
