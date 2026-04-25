@@ -32,6 +32,9 @@ Development Versions
 
    [![crossdiffusioninterpolationvalidation](https://img.shields.io/badge/crossdiffvalidation-v5.0-yellow)](https://cunicrossdiffusion-interpolation-validation5.streamlit.app/) (Validation of the interpolation output with the original PINNs solutions, Improvement in the visualizations, conversion factor provided in the charts, multi-comparison possible)
 
+   [![crossdiffusioninterpolationvalidation](https://img.shields.io/badge/crossdiffvalidation-v6.0-yellow)](https://cunicrossdiffusion-interpolation-validation6.streamlit.app/) (Validation of the interpolation output with the original PINNs solutions, Improvement in the visualizations, conversion factor provided in the charts, multi-comparison possible, customization of axes labels/features in charts)
+
+
 # Size effect of the UBM on the diffusion mechanism
 
 Ly of the domain is changed whereas Lx remains constant
