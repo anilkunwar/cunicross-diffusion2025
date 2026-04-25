@@ -569,9 +569,9 @@ class EnhancedSolutionLoader:
                 
                 if 'X' in data:
                     standardized['X'] = self._ensure_2d(data['X'])
-                if 'Y' in 
+                if 'Y' in data:
                     standardized['Y'] = self._ensure_2d(data['Y'])
-                if 'c1_preds' in 
+                if 'c1_preds' in data:
                     standardized['c1_preds'] = [self._ensure_2d(c) for c in data['c1_preds']]
                 if 'c2_preds' in data:
                     standardized['c2_preds'] = [self._ensure_2d(c) for c in data['c2_preds']]
