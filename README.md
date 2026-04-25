@@ -26,13 +26,13 @@ Development Versions
 
    [![crossdiffusioninterpolationvalidation](https://img.shields.io/badge/crossdiffvalidation-v2.0-yellow)](https://cunicrossdiffusion-interpolation-validation2.streamlit.app/) (Validation of the interpolation output with the original PINNs solutions, Not yet completed)
 
-   [![crossdiffusioninterpolationvalidation](https://img.shields.io/badge/crossdiffvalidation-v3.0-yellow)](https://cunicrossdiffusion-interpolation-validation3.streamlit.app/) (Validation of the interpolation output with the original PINNs solutions, Improvement in the visualizations, conversion factor provided in the charts)
+   [![crossdiffusioninterpolationvalidation](https://img.shields.io/badge/crossdiffvalidation-v3.0-yellow)](https://cunicrossdiffusion-interpolation-validation3.streamlit.app/) (Validation of the interpolation output with the original PINNs solutions, Improvement in the visualizations, conversion factor provided in the charts, plot customization available in the radar charts)
 
    [![crossdiffusioninterpolationvalidation](https://img.shields.io/badge/crossdiffvalidation-v4.0-yellow)](https://cunicrossdiffusion-interpolation-validation4.streamlit.app/) (Validation of the interpolation output with the original PINNs solutions, Improvement in the visualizations, conversion factor provided in the charts, multi-comparison possible)
 
    [![crossdiffusioninterpolationvalidation](https://img.shields.io/badge/crossdiffvalidation-v5.0-yellow)](https://cunicrossdiffusion-interpolation-validation5.streamlit.app/) (Validation of the interpolation output with the original PINNs solutions, Improvement in the visualizations, conversion factor provided in the charts, multi-comparison possible)
 
-   [![crossdiffusioninterpolationvalidation](https://img.shields.io/badge/crossdiffvalidation-v6.0-yellow)](https://cunicrossdiffusion-interpolation-validation6.streamlit.app/) (Validation of the interpolation output with the original PINNs solutions, Improvement in the visualizations, conversion factor provided in the charts, multi-comparison possible, customization of axes labels/features in charts)
+   [![crossdiffusioninterpolationvalidation](https://img.shields.io/badge/crossdiffvalidation-v6.0-yellow)](https://cunicrossdiffusion-interpolation-validation6.streamlit.app/) (Validation of the interpolation output with the original PINNs solutions, Improvement in the visualizations, conversion factor provided in the charts, multi-comparison possible, customization of axes labels/features in charts, plot customization available in the radar charts)
 
 
 # Size effect of the UBM on the diffusion mechanism
