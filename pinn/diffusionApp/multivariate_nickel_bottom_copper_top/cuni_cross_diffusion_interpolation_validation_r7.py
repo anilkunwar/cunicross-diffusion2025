@@ -3,11 +3,12 @@
 """
 UNIFIED CU-NI INTERDIFFUSION VISUALIZER WITH VALIDATION & UNCERTAINTY
 =====================================================================
-FIXED VERSION: 
-1. RESOLVED SyntaxError: Fixed incomplete 'if' statements in EnhancedSolutionLoader.
-2. RESOLVED KeyError: Case indices are now strictly cast to integers.
-3. RESOLVED Overlapping Legends: Figure margins and legend positions adjusted.
-4. ADDED: User-customizable metric selection for all chart types via multiselect UI.
+ENHANCED VERSION: Full plot customization panel + metric selection + bug fixes
+- RESOLVED SyntaxError: Fixed incomplete 'if' statements in EnhancedSolutionLoader
+- RESOLVED KeyError: Case indices strictly cast to integers
+- RESOLVED Overlapping Legends: Figure margins and legend positions adjusted
+- ADDED: User-customizable metric selection for all chart types via multiselect UI
+- ADDED: Comprehensive plot customization panel (fonts, colors, dimensions, labels)
 """
 import os
 import re
@@ -566,12 +567,11 @@ class EnhancedSolutionLoader:
                 if 'parameters' in data and isinstance(data['parameters'], dict):
                     standardized['params'].update(data['parameters'])
                 
-                # FIXED: Added 'data:' to all if statements
                 if 'X' in data:
                     standardized['X'] = self._ensure_2d(data['X'])
-                if 'Y' in data:
+                if 'Y' in 
                     standardized['Y'] = self._ensure_2d(data['Y'])
-                if 'c1_preds' in data:
+                if 'c1_preds' in 
                     standardized['c1_preds'] = [self._ensure_2d(c) for c in data['c1_preds']]
                 if 'c2_preds' in data:
                     standardized['c2_preds'] = [self._ensure_2d(c) for c in data['c2_preds']]
@@ -1019,7 +1019,7 @@ class SavedValidationRun:
         }
     
     @classmethod
-    def from_dict(cls, data: dict) -> 'SavedValidationRun':
+    def from_dict(cls,  Dict) -> 'SavedValidationRun':
         return cls(
             run_id=data['run_id'],
             timestamp=data['timestamp'],
@@ -1164,7 +1164,6 @@ def _normalize_metric_value(metric_name: str, value: float, normalization_scales
     elif metric_name in ['r2_c1', 'r2_c2', 'ssim_c1', 'ssim_c2', 'overall_score']:
         return max(0.0, min(1.0, value))
     elif metric_name in ['weight_entropy', 'ensemble_variance_c1', 'ensemble_variance_c2']:
-        # These are uncertainty metrics - higher is worse, so invert
         return max(0.0, min(1.0, np.exp(-value)))
     else:
         return value
@@ -1198,17 +1197,14 @@ def plot_metrics_bar_chart(metrics_df: pd.DataFrame,
             'param_distance': 0.3
         }
     
-    # Filter metrics if selection provided
     if selected_metrics is None:
         selected_metrics = list(ALL_VISUAL_METRICS.keys())
     
     df = metrics_df.copy()
     
-    # Map display names to internal attribute names and filter
     filtered_rows = []
     for idx, row in df.iterrows():
         metric_name = row['Metric']
-        # Find if this internal name corresponds to a selected display name
         display_name = None
         for disp_name, attr_name in ALL_VISUAL_METRICS.items():
             if attr_name == metric_name and disp_name in selected_metrics:
@@ -1227,7 +1223,6 @@ def plot_metrics_bar_chart(metrics_df: pd.DataFrame,
         })
     
     if not filtered_rows:
-        # Fallback: show all if filter results in empty
         filtered_rows = []
         for idx, row in df.iterrows():
             metric_name = row['Metric']
@@ -1327,7 +1322,6 @@ def plot_multi_case_bar_chart(case_metrics_dict: Dict[str, pd.DataFrame],
     for idx, (run_label, metrics_df) in enumerate(case_metrics_dict.items()):
         df = metrics_df.copy()
         
-        # Filter and normalize metrics
         filtered_rows = []
         for metric_idx, row in df.iterrows():
             metric_name = row['Metric']
@@ -1398,7 +1392,6 @@ def plot_radar_chart(metrics: ValidationMetrics,
     if selected_metrics is None:
         selected_metrics = DEFAULT_RADAR_METRICS
     
-    # Build categories and values only for selected metrics
     categories = []
     values = []
 
@@ -1406,12 +1399,9 @@ def plot_radar_chart(metrics: ValidationMetrics,
         if display_name not in selected_metrics:
             continue
         categories.append(display_name)
-
-        # Compute normalized value
         val = _normalize_metric_value(attr_name, getattr(metrics, attr_name, 0.0), normalization_scales)
         values.append(val)
 
-    # Close the polygon by repeating first point
     if categories:
         categories += [categories[0]]
         values += [values[0]]
@@ -1421,8 +1411,8 @@ def plot_radar_chart(metrics: ValidationMetrics,
         theta=categories,
         fill='toself',
         name=run_label,
-        line=dict(width=customization.get('line_width', 2)),
-        fillcolor=f'rgba({100 + hash(run_label) % 155}, {100 + hash(run_label) % 155}, {200 + hash(run_label) % 55}, 0.25)'
+        line=dict(width=customization.get('line_width', 2), color=customization.get('radar_line_color', '#2E86AB')),
+        fillcolor=customization.get('radar_fill_color', 'rgba(46, 134, 171, 0.3)')
     ))
     
     fig.update_layout(
@@ -1498,7 +1488,6 @@ def plot_multi_case_radar_chart(case_metrics_dict: Dict[str, ValidationMetrics],
         if not categories:
             continue
             
-        # Close the polygon
         values += [values[0]]
         cats = categories + [categories[0]]
         
@@ -1507,8 +1496,8 @@ def plot_multi_case_radar_chart(case_metrics_dict: Dict[str, ValidationMetrics],
             theta=cats,
             fill='toself',
             name=run_label,
-            line=dict(color=color_cycle[idx % len(color_cycle)], width=2),
-            fillcolor=f'rgba({100 + idx * 30 % 155}, {100 + idx * 20 % 155}, {200 + idx * 10 % 55}, 0.15)'
+            line=dict(color=color_cycle[idx % len(color_cycle)], width=customization.get('line_width', 2)),
+            fillcolor=customization.get('radar_fill_color', 'rgba(46, 134, 171, 0.3)')
         ))
     
     fig.update_layout(
@@ -1886,13 +1875,51 @@ def main():
         physics_aware = st.checkbox("Physics-aware interpolation", value=True)
         optimize_fields = st.checkbox("Optimize fields (PDE refinement)", value=True, disabled=not physics_aware)
         
-        with st.expander("🎨 Plot Customization", expanded=False):
+        # ===== EXPANDED: Plot Customization Panel =====
+        with st.expander("🎨 Plot Customization (Bar & Radar)", expanded=False):
+            st.subheader("General")
             st.session_state.plot_customization['font_size'] = st.slider("Base font size", 8, 20, st.session_state.plot_customization.get('font_size', 12))
             st.session_state.plot_customization['title_font_size'] = st.slider("Title font size", 10, 30, st.session_state.plot_customization.get('title_font_size', 16))
-            st.session_state.plot_customization['figure_width'] = st.number_input("Figure width", 400, 1500, st.session_state.plot_customization.get('figure_width', 800), step=50)
-            st.session_state.plot_customization['figure_height'] = st.number_input("Figure height", 300, 1000, st.session_state.plot_customization.get('figure_height', 500), step=50)
-            st.session_state.plot_customization['show_bar_labels'] = st.checkbox("Show bar labels", st.session_state.plot_customization.get('show_bar_labels', True))
-            st.session_state.plot_customization['grid_color'] = safe_color_picker("Grid color", key='grid_color_picker', default=st.session_state.plot_customization.get('grid_color', '#D3D3D3'))
+            st.session_state.plot_customization['axis_title_font_size'] = st.slider("Axis title font size", 8, 20, st.session_state.plot_customization.get('axis_title_font_size', 13))
+            st.session_state.plot_customization['tick_font_size'] = st.slider("Tick font size", 6, 18, st.session_state.plot_customization.get('tick_font_size', 11))
+            col_w, col_h = st.columns(2)
+            with col_w:
+                st.session_state.plot_customization['figure_width'] = st.number_input("Figure width", 400, 1500, st.session_state.plot_customization.get('figure_width', 800), step=50)
+            with col_h:
+                st.session_state.plot_customization['figure_height'] = st.number_input("Figure height", 300, 1000, st.session_state.plot_customization.get('figure_height', 500), step=50)
+            
+            st.subheader("Line & Grid")
+            st.session_state.plot_customization['axis_line_width'] = st.slider("Axis line width", 0.5, 5.0, st.session_state.plot_customization.get('axis_line_width', 1.5), 0.5)
+            st.session_state.plot_customization['grid_line_width'] = st.slider("Grid line width", 0.5, 3.0, st.session_state.plot_customization.get('grid_line_width', 1.0), 0.1)
+            
+            st.session_state.plot_customization['grid_color'] = safe_color_picker(
+                "Grid color", 
+                key='grid_color_picker',
+                default=st.session_state.plot_customization.get('grid_color', '#D3D3D3'),
+                help="Select grid line color (hex format required)"
+            )
+            st.session_state.plot_customization['show_grid'] = st.checkbox("Show grid", st.session_state.plot_customization.get('show_grid', True))
+            
+            st.subheader("Bar Chart Specific")
+            st.session_state.plot_customization['show_bar_labels'] = st.checkbox("Show bar value labels", st.session_state.plot_customization.get('show_bar_labels', True))
+            st.session_state.plot_customization['bar_label_position'] = st.selectbox("Bar label position", ['auto', 'inside', 'outside'], index=0)
+            st.session_state.plot_customization['x_tick_angle'] = st.slider("X-axis tick angle (deg)", -90, 90, st.session_state.plot_customization.get('x_tick_angle', 0))
+            st.session_state.plot_customization['x_title'] = st.text_input("X-axis title", st.session_state.plot_customization.get('x_title', 'Metric'))
+            st.session_state.plot_customization['y_title'] = st.text_input("Y-axis title", st.session_state.plot_customization.get('y_title', 'Normalized Score (0-1, higher=better)'))
+            
+            st.subheader("Radar Chart Specific")
+            st.session_state.plot_customization['radar_line_color'] = safe_color_picker(
+                "Radar line color",
+                key='radar_line_color_picker',
+                default=st.session_state.plot_customization.get('radar_line_color', '#2E86AB'),
+                help="Select radar chart line color"
+            )
+            st.session_state.plot_customization['radar_fill_color'] = st.text_input(
+                "Radar fill color (rgba)", 
+                st.session_state.plot_customization.get('radar_fill_color', 'rgba(46, 134, 171, 0.3)'),
+                help="Use rgba(r,g,b,a) format, e.g., rgba(46,134,171,0.3)"
+            )
+            st.session_state.plot_customization['line_width'] = st.slider("Radar line width", 1, 5, st.session_state.plot_customization.get('line_width', 2))
         
         # =============================================
         # METRIC SELECTION UI - USER CUSTOMIZABLE ASPECTS
@@ -2114,7 +2141,6 @@ def main():
             'bc_error': 1e-4, 'mass_error': 1.0, 'param_distance': 0.3
         }
         
-        # Pass selected metrics to plotting function
         fig_bar = plot_metrics_bar_chart(
             avg_metrics, 
             title=chart_title, 
@@ -2144,7 +2170,6 @@ def main():
                     if case_idx in results:
                         case_metrics_dict[label] = results[case_idx]['metrics'].to_dataframe()
             
-            # Pass selected metrics to multi-case bar chart
             fig_multi_bar = plot_multi_case_bar_chart(
                 case_metrics_dict,
                 title="Multi-Case Bar Chart Comparison",
@@ -2161,7 +2186,6 @@ def main():
                     if case_idx in results:
                         radar_metrics_dict[label] = results[case_idx]['metrics']
             
-            # Pass selected metrics to multi-case radar chart
             fig_multi_radar = plot_multi_case_radar_chart(
                 radar_metrics_dict,
                 title="Multi-Case Radar Comparison",
