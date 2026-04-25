@@ -1019,7 +1019,7 @@ class SavedValidationRun:
         }
     
     @classmethod
-    def from_dict(cls,  Dict) -> 'SavedValidationRun':
+    def from_dict(cls, data: dict) -> 'SavedValidationRun':
         return cls(
             run_id=data['run_id'],
             timestamp=data['timestamp'],
