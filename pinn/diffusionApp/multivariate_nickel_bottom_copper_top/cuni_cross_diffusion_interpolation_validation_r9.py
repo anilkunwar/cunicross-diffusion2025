@@ -1373,7 +1373,7 @@ def plot_multi_case_bar_chart(case_metrics_dict: Dict[str, pd.DataFrame],
             ))
     
     # ✅ FIXED: Handle case where no traces were added
-    if not fig.
+    if not fig.data:
         fig.add_annotation(
             text="⚠️ No metrics selected or available for display",
             xref="paper", yref="paper",
