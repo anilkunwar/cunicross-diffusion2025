@@ -1527,7 +1527,7 @@ def plot_multi_case_radar_chart(case_metrics_dict: Dict[str, ValidationMetrics],
         ))
     
     # ✅ FIXED: Handle empty radar chart
-    if not fig.
+    if not fig.data:
         fig.add_annotation(
             text="⚠️ No metrics selected or available for radar display",
             xref="paper", yref="paper",
