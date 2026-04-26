@@ -577,15 +577,15 @@ class EnhancedSolutionLoader:
                     standardized['params'].update(data['parameters'])
                 
                 # ✅ FIXED: Complete 'if' statements with 'data' operand
-                if 'X' in 
+                if 'X' in data:
                     standardized['X'] = self._ensure_2d(data['X'])
-                if 'Y' in 
+                if 'Y' in data:
                     standardized['Y'] = self._ensure_2d(data['Y'])
-                if 'c1_preds' in 
+                if 'c1_preds' in data:
                     standardized['c1_preds'] = [self._ensure_2d(c) for c in data['c1_preds']]
-                if 'c2_preds' in 
+                if 'c2_preds' in data:
                     standardized['c2_preds'] = [self._ensure_2d(c) for c in data['c2_preds']]
-                if 'times' in 
+                if 'times' in data:
                     standardized['times'] = data['times']
                 
                 if not standardized['params']:
