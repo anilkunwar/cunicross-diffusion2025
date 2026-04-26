@@ -36,6 +36,10 @@ Development Versions
 
    [![crossdiffusioninterpolationvalidation](https://img.shields.io/badge/crossdiffvalidation-v7.0-yellow)](https://cunicrossdiffusion-interpolation-validation7.streamlit.app/) (Validation of the interpolation output with the original PINNs solutions, Improvement in the visualizations, conversion factor provided in the charts, multi-comparison possible, customization of axes labels/features in charts, plot customization available in the radar charts)
 
+    [![crossdiffusioninterpolationvalidation](https://img.shields.io/badge/crossdiffvalidation-v8.0-yellow)](https://cunicrossdiffusion-interpolation-validation8.streamlit.app/) (Validation of the interpolation output with the original PINNs solutions, Improvement in the visualizations, conversion factor provided in the charts, multi-comparison possible, customization of axes labels/features in charts, plot customization available in the radar charts)
+
+    [![crossdiffusioninterpolationvalidation](https://img.shields.io/badge/crossdiffvalidation-v8.0-yellow)](https://cunicrossdiffusion-interpolation-validation8.streamlit.app/) (Validation of the interpolation output with the original PINNs solutions, Improvement in the visualizations, conversion factor provided in the charts, multi-comparison possible, customization of axes labels/features in charts, plot customization available in the radar charts)
+
 
 # Size effect of the UBM on the diffusion mechanism
 
