@@ -2437,7 +2437,7 @@ def main():
             st.session_state.plot_customization['font_size'] = st.slider("Base font size", 8, 20, st.session_state.plot_customization.get('font_size', 12))
             st.session_state.plot_customization['title_font_size'] = st.slider("Title font size", 10, 30, st.session_state.plot_customization.get('title_font_size', 16))
             st.session_state.plot_customization['axis_title_font_size'] = st.slider("Axis title font size", 8, 20, st.session_state.plot_customization.get('axis_title_font_size', 13))
-            st.session_state.plot_customization['tick_font_size'] = st.slider("Tick font size", 6, 18, st.session_state.plot_customization.get('tick_font_size', 11))
+            st.session_state.plot_customization['tick_font_size'] = st.slider("Tick font size", 16, 50, st.session_state.plot_customization.get('tick_font_size', 11))
             col_w, col_h = st.columns(2)
             with col_w:
                 st.session_state.plot_customization['figure_width'] = st.number_input("Figure width", 400, 1500, st.session_state.plot_customization.get('figure_width', 800), step=50)
