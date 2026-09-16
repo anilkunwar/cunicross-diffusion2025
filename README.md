@@ -1,6 +1,6 @@
 # Cross-diffusion modeling for Cu and Ni species
 
-![Image of CuNiCrossDiffusionLLM](images/cunicrossdiffGPT.jpg)
+![Image of CuNiCrossDiffusionLLM](images/cunicrossdiffLLM.jpg)
 
 Computational tool for modeling cross-diffusion of Cu and Ni in liquid Sn-2.5Ag alloy, featuring physics-informed neural network (PINN) and finite element method (FEM) approaches
 
