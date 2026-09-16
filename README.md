@@ -1,6 +1,6 @@
 # Cross-diffusion modeling for Cu and Ni species
 
-![Image of CuNiCrossDiffusionGPT](images/cunicrossdiffGPT.jpg)
+![Image of CuNiCrossDiffusionLLM](images/cunicrossdiffGPT.jpg)
 
 Computational tool for modeling cross-diffusion of Cu and Ni in liquid Sn-2.5Ag alloy, featuring physics-informed neural network (PINN) and finite element method (FEM) approaches
 
@@ -10,9 +10,9 @@ Basic Model with the Concentration Field Visualization (Includes the variation i
 # GPT and Validation
 
 Stable version
-GPT for the NAIF (Numerically Attentive Interpolation Framework)
+LLM for the NAIF (Numerically Attentive Interpolation Framework)
 
-  [![crossdiffusiongpt](https://img.shields.io/badge/crossdiffgpt-v0.0-yellow)](https://cuni-crossdiffusiongpt.streamlit.app/) 
+  [![crossdiffusionllm](https://img.shields.io/badge/crossdiffllm-v0.0-yellow)](https://cuni-crossdiffusionllm.streamlit.app/) 
 
 Validation of the NAIF with the Corresponding PINNs Solution
 
