@@ -7,7 +7,7 @@ Computational tool for modeling cross-diffusion of Cu and Ni in liquid Sn-2.5Ag 
 Basic Model with the Concentration Field Visualization (Includes the variation in Ly):
 [![Visualization via Streamlit](https://static.streamlit.io/badges/streamlit_badge_black_white.svg)](https://crossdiffusion2d-basic-model.streamlit.app/)
 
-# GPT and Validation
+# Large language Model (LLM) Interface to NAIF and Validation
 
 Stable version
 LLM for the NAIF (Numerically Attentive Interpolation Framework)
